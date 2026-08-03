@@ -91,7 +91,9 @@ class WorkflowEngine:
         # Tjek betingelsen (hvis den findes)
         if transition.condition:
             try:
-                if not eval(transition.condition, {}, self._get_context(actor, artifact)):
+                from domain.condition_evaluator import ConditionEvaluator
+                evaluator = ConditionEvaluator()
+                if not evaluator.evaluate(transition.condition, self._get_context(actor, artifact)):
                     return False
             except:
                 return False

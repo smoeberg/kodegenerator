@@ -1,3 +1,5 @@
+import json
+import ast
 # infrastructure/database/dor_db_adapter.py
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
@@ -277,9 +279,9 @@ class DORDBAdapter:
             Gate(
                 id=row.id,
                 name=row.name,
-                required_approvals=eval(row.required_approvals) if row.required_approvals else [],
+                required_approvals=json.loads(row.required_approvals) if row.required_approvals.startswith("[") else ast.literal_eval(row.required_approvals) if row.required_approvals else [],
                 min_consensus_score=row.min_consensus_score,
-                conditions=eval(row.conditions) if row.conditions else {}
+                conditions=json.loads(row.conditions) if row.conditions.startswith("{") else ast.literal_eval(row.conditions) if row.conditions else {}
             )
             for row in gates_result
         ]
