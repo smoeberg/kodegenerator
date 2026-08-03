@@ -1,0 +1,61 @@
+# monitoring/alert_rules.yml
+groups:
+- name: dor-alerts
+  rules:
+  # Task Alerts
+  - alert: HighTaskFailureRate
+    expr: rate(dor_tasks_completed_total{status="failed"}[5m]) / rate(dor_tasks_completed_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High task failure rate ({{ $value }}%)"
+      description: "More than 10% of tasks are failing in the last 5 minutes."
+
+  - alert: LongRunningTasks
+    expr: histogram_quantile(0.95, sum(rate(dor_task_duration_seconds_bucket[5m])) by (le)) > 300
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Long running tasks (95th percentile: {{ $value }}s)"
+      description: "95% of tasks are taking longer than 5 minutes to complete."
+
+  # Workflow Alerts
+  - alert: HighWorkflowFailureRate
+    expr: rate(dor_workflows_completed_total{status="failed"}[5m]) / rate(dor_workflows_completed_total[5m]) > 0.05
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High workflow failure rate ({{ $value }}%)"
+      description: "More than 5% of workflows are failing in the last 5 minutes."
+
+  # AI Alerts
+  - alert: HighAICallFailureRate
+    expr: rate(dor_ai_calls_total[5m]) - rate(dor_ai_calls_total{status="success"}[5m]) > 0.05 * rate(dor_ai_calls_total[5m])
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High AI call failure rate ({{ $value }}%)"
+      description: "More than 5% of AI calls are failing in the last 5 minutes."
+
+  - alert: HighAILatency
+    expr: histogram_quantile(0.95, sum(rate(dor_ai_call_duration_seconds_bucket[5m])) by (le)) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High AI call latency (95th percentile: {{ $value }}s)"
+      description: "95% of AI calls are taking longer than 10 seconds."
+
+  # System Alerts
+  - alert: HighPendingTasks
+    expr: dor_pending_tasks > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High number of pending tasks ({{ $value }})"
+      description: "More than 10 tasks are pending execution."
