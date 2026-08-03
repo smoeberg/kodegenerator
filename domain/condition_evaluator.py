@@ -29,8 +29,8 @@ _CMP_OPS = {
     ast.LtE: operator.le,
     ast.Gt: operator.gt,
     ast.GtE: operator.ge,
-    ast.In: operator.contains,
-    ast.NotIn: lambda a, b: not operator.contains(a, b),
+    ast.In: lambda a, b: operator.contains(b, a),
+    ast.NotIn: lambda a, b: not operator.contains(b, a),
 }
 
 
@@ -76,11 +76,16 @@ class ConditionEvaluator:
             key = self._eval(node.slice, context)
             return value[key]
         if isinstance(node, ast.BoolOp):
-            values = [self._eval(value, context) for value in node.values]
             if isinstance(node.op, ast.And):
-                return all(values)
+                for value in node.values:
+                    if not self._eval(value, context):
+                        return False
+                return True
             if isinstance(node.op, ast.Or):
-                return any(values)
+                for value in node.values:
+                    if self._eval(value, context):
+                        return True
+                return False
             raise ConditionEvaluationError("Boolean operator not allowed")
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.Not, ast.USub, ast.UAdd)):
             value = self._eval(node.operand, context)
