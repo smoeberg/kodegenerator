@@ -8,6 +8,7 @@ from api.endpoints import (
     artifacts,
     auth,
     capabilities,
+    governance_gates,
     intents,
     organizations,
     role_definitions,
@@ -45,6 +46,7 @@ app.include_router(organizations.router, dependencies=_authenticated)
 app.include_router(actors.router, dependencies=_authenticated)
 app.include_router(role_definitions.router, dependencies=_authenticated)
 app.include_router(capabilities.router, dependencies=_authenticated)
+app.include_router(governance_gates.router, dependencies=_authenticated)
 app.include_router(intents.router, dependencies=_authenticated)
 app.include_router(workflows.router, dependencies=_authenticated)
 app.include_router(tasks.router, dependencies=_authenticated)

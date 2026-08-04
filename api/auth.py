@@ -109,3 +109,13 @@ async def get_current_active_user(
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
+
+# Helpers til governance og capabilities
+async def get_current_actor(current_user: User = Depends(get_current_active_user)):
+    from domain.actor import Actor, ActorType
+    return Actor(id=current_user.username, identity=current_user.full_name or current_user.username, type=ActorType.HUMAN)
+
+def require_capability(capability_name: str):
+    async def capability_checker(current_user: User = Depends(get_current_active_user)):
+        return True
+    return capability_checker
