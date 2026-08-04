@@ -10,7 +10,7 @@ import heapq
 class TaskScheduler:
     """Planlægger og prioriterer Tasks baseret på prioritet og afhængigheder."""
 
-    def __init__(self, task_registry: TaskRegistry):
+    def __init__(self, task_registry: Optional[TaskRegistry] = None):
         self.task_registry = task_registry
         self.queue: List[Task] = []  # Prioritets-kø (baseret på TaskPriority)
 

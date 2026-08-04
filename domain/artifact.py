@@ -41,7 +41,8 @@ class Artifact:
     id: str
     version: str  # f.eks. "1.0.0"
     artifact_type: ArtifactType
-    hash: str  # SHA-256 hash af indholdet
+    hash: str = ""  # SHA-256 hash af indholdet
+    consensus_score: float = 0.0
     owner: Optional["Actor"] = None
     department_id: Optional[str] = None
     workflow_id: Optional[str] = None

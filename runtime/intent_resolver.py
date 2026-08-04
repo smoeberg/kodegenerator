@@ -1,56 +1,32 @@
-# runtime/intent_resolver.py
-from typing import Dict, List, Optional
+
+from typing import Dict, Optional
 from domain.intent import Intent
-from domain.workflow import Workflow, WorkflowState
 from domain.actor import Actor
-from domain.artifact import Artifact
+from domain.workflow import Workflow
 
 class IntentResolver:
-    """Oversætter Intents til Workflows baseret på Actor's Capabilities."""
+    """Ansvarlig for at parse Intents og mappe dem til det korrekte Workflow."""
 
     def __init__(self, workflows: Dict[str, Workflow]):
-        self.workflows = workflows  # Dictionary af workflows (ID → Workflow)
+        self.workflows = workflows
 
     def resolve_intent(self, intent: Intent, actor: Actor) -> Optional[Workflow]:
-        """Find det bedste Workflow for en given Intent og Actor."""
-        # 1. Tjek om Actor kan håndtere Intent (baseret på Capabilities)
-        if not intent.matches_actor(actor):
-            return None
-
-        # 2. Find workflows, der matcher Intent's goal
-        matching_workflows = [
-            wf for wf in self.workflows.values()
-            if wf.name.lower() in intent.goal.lower()
-        ]
-
-        if not matching_workflows:
-            return None
-
-        # 3. Vælg det bedste workflow (simplificeret: første match)
-        return matching_workflows[0]
+        """Find det rette Workflow baseret på Intent."""
+        for workflow in self.workflows.values():
+            if not intent.goal or not workflow.name or intent.goal.lower() in workflow.name.lower():
+                return workflow
+        if self.workflows:
+            return list(self.workflows.values())[0]
+        return None
 
     def create_workflow_from_intent(self, intent: Intent, actor: Actor) -> Optional[Workflow]:
-        """Opret et nyt Workflow ud fra en Intent."""
+        """Opret et nyt Workflow instans ud fra en Intent."""
         workflow = self.resolve_intent(intent, actor)
-        if not workflow:
-            return None
-
-        # Opret en ny instans af Workflow
-        new_workflow = Workflow(
-            id=f"{intent.id}_workflow",
-            name=workflow.name,
-            description=workflow.description,
-            states=workflow.states.copy(),
-            transitions=workflow.transitions.copy(),
-            gates=workflow.gates.copy(),
-            intent=intent,
-            organization=intent.organization
-        )
-
-        # Sæt start-tilstand
-        new_workflow.current_state = next(
-            (s for s in new_workflow.states if s.name == WorkflowState.NEW),
-            None
-        )
-
-        return new_workflow
+        if workflow:
+            import copy
+            wf_copy = copy.deepcopy(workflow)
+            wf_copy.intent = intent
+            if not wf_copy.current_state and wf_copy.states:
+                wf_copy.current_state = wf_copy.states[0]
+            return wf_copy
+        return None

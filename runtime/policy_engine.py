@@ -38,7 +38,7 @@ class PolicyEngine:
                 if artifact:
                     for required_approval in value:
                         if not any(
-                            sig["role_id"] == required_approval and sig["status"] == "approved"
+                            getattr(sig, "role_id", getattr(sig, "role_id", None)) == required_approval and getattr(sig, "status", getattr(sig, "status", None)) == "approved"
                             for sig in artifact.signatures
                         ):
                             return False

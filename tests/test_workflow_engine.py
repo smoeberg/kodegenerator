@@ -2,7 +2,6 @@
 import pytest
 from domain.workflow import Workflow, WorkflowState, State, Transition
 from domain.actor import Actor, ActorType
-from domain.event import Event, EventType
 from runtime.workflow_engine import WorkflowEngine
 from runtime.event_bus import EventBus
 
@@ -41,12 +40,13 @@ def workflow_engine():
     event_bus = EventBus()
     return WorkflowEngine(event_bus)
 
-def test_start_workflow(sample_workflow, workflow_engine):
-    assert workflow_engine.start_workflow(sample_workflow, sample_actor())
+def test_start_workflow(sample_workflow, workflow_engine, sample_actor):
+    assert workflow_engine.start_workflow(sample_workflow, sample_actor)
     assert sample_workflow.id in workflow_engine.workflows
 
 def test_transition_workflow(sample_workflow, workflow_engine, sample_actor):
     workflow_engine.add_workflow(sample_workflow)
+    workflow_engine.start_workflow(sample_workflow, sample_actor)
     assert workflow_engine.transition_workflow(
         "workflow_1",
         WorkflowState.ANALYSIS,

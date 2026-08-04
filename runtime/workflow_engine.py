@@ -1,7 +1,7 @@
 # runtime/workflow_engine.py (Udvidet)
 from typing import Dict, List, Optional
 from domain.workflow import Workflow, WorkflowState, State, Transition, Gate
-from domain.task import Task, TaskStatus
+from domain.task import Task, TaskStatus, TaskPriority
 from domain.artifact import Artifact, ArtifactState
 from domain.actor import Actor
 from domain.event import Event, EventType
@@ -14,13 +14,13 @@ class WorkflowEngine:
 
     def __init__(
         self,
-        event_bus: EventBus,
-        task_scheduler: TaskScheduler,
-        artifact_manager: ArtifactLifecycleManager
+        event_bus: Optional[EventBus] = None,
+        task_scheduler: Optional[TaskScheduler] = None,
+        artifact_manager: Optional[ArtifactLifecycleManager] = None
     ):
-        self.event_bus = event_bus
-        self.task_scheduler = task_scheduler
-        self.artifact_manager = artifact_manager
+        self.event_bus = event_bus or EventBus()
+        self.task_scheduler = task_scheduler or TaskScheduler()
+        self.artifact_manager = artifact_manager or ArtifactLifecycleManager(event_bus=self.event_bus)
         self.workflows: Dict[str, Workflow] = {}
         self.workflow_tasks: Dict[str, List[Task]] = {}  # workflow_id → Liste af Tasks
 
@@ -79,10 +79,19 @@ class WorkflowEngine:
         if not current_state:
             return False
 
-        # Find overgangen
+        # Find overgangen (robust string/enum comparison)
+        def _match_state(state_val, candidate):
+            if state_val is None or candidate is None:
+                return False
+            s_str = str(state_val).lower()
+            c_val = candidate.value if hasattr(candidate, 'value') else candidate
+            c_str = str(c_val).lower()
+            c_name = candidate.name.lower() if hasattr(candidate, 'name') else ''
+            return s_str in [c_str, c_name, str(candidate).lower()]
+
         transition = next(
             (t for t in workflow.transitions
-             if t.from_state == current_state.name.value and t.to_state == new_state.value),
+             if _match_state(t.from_state, current_state.name) and _match_state(t.to_state, new_state)),
             None
         )
         if not transition:
@@ -129,7 +138,7 @@ class WorkflowEngine:
         task_id = f"{workflow.id}_task_{len(self.workflow_tasks[workflow.id]) + 1}"
         task = Task(
             id=task_id,
-            name=f"Handle {state.name.value}",
+            name=f"Handle {state.name.value if hasattr(state.name, 'value') else str(state.name)}",
             workflow_id=workflow.id,
             dependencies=[t.id for t in self.workflow_tasks[workflow.id] if t.status == TaskStatus.COMPLETED],
             priority=TaskPriority.MEDIUM

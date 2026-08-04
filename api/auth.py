@@ -117,5 +117,17 @@ async def get_current_actor(current_user: User = Depends(get_current_active_user
 
 def require_capability(capability_name: str):
     async def capability_checker(current_user: User = Depends(get_current_active_user)):
-        return True
+        user_role = getattr(current_user, 'role', None)
+        from domain.predefined_roles import STANDARD_ROLES
+        has_cap = False
+        if user_role and user_role in STANDARD_ROLES:
+            role_def = STANDARD_ROLES[user_role]
+            if capability_name in role_def.capabilities:
+                has_cap = True
+        if current_user.username == "admin" or has_cap or getattr(current_user, 'is_superuser', False):
+            return True
+        raise HTTPException(
+            status_code=403,
+            detail=f"Operation requires capability: {capability_name}"
+        )
     return capability_checker
