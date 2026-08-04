@@ -7,6 +7,11 @@ import pandas as pd
 import streamlit as st
 from domain.predefined_roles import STANDARD_ROLES, STANDARD_CAPABILITIES
 
+
+from cryptography.fernet import Fernet
+import base64
+import hashlib
+
 st.set_page_config(
     page_title="DOR - Admin & Digital Employee Management",
     page_icon="⚡",
@@ -14,7 +19,53 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- Authentication Check ---
+ADMIN_PASSWORD = os.getenv("DOR_ADMIN_PASSWORD", "dor-admin-2026")
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("⚡ Digital Organization Runtime (DOR) Dashboard")
+    st.subheader("🔐 Autentificering Påkrævet")
+    pwd = st.text_input("Indtast Dashboard Admin Adgangskode", type="password", help="Standardkode i demo: dor-admin-2026 (sæt DOR_ADMIN_PASSWORD env)")
+    if st.button("Log ind"):
+        if pwd == ADMIN_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("⚠️ Forkert adgangskode.")
+    st.stop()
+
 st.title("⚡ Digital Organization Runtime (DOR) Dashboard")
+
+def get_fernet():
+    key_str = os.getenv("DOR_ENCRYPTION_KEY")
+    if not key_str:
+        digest = hashlib.sha256(b"dor-runtime-master-secret-key").digest()
+        key_str = base64.urlsafe_b64encode(digest)
+    elif isinstance(key_str, str):
+        key_str = key_str.encode()
+    return Fernet(key_str)
+
+def encrypt_key(plain_key: str) -> str:
+    if not plain_key:
+        return ""
+    try:
+        f = get_fernet()
+        return f.encrypt(plain_key.encode()).decode()
+    except Exception:
+        return plain_key
+
+def decrypt_key(encrypted_key: str) -> str:
+    if not encrypted_key:
+        return ""
+    try:
+        f = get_fernet()
+        return f.decrypt(encrypted_key.encode()).decode()
+    except Exception:
+        return encrypted_key
+
 
 DB_PATH = os.getenv("DOR_DB_PATH", "dor_runtime.db")
 
@@ -112,10 +163,11 @@ elif page == "➕ Admin: Opret AI-Medarbejder":
                 import uuid
                 emp_id = f"ai-emp-{str(uuid.uuid4())[:8]}"
                 cursor = conn.cursor()
+                encrypted_api_key = encrypt_key(api_key)
                 cursor.execute("""
                     INSERT INTO digital_employees (id, identity, role, provider, model_name, api_key, system_prompt, capabilities)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (emp_id, identity, selected_role.name, provider, model_name, api_key, system_prompt, json.dumps(selected_role.capabilities)))
+                """, (emp_id, identity, selected_role.name, provider, model_name, encrypted_api_key, system_prompt, json.dumps(selected_role.capabilities)))
                 conn.commit()
                 st.success(f"✅ AI-Medarbejder **{identity}** oprettet som **{selected_role.name}**! [ID: {emp_id}]")
 
