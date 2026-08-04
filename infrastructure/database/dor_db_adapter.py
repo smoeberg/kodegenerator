@@ -523,8 +523,9 @@ class DORDBAdapter:
         for board_name in ["architecture", "security", "compliance", "quality"]:
             board = getattr(governance, f"{board_name}_board", [])
             for actor in board:
+                if board_name not in ("architecture", "security", "compliance", "quality"): raise ValueError("Invalid board name")
                 self.uow.db.execute(
-                    f"INSERT INTO {board_name}_board (governance_id, actor_id) VALUES (:governance_id, :actor_id)",
+                    f"INSERT INTO {board_name}_board (governance_id, actor_id) VALUES (:governance_id, :actor_id)", # nosec B608
                     {"governance_id": governance_model.id, "actor_id": actor.id}
                 )
 
@@ -540,8 +541,9 @@ class DORDBAdapter:
         # Hent Boards
         boards = {}
         for board_name in ["architecture", "security", "compliance", "quality"]:
+            if board_name not in ("architecture", "security", "compliance", "quality"): raise ValueError("Invalid board name")
             board_result = self.uow.db.execute(
-                f"SELECT actor_id FROM {board_name}_board WHERE governance_id = :governance_id",
+                f"SELECT actor_id FROM {board_name}_board WHERE governance_id = :governance_id", # nosec B608
                 {"governance_id": governance_id}
             ).fetchall()
             boards[board_name] = [
