@@ -5,6 +5,7 @@ import json
 import sqlite3
 import pandas as pd
 import streamlit as st
+from domain.predefined_roles import STANDARD_ROLES, STANDARD_CAPABILITIES
 
 st.set_page_config(
     page_title="DOR - Admin & Digital Employee Management",
@@ -41,7 +42,15 @@ conn = get_db_connection()
 st.sidebar.title("🏢 Navigation & Admin")
 page = st.sidebar.radio(
     "Vælg visning",
-    ["Overview", "➕ Admin: Opret AI-Medarbejder", "🤖 AI-Medarbejdere Oversight", "Active Workflows", "Governance Gates", "Artifacts Registry"]
+    [
+        "Overview", 
+        "➕ Admin: Opret AI-Medarbejder", 
+        "🤖 AI-Medarbejdere Oversight", 
+        "📜 Roller & Capabilities Specifikation",
+        "Active Workflows", 
+        "Governance Gates", 
+        "Artifacts Registry"
+    ]
 )
 
 if page == "Overview":
@@ -55,22 +64,26 @@ if page == "Overview":
 
     col1.metric("Organizations", "1")
     col2.metric("Oprettede AI-Medarbejdere", ai_count)
-    col3.metric("Workflow Templates", "2")
-    col4.metric("Artifacts Generated", "5")
+    col3.metric("Definerede Roller", len(STANDARD_ROLES))
+    col4.metric("Capabilities Registry", len(STANDARD_CAPABILITIES))
 
     st.subheader("🏛️ Digital Organization Architecture")
-    st.info("DOR lader dig tilføje specifikke AI-medarbejdere med deres egne dedikerede API-nøgler, roller og prompts.")
+    st.info("DOR lader dig tilføje specifikke AI-medarbejdere med deres egne dedikerede API-nøgler, veldefinerede roller og autoriteter.")
 
 elif page == "➕ Admin: Opret AI-Medarbejder":
     st.header("⚙️ Admin: Opret Ny AI-Medarbejder (Digital Employee)")
-    st.markdown("Opret en ny fuldautonom AI-medarbejder med sin egen API-nøgle, rolle og modelkonfiguration.")
+    st.markdown("Opret en ny fuldautonom AI-medarbejder med sin egen API-nøgle, veldefinerede rolle og kompetencer.")
 
+    role_options = {role.name: role for role in STANDARD_ROLES.values()}
+    
     with st.form("create_ai_employee_form"):
         col_left, col_right = st.columns(2)
 
         with col_left:
             identity = st.text_input("AI-Medarbejder Navn / Identitet", "EIRA Senior AI Developer")
-            role = st.selectbox("Tildelt Rolle", ["Senior Software Engineer", "Code Reviewer", "QA & Test Specialist", "DevOps Engineer", "Security Officer"])
+            selected_role_name = st.selectbox("Tildelt Veldefineret Rolle", list(role_options.keys()))
+            selected_role = role_options[selected_role_name]
+            
             provider = st.selectbox("AI Model Provider", ["OpenAI", "Anthropic", "DeepSeek", "Mistral", "Google Gemini"])
 
         with col_right:
@@ -79,11 +92,16 @@ elif page == "➕ Admin: Opret AI-Medarbejder":
                 "deepseek-coder", "mistral-large-latest", "gemini-1.5-pro"
             ])
             api_key = st.text_input("API Nøgle for denne AI-Medarbejder", type="password", help="Indtast AI-medarbejderens private API nøgle")
-            capabilities = st.multiselect("DOR Capabilities", [
-                "code_generation", "code_review", "test_generation", "architecture_design", "governance_audit"
-            ], default=["code_generation", "code_review"])
+            
+            # Vis automatiske capabilities baseret på den valgte rolle
+            st.info(f"💡 **Rollebeskrivelse:** {selected_role.description}")
+            st.markdown(f"**Ansvar:** {', '.join(selected_role.responsibilities)}")
 
-        system_prompt = st.text_area("System Prompt / Adfærdskodeks", "Du er en senior softwareudvikler i DOR. Du leverer altid ren, veldokumenteret Python-kode med høj testdækning.")
+        system_prompt = st.text_area(
+            "System Prompt / Adfærdskodeks", 
+            f"Du er ansat som {selected_role.name} i DOR.\n"
+            f"Dine primære ansvarsområder er:\n- " + "\n- ".join(selected_role.responsibilities)
+        )
 
         submit_btn = st.form_submit_button("🚀 Opret og Aktiver AI-Medarbejder")
 
@@ -97,14 +115,31 @@ elif page == "➕ Admin: Opret AI-Medarbejder":
                 cursor.execute("""
                     INSERT INTO digital_employees (id, identity, role, provider, model_name, api_key, system_prompt, capabilities)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (emp_id, identity, role, provider, model_name, api_key, system_prompt, json.dumps(capabilities)))
+                """, (emp_id, identity, selected_role.name, provider, model_name, api_key, system_prompt, json.dumps(selected_role.capabilities)))
                 conn.commit()
-                st.success(f"✅ AI-Medarbejder **{identity}** ({provider} / {model_name}) blev oprettet med succes! [ID: {emp_id}]")
+                st.success(f"✅ AI-Medarbejder **{identity}** oprettet som **{selected_role.name}**! [ID: {emp_id}]")
+
+elif page == "📜 Roller & Capabilities Specifikation":
+    st.header("📜 Veldefinerede Roller & Capabilities i DOR")
+    st.markdown("Oversigt over hvordan Roller, Autoriteter og Capabilities er defineret og håndhæves i systemet.")
+
+    st.subheader("1. Systemets Roller & Autoriteter")
+    for r_id, role in STANDARD_ROLES.items():
+        with st.expander(f"🎭 {role.name} (`{r_id}`)"):
+            st.write(f"**Beskrivelse:** {role.description}")
+            st.write(f"**Tilknyttede Capabilities:** {', '.join(role.capabilities)}")
+            st.write("**Autoriteter (Rights & Permissions):**")
+            st.json(role.authority)
+            st.write("**Ansvar:**")
+            for resp in role.responsibilities:
+                st.write(f"- {resp}")
+
+    st.subheader("2. Registrerede Capabilities")
+    for c_id, cap in STANDARD_CAPABILITIES.items():
+        st.write(f"- **{cap.name}** (`{cap.id}`): {cap.description} *(Niveau: {cap.level.name})*")
 
 elif page == "🤖 AI-Medarbejdere Oversight":
     st.header("🤖 Register over Aktive AI-Medarbejdere")
-    st.markdown("Se alle oprettede AI-medarbejdere, deres API-nøgle status og modeller.")
-
     df_ai = pd.read_sql_query("SELECT id, identity, role, provider, model_name, capabilities, created_at FROM digital_employees", conn)
     if not df_ai.empty:
         st.dataframe(df_ai, use_container_width=True)
@@ -115,7 +150,6 @@ elif page == "Active Workflows":
     st.header("🔄 Active Workflows & State Transitions")
     workflows_data = [
         {"ID": "wf-101", "Name": "Feature Development: OAuth2 Auth", "State": "REVIEW", "Gate Pending": "Security Review", "Actor": "EIRA AI Developer"},
-        {"ID": "wf-102", "Name": "Architecture Review: Payment Gateway", "State": "DESIGN", "Gate Pending": "None", "Actor": "Claude-5 Senior Architect"},
     ]
     st.dataframe(pd.DataFrame(workflows_data), use_container_width=True)
 
