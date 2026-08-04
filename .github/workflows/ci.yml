@@ -30,7 +30,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest
 
       - name: Compile Python sources
         run: python -m compileall -q api domain execution infrastructure runtime monitoring
@@ -40,6 +39,7 @@ jobs:
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
+          PYTHONPATH: .
         run: pytest -q
 
   security:
