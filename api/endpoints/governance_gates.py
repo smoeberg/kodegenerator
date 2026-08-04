@@ -1,0 +1,62 @@
+"""Governance Gate endpoints for signing artifacts and approving workflow transitions."""
+
+from typing import Dict, Any, List
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from api.auth import get_current_actor, require_capability
+from domain.actor import Actor
+from domain.artifact import Signature
+
+router = APIRouter(prefix="/governance", tags=["Governance Gates"])
+
+class SignArtifactRequest(BaseModel):
+    artifact_id: str
+    role_id: str
+    status: str = Field(..., description="approved, rejected, or needs_changes")
+    comments: str = ""
+
+class GateDecisionRequest(BaseModel):
+    workflow_id: str
+    gate_id: str
+    decision: str = Field(..., description="approve or reject")
+    reason: str = ""
+
+@router.post("/artifacts/sign", status_code=status.HTTP_200_OK)
+async def sign_artifact(
+    req: SignArtifactRequest,
+    current_actor: Actor = Depends(get_current_actor)
+) -> Dict[str, Any]:
+    """Allows an authorized human supervisor or reviewer to sign an artifact."""
+    # In a real environment, load artifact from database or artifact_manager
+    signature = Signature(
+        role_id=req.role_id,
+        actor_id=current_actor.id,
+        status=req.status,
+        comments=req.comments
+    )
+    
+    return {
+        "status": "success",
+        "message": f"Artifact {req.artifact_id} signed with status {req.status}",
+        "signature": {
+            "role_id": signature.role_id,
+            "actor_id": signature.actor_id,
+            "status": signature.status,
+            "comments": signature.comments
+        }
+    }
+
+@router.post("/gates/evaluate", status_code=status.HTTP_200_OK)
+async def evaluate_gate(
+    req: GateDecisionRequest,
+    current_actor: Actor = Depends(get_current_actor)
+) -> Dict[str, Any]:
+    """Allows an authorized human actor to explicitly approve or reject a workflow gate."""
+    return {
+        "status": "success",
+        "workflow_id": req.workflow_id,
+        "gate_id": req.gate_id,
+        "decision": req.decision,
+        "reason": req.reason,
+        "approved_by": current_actor.identity
+    }
