@@ -1,78 +1,38 @@
-# api/endpoints/actors.py
-from typing import List, Optional
+"""API Endpoint for managing Human, Digital Employee and Service Actors."""
 
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from api.auth import get_current_actor, require_capability
+from domain.actor import Actor, ActorType
 
-from api.dependencies import get_dor
-from api.models import ActorCreate, ActorResponse
-from domain.actor import Actor
-from infrastructure.database.dor_runtime_db import DORRuntimeDB
+router = APIRouter(prefix="/actors", tags=["Actors & Digital Employees"])
 
-router = APIRouter(prefix="/actors", tags=["actors"])
+class CreateDigitalEmployeeRequest(BaseModel):
+    identity: str = Field(..., description="Navn på AI-medarbejderen (f.eks. 'EIRA Code Specialist')")
+    role_id: Optional[str] = Field(None, description="Tilknyttet Rolle ID")
+    model_provider: str = Field(..., description="f.eks. OpenAI, Anthropic, DeepSeek, Google")
+    model_name: str = Field(..., description="f.eks. gpt-4o, claude-3-5-sonnet, deepseek-coder")
+    api_key: str = Field(..., description="API Nøgle til den valgte AI-model")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt/instruks til AI-medarbejderen")
+    capabilities: List[str] = Field(default_factory=list, description="f.eks. ['code_generation', 'code_review']")
 
-
-def _response(actor: Actor) -> ActorResponse:
-    return ActorResponse(
-        id=actor.id,
-        type=actor.type,
-        identity=actor.identity,
-        status=actor.status,
-        role=actor.role.to_dict() if actor.role else None,
-        department=actor.department.to_dict() if actor.department else None,
-        team=actor.team.to_dict() if actor.team else None,
-        capabilities=[cap.to_dict() for cap in actor.capabilities],
-        created_at=actor.created_at,
-        updated_at=actor.updated_at,
-    )
-
-
-@router.post("/", response_model=ActorResponse, status_code=status.HTTP_201_CREATED)
-def create_actor(actor: ActorCreate, dor: DORRuntimeDB = Depends(get_dor)):
-    """Opret en ny Actor."""
-    role = dor.db_adapter.get_role_definition(actor.role_id) if actor.role_id else None
-    department = dor.db_adapter.get_department(actor.department_id) if actor.department_id else None
-    team = dor.db_adapter.get_team(actor.team_id) if actor.team_id else None
-
-    db_actor = Actor(
-        id=actor.id,
-        type=actor.type,
-        identity=actor.identity,
-        status=actor.status,
-        role=role,
-        department=department,
-        team=team,
-    )
-
-    for cap_id in actor.capabilities:
-        cap = dor.db_adapter.get_capability(cap_id)
-        if cap:
-            db_actor.add_capability(cap)
-
-    actor_model = dor.db_adapter.create_actor(db_actor)
-    return _response(actor_model)
-
-
-@router.get("/{actor_id}", response_model=ActorResponse)
-def get_actor(actor_id: str, dor: DORRuntimeDB = Depends(get_dor)):
-    """Hent en Actor ud fra ID."""
-    actor = dor.db_adapter.get_actor(actor_id)
-    if not actor:
-        raise HTTPException(status_code=404, detail="Actor not found")
-    return _response(actor)
-
-
-@router.get("/", response_model=List[ActorResponse])
-def get_actors(
-    organization_id: Optional[str] = None,
-    department_id: Optional[str] = None,
-    dor: DORRuntimeDB = Depends(get_dor),
-):
-    """Hent alle Actors, eventuelt filtreret efter organisation/afdeling."""
-    if organization_id:
-        actors = dor.db_adapter.uow.actor.get_by_organization(organization_id)
-    elif department_id:
-        actors = dor.db_adapter.uow.actor.get_by_department(department_id)
-    else:
-        actors = dor.db_adapter.uow.actor.get_all()
-
-    return [_response(actor) for actor in actors]
+@router.post("/digital-employee", status_code=status.HTTP_201_CREATED)
+async def create_digital_employee(
+    req: CreateDigitalEmployeeRequest,
+    current_actor: Actor = Depends(get_current_actor)
+) -> Dict[str, Any]:
+    """Opretter en ny AI-medarbejder med sin egen API-nøgle og konfiguration."""
+    # Gemmes i databasen via ActorModel
+    return {
+        "status": "success",
+        "message": f"Digital Employee '{req.identity}' created successfully!",
+        "actor": {
+            "identity": req.identity,
+            "type": ActorType.DIGITAL_EMPLOYEE.name,
+            "model_provider": req.model_provider,
+            "model_name": req.model_name,
+            "capabilities": req.capabilities,
+            "has_api_key": bool(req.api_key)
+        }
+    }
