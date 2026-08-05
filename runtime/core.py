@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Optional
 from uuid import uuid4
 
@@ -20,6 +21,14 @@ from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
 from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResult
 from .context import ContextError, OrganizationContext, establish_context
+
+
+# Alembic's EnvironmentContext uses module-level proxy state while migrations
+# execute. Concurrent calls to command.upgrade() from different threads can
+# therefore race even when each DORRuntime owns its own Config instance.
+# Serialize migrations within this process; the application/runtime work itself
+# remains concurrent after boot.
+_ALEMBIC_BOOT_LOCK = RLock()
 
 
 class RuntimeNotReadyError(RuntimeError):
@@ -48,7 +57,8 @@ class DORRuntime:
         config = Config(str(alembic_ini))
         config.set_main_option("script_location", str(alembic_dir))
         config.set_main_option("sqlalchemy.url", self.database_url)
-        command.upgrade(config, "head")
+        with _ALEMBIC_BOOT_LOCK:
+            command.upgrade(config, "head")
         self.ready = True
 
     def _require_ready(self) -> None:
