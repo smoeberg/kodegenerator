@@ -36,9 +36,13 @@ def establish_context(
 ) -> OrganizationContext:
     """Bind an authenticated Principal to an Actor and Organization.
 
-    The organization is supplied by trusted application state, not by arbitrary
-    request payloads. The actor must already belong to that organization.
+    The actor binding is explicit: the validated Principal id must equal the
+    Actor id, or a trusted ``actor_id`` claim must name the Actor. The actor
+    must also belong to the requested organization and be active.
     """
+    claimed_actor_id = principal.metadata.get("actor_id", principal.id)
+    if claimed_actor_id != actor.id:
+        raise ContextError("Authenticated Principal is not bound to the requested Actor")
     if actor.organization is not None and actor.organization.id != organization.id:
         raise ContextError("Actor does not belong to the requested organization")
     if actor.status != "active":
