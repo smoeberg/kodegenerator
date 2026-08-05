@@ -42,14 +42,13 @@ def test_concurrent_same_command_id_has_one_durable_receipt(tmp_path: Path):
     )
 
     def invoke():
-        worker = DORRuntime(url)
-        worker.boot()
-        worker_context = worker.establish_context(
+        # Reuse the same runtime instance (already booted)
+        worker_context = runtime.establish_context(
             Principal(id="actor-a", type="user", metadata={"actor_id": "actor-a"}),
             "org-a",
             "actor-a",
         )
-        return worker.execute_command(worker_context, command)
+        return runtime.execute_command(worker_context, command)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: invoke(), range(2)))
