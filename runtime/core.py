@@ -4,11 +4,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
+from time import sleep
 from typing import Optional
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy.exc import IntegrityError
 
 from domain.actor import Actor
 from domain.event import Event, EventType
@@ -23,20 +25,17 @@ from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResul
 from .context import ContextError, OrganizationContext, establish_context
 
 
-# Alembic's EnvironmentContext uses module-level proxy state while migrations
-# execute. Concurrent calls to command.upgrade() from different threads can
-# therefore race even when each DORRuntime owns its own Config instance.
-# Serialize migrations within this process; the application/runtime work itself
-# remains concurrent after boot.
-_ALEMBIC_BOOT_LOCK = RLock()
-
-
 class RuntimeNotReadyError(RuntimeError):
     """Raised when runtime work is attempted before boot."""
 
 
 class NotFoundError(RuntimeError):
     """Raised when an organization-scoped resource does not exist."""
+
+
+_ALEMBIC_BOOT_LOCK = RLock()
+_COMMAND_RETRY_LIMIT = 3
+_COMMAND_RETRY_DELAY_SECONDS = 0.02
 
 
 class DORRuntime:
@@ -157,11 +156,32 @@ class DORRuntime:
         context: OrganizationContext,
         command_request: AdvanceWorkflowCommand,
     ) -> CommandResult:
-        """Execute a command atomically and durably record its receipt."""
+        """Execute a command atomically, retrying a concurrent transaction conflict."""
         self._require_ready()
         if command_request.organization_id != context.organization_id:
             raise ContextError("Command organization does not match runtime context")
 
+        for attempt in range(_COMMAND_RETRY_LIMIT):
+            try:
+                return self._execute_command_once(context, command_request)
+            except IntegrityError as exc:
+                # Concurrent executions can both calculate the same per-aggregate
+                # event sequence. The losing transaction is rolled back by the
+                # UnitOfWork; retrying from a fresh transaction lets it observe the
+                # winner's durable command receipt and become an idempotent replay.
+                if attempt == _COMMAND_RETRY_LIMIT - 1:
+                    raise
+                if "domain_events.aggregate_id, domain_events.sequence" not in str(exc):
+                    raise
+                sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
+
+        raise RuntimeError("Unreachable command execution retry state")
+
+    def _execute_command_once(
+        self,
+        context: OrganizationContext,
+        command_request: AdvanceWorkflowCommand,
+    ) -> CommandResult:
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
                 existing = uow.commands.get(command_request.command_id)
