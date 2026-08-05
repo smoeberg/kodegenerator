@@ -40,10 +40,12 @@ class DORRuntime:
     def boot(self) -> None:
         """Run the canonical database migration and mark the runtime ready."""
         alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
-        if not alembic_ini.exists():
-            raise RuntimeNotReadyError(f"Alembic configuration not found: {alembic_ini}")
+        alembic_dir = alembic_ini.parent / "alembic"
+        if not alembic_ini.exists() or not alembic_dir.exists():
+            raise RuntimeNotReadyError("DOR migration configuration is incomplete")
 
         config = Config(str(alembic_ini))
+        config.set_main_option("script_location", str(alembic_dir))
         config.set_main_option("sqlalchemy.url", self.database_url)
         command.upgrade(config, "head")
         self.ready = True
