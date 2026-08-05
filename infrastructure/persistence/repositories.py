@@ -1,7 +1,6 @@
 """Repository implementations for Phase 1 aggregates and events."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -149,6 +148,14 @@ class WorkflowRepository:
         )
         return workflow
 
+    def get_revision(self, workflow_id: str, organization_id: str) -> Optional[int]:
+        return self.session.scalar(
+            select(WorkflowModel.revision).where(
+                WorkflowModel.id == workflow_id,
+                WorkflowModel.organization_id == organization_id,
+            )
+        )
+
     def update(self, workflow: Workflow, organization_id: str, expected_revision: int) -> None:
         row = self.session.scalar(
             select(WorkflowModel).where(
@@ -228,7 +235,10 @@ class EventStore:
 
     def append(self, event: Event) -> Event:
         max_sequence = self.session.scalar(
-            select(func.max(EventModel.sequence)).where(EventModel.aggregate_id == event.aggregate_id)
+            select(func.max(EventModel.sequence)).where(
+                EventModel.aggregate_id == event.aggregate_id,
+                EventModel.organization_id == event.organization_id,
+            )
         )
         event.sequence = (max_sequence or 0) + 1
         self.session.add(
