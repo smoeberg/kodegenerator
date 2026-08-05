@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
+
+from alembic import command
+from alembic.config import Config
 
 from domain.actor import Actor
 from domain.event import Event, EventType
@@ -12,7 +16,6 @@ from domain.principal import Principal
 from domain.workflow import Transition, Workflow, WorkflowState
 
 from infrastructure.persistence.database import Database
-from infrastructure.persistence.models import Base
 from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
 from .context import ContextError, OrganizationContext, establish_context
@@ -30,17 +33,19 @@ class DORRuntime:
     """Minimal, persistent Phase 1 runtime vertical slice."""
 
     def __init__(self, database_url: str = "sqlite:///./dor_runtime.db") -> None:
+        self.database_url = database_url
         self.database = Database(database_url)
         self.ready = False
 
     def boot(self) -> None:
-        """Initialize the schema and mark the runtime ready.
+        """Run the canonical database migration and mark the runtime ready."""
+        alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
+        if not alembic_ini.exists():
+            raise RuntimeNotReadyError(f"Alembic configuration not found: {alembic_ini}")
 
-        Phase 1 uses SQLAlchemy metadata as the bootstrap schema authority. A
-        dedicated migration runner can be introduced without changing the
-        repository/application contracts once the schema is stabilized.
-        """
-        Base.metadata.create_all(self.database.engine)
+        config = Config(str(alembic_ini))
+        config.set_main_option("sqlalchemy.url", self.database_url)
+        command.upgrade(config, "head")
         self.ready = True
 
     def _require_ready(self) -> None:
