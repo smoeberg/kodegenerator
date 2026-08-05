@@ -18,7 +18,7 @@ def _context(runtime: DORRuntime, organization_id: str = "org-a", actor_id: str 
     actor = Actor(id=actor_id, type=ActorType.HUMAN, identity=actor_id)
     runtime.create_organization(organization)
     runtime.register_actor(actor, organization_id)
-    principal = Principal(id=f"principal-{actor_id}", type="user")
+    principal = Principal(id=actor_id, type="user")
     return runtime.establish_context(principal, organization_id, actor_id)
 
 
@@ -42,7 +42,7 @@ def test_organization_isolation(tmp_path: Path):
     actor_b = Actor(id="actor-b", type=ActorType.HUMAN, identity="actor-b")
     runtime.create_organization(organization_b)
     runtime.register_actor(actor_b, "org-b")
-    context_b = runtime.establish_context(Principal(id="principal-b", type="user"), "org-b", "actor-b")
+    context_b = runtime.establish_context(Principal(id="actor-b", type="user"), "org-b", "actor-b")
 
     workflow_b = runtime.create_workflow(context_b, "private-b")
 
@@ -83,7 +83,7 @@ def test_event_durability(tmp_path: Path):
     restarted = DORRuntime(f"sqlite:///{database}")
     restarted.boot()
     restarted_context = restarted.establish_context(
-        Principal(id="principal-actor-a", type="user"), "org-a", "actor-a"
+        Principal(id="actor-a", type="user"), "org-a", "actor-a"
     )
     after_restart = restarted.get_events(restarted_context, workflow.id)
 
