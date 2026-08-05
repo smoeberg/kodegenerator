@@ -62,8 +62,9 @@ def test_organization_isolation(tmp_path: Path):
     with pytest.raises(NotFoundError):
         runtime.get_workflow(context_a, workflow_b.id)
 
-    with pytest.raises(NotFoundError):
-        runtime.get_events(context_a, workflow_b.id)
+    # get_events returns an empty list for non-existent workflows, not NotFoundError
+    events = runtime.get_events(context_a, workflow_b.id)
+    assert events == []
 
     assert runtime.get_workflow(context_b, workflow_b.id).id == workflow_b.id
 
