@@ -5,13 +5,8 @@ from contextlib import AbstractContextManager
 
 from sqlalchemy.orm import Session
 
-from .repositories import (
-    ActorRepository,
-    CommandRepository,
-    EventStore,
-    OrganizationRepository,
-    WorkflowRepository,
-)
+from .command_repository import CommandRepository
+from .repositories import ActorRepository, EventStore, OrganizationRepository, WorkflowRepository
 
 
 class UnitOfWork(AbstractContextManager["UnitOfWork"]):
