@@ -6,7 +6,7 @@ from domain.actor import Actor, ActorType
 from domain.organization import Organization
 from domain.principal import Principal
 from domain.workflow import InvalidTransitionError, WorkflowState
-from runtime.core import DORRuntime
+from runtime.core import DORRuntime, NotFoundError
 
 
 def _runtime(tmp_path: Path) -> DORRuntime:
@@ -46,7 +46,7 @@ def test_organization_isolation(tmp_path: Path):
 
     workflow_b = runtime.create_workflow(context_b, "private-b")
 
-    with pytest.raises(Exception):
+    with pytest.raises(NotFoundError):
         runtime.get_workflow(context_a, workflow_b.id)
 
 
