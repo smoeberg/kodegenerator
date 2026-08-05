@@ -8,7 +8,7 @@ Events are the mechanism by which state changes and actions are recorded and pro
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import uuid
 
@@ -64,7 +64,7 @@ class Event:
     aggregate_type: Optional[str] = None
     organization_id: Optional[str] = None
     actor_id: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     correlation_id: Optional[str] = None
     causation_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -96,7 +96,7 @@ class Event:
             aggregate_type=data.get("aggregate_type"),
             organization_id=data.get("organization_id"),
             actor_id=data.get("actor_id"),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.utcnow(),
+            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
             correlation_id=data.get("correlation_id"),
             causation_id=data.get("causation_id"),
             metadata=data.get("metadata", {}),

@@ -8,7 +8,7 @@ Roles are assigned to Actors and determine what they can do in DOR.
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -58,8 +58,8 @@ class RoleDefinition:
     
     # Relationships
     organization: Optional["Organization"] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         """Initialize with default ID if not provided."""
@@ -75,7 +75,7 @@ class RoleDefinition:
         """
         if capability_id not in self.capabilities:
             self.capabilities.append(capability_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def can_perform(self, action: str) -> bool:
         """
@@ -134,8 +134,8 @@ class RoleDefinition:
             needs_approval_from=data.get("needs_approval_from", {}),
             responsibilities=data.get("responsibilities", []),
             organization=None,  # Will be set separately
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             **kwargs
         )
 

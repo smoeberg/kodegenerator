@@ -7,7 +7,7 @@ Workflows are the orchestration mechanism for executing Intents.
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import uuid
 
@@ -108,8 +108,8 @@ class Workflow:
     events: List["Event"] = field(default_factory=list)
 
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not hasattr(self, "id") or self.id is None:
@@ -228,7 +228,7 @@ class Workflow:
             self.status = WorkflowStatus.FAILED
         else:
             self.status = WorkflowStatus.RUNNING
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def _get_condition_context(self, actor: "Actor", artifact: Optional["Artifact"]) -> Dict[str, Any]:
         context: Dict[str, Any] = {"actor": actor, "workflow": self, "artifact": artifact}
@@ -273,8 +273,8 @@ class Workflow:
             transitions=transitions,
             gates=gates,
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             **kwargs,
         )
 

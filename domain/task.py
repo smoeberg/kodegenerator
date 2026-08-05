@@ -8,7 +8,7 @@ Tasks are the atomic units of execution in DOR.
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import uuid
 
@@ -69,8 +69,8 @@ class Task:
     execution_parameters: Dict[str, Any] = field(default_factory=dict)
     
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not hasattr(self, 'id') or self.id is None:
@@ -91,19 +91,19 @@ class Task:
     def assign_to(self, actor: "Actor") -> None:
         self.assigned_actor = actor
         self.status = TaskStatus.CLAIMED
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def start(self) -> None:
         if self.status == TaskStatus.CLAIMED:
             self.status = TaskStatus.RUNNING
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def succeed(self, output_artifacts: List[str], execution_result: Optional[Dict] = None) -> None:
         self.status = TaskStatus.SUCCEEDED
         self.output_artifacts = output_artifacts
         if execution_result:
             self.metadata["execution_result"] = execution_result
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def fail(self, error: str, retry: bool = False) -> None:
         self.status = TaskStatus.FAILED
@@ -111,16 +111,16 @@ class Task:
         self.retry_count += 1
         if retry and self.retry_count < self.max_retries:
             self.status = TaskStatus.RETRYING
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def cancel(self) -> None:
         self.status = TaskStatus.CANCELLED
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def block(self, reason: str) -> None:
         self.status = TaskStatus.BLOCKED
         self.last_error = f"Blocked: {reason}"
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -164,7 +164,7 @@ class Task:
             last_error=data.get("last_error"),
             execution_parameters=data.get("execution_parameters", {}),
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             **kwargs
         )

@@ -8,7 +8,7 @@ Policies are the mechanism by which organizations enforce compliance and governa
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import uuid
 
@@ -62,8 +62,8 @@ class Policy:
     enabled: bool = True
     priority: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not hasattr(self, 'id') or self.id is None:
@@ -139,8 +139,8 @@ class Policy:
             enabled=data.get("enabled", True),
             priority=data.get("priority", 0),
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             organization=None,
             **kwargs
         )
@@ -154,7 +154,7 @@ class PolicyViolation:
     violation_type: str
     message: str
     details: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     actor_id: Optional[str] = None
     resource_type: Optional[str] = None
     resource_id: Optional[str] = None
@@ -180,7 +180,7 @@ class PolicyViolation:
             violation_type=data["violation_type"],
             message=data["message"],
             details=data.get("details", {}),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.utcnow(),
+            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
             actor_id=data.get("actor_id"),
             resource_type=data.get("resource_type"),
             resource_id=data.get("resource_id")
@@ -202,7 +202,7 @@ class AuthorizationDecision:
     decision: bool = True
     reason: str = ""
     evidence: Dict[str, Any] = field(default_factory=dict)
-    issued_at: datetime = field(default_factory=datetime.utcnow)
+    issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
 
     def is_allowed(self) -> bool:
@@ -246,7 +246,7 @@ class AuthorizationDecision:
             decision=data.get("decision", True),
             reason=data.get("reason", ""),
             evidence=data.get("evidence", {}),
-            issued_at=datetime.fromisoformat(data["issued_at"]) if "issued_at" in data else datetime.utcnow(),
+            issued_at=datetime.fromisoformat(data["issued_at"]) if "issued_at" in data else datetime.now(timezone.utc),
             expires_at=datetime.fromisoformat(data["expires_at"]) if "expires_at" in data else None,
             subject=None,
             **kwargs

@@ -8,7 +8,7 @@ The Principal is the entry point for all identity-related operations in DOR.
 
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -35,8 +35,8 @@ class Principal:
     name: Optional[str] = None
     email: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @classmethod
     def from_jwt(cls, jwt_payload: Dict[str, Any]) -> "Principal":
@@ -88,8 +88,8 @@ class Principal:
             name=data.get("name"),
             email=data.get("email"),
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow()
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc)
         )
 
     def __str__(self) -> str:

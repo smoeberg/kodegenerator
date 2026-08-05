@@ -8,7 +8,7 @@ Governance is a first-class concern in DOR and is integrated from the foundation
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import uuid
 
@@ -49,7 +49,7 @@ class GovernanceDecision:
     comments: str = ""
     evidence: Dict[str, Any] = field(default_factory=dict)
     voting_record: Dict[str, str] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     actor_id: Optional[str] = None
 
     def is_approved(self) -> bool:
@@ -81,7 +81,7 @@ class GovernanceDecision:
             comments=data.get("comments", ""),
             evidence=data.get("evidence", {}),
             voting_record=data.get("voting_record", {}),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.utcnow(),
+            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
             actor_id=data.get("actor_id")
         )
 
@@ -98,18 +98,18 @@ class GovernanceBoard:
     policies: List["Policy"] = field(default_factory=list)
     decisions: List[GovernanceDecision] = field(default_factory=list)
     quorum: int = 1
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def add_member(self, actor: "Actor") -> None:
         if actor not in self.members:
             self.members.append(actor)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def remove_member(self, actor: "Actor") -> None:
         if actor in self.members:
             self.members.remove(actor)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def has_quorum(self) -> bool:
         return len(self.members) >= self.quorum
@@ -132,7 +132,7 @@ class GovernanceBoard:
         )
         
         self.decisions.append(governance_decision)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         
         return governance_decision
 
@@ -158,8 +158,8 @@ class GovernanceBoard:
             id=data.get("id", str(uuid.uuid4())),
             description=data.get("description", ""),
             quorum=data.get("quorum", 1),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             organization=None,
             members=[],
             policies=[],
@@ -175,8 +175,8 @@ class GovernanceDepartment:
     name: str = "Governance Department"
     organization: Optional["Organization"] = None
     boards: Dict[BoardType, GovernanceBoard] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def get_board(self, board_type: BoardType) -> Optional[GovernanceBoard]:
         return self.boards.get(board_type)
@@ -185,12 +185,12 @@ class GovernanceDepartment:
         if board.board_type not in self.boards:
             self.boards[board.board_type] = board
             board.organization = self.organization
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def remove_board(self, board_type: BoardType) -> None:
         if board_type in self.boards:
             del self.boards[board_type]
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def approve_artifact(self, artifact: "Artifact", board_type: BoardType, actor: "Actor", comments: str = "") -> bool:
         board = self.get_board(board_type)
@@ -243,8 +243,8 @@ class GovernanceDepartment:
             id=data.get("id", str(uuid.uuid4())),
             name=data.get("name", "Governance Department"),
             boards=boards,
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             organization=None,
             **kwargs
         )

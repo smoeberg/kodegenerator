@@ -36,7 +36,7 @@ class HumanTaskExecutor:
             event_type=EventType.TASK_ASSIGNED,
             actor=actor,
             metadata={"notification": notification},
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         ))
 
         # Vent på menneskelig handling (simuleret)

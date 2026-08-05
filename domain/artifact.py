@@ -8,7 +8,7 @@ Artifacts are first-class primitives in DOR and serve as the tangible outputs of
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 import hashlib
 import uuid
@@ -64,7 +64,7 @@ class Signature:
     actor_id: str
     status: str
     comments: str = ""
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     evidence: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -84,7 +84,7 @@ class Signature:
             actor_id=data["actor_id"],
             status=data["status"],
             comments=data.get("comments", ""),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.utcnow(),
+            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
             evidence=data.get("evidence")
         )
 
@@ -154,8 +154,8 @@ class Artifact:
     children: List[str] = field(default_factory=list)
     
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not hasattr(self, 'id') or self.id is None:
@@ -171,7 +171,7 @@ class Artifact:
 
     def add_signature(self, signature: Signature) -> None:
         self.signatures.append(signature)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def is_approved(self) -> bool:
         if not self.signatures:
@@ -187,18 +187,18 @@ class Artifact:
     def add_parent(self, parent_id: str) -> None:
         if parent_id not in self.parents:
             self.parents.append(parent_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def add_child(self, child_id: str) -> None:
         if child_id not in self.children:
             self.children.append(child_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def submit_for_review(self) -> None:
         if self.state == ArtifactState.DRAFT:
             self.state = ArtifactState.SUBMITTED
             self.governance_state = GovernanceState.SUBMITTED
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def approve(self, role_id: str, actor_id: str, comments: str = "") -> None:
         self.add_signature(Signature(role_id=role_id, actor_id=actor_id, status="approved", comments=comments))
@@ -208,13 +208,13 @@ class Artifact:
         else:
             self.state = ArtifactState.IN_REVIEW
             self.governance_state = GovernanceState.IN_REVIEW
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def reject(self, role_id: str, actor_id: str, comments: str = "") -> None:
         self.add_signature(Signature(role_id=role_id, actor_id=actor_id, status="rejected", comments=comments))
         self.state = ArtifactState.REJECTED
         self.governance_state = GovernanceState.REJECTED
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -259,7 +259,7 @@ class Artifact:
             parents=data.get("parents", []),
             children=data.get("children", []),
             metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             **kwargs
         )

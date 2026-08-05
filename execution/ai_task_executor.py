@@ -110,7 +110,7 @@ class AITaskExecutor:
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             ))
 
             return {
@@ -200,7 +200,7 @@ class AITaskExecutor:
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             ))
 
             return {
@@ -277,7 +277,7 @@ class AITaskExecutor:
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             ))
 
             return {
@@ -356,7 +356,7 @@ class AITaskExecutor:
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             ))
 
             return {
