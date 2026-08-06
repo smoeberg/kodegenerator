@@ -27,7 +27,15 @@ class AuthorizationService:
         organization_id: str,
         capability_id: str,
         resource_id: str | None = None,
+        resource_organization_id: str | None = None,
     ) -> AuthorizationDecision:
+        """Evaluate one authorization request without implicit fallback.
+
+        ``resource_organization_id`` is supplied by the command boundary after
+        resolving the target resource. A mismatch is denied before capability
+        grants are considered, preventing authority from one tenant being used
+        against another tenant's resource.
+        """
         base = dict(
             actor_id=actor_id,
             principal_id=principal.id,
@@ -51,6 +59,18 @@ class AuthorizationService:
                 allowed=False,
                 reason="Capability is not canonical",
                 reason_code="invalid_capability",
+                **base,
+            )
+
+        if (
+            resource_organization_id is not None
+            and resource_organization_id != organization_id
+        ):
+            return AuthorizationDecision(
+                allowed=False,
+                reason="Target resource belongs to another organization",
+                reason_code="resource_organization_mismatch",
+                context={"resource_organization_id": resource_organization_id},
                 **base,
             )
 
