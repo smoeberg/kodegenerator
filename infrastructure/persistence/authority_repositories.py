@@ -1,6 +1,7 @@
 """Persistence boundary for Phase 3 role authority."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -82,7 +83,7 @@ class AuthorityRepository:
                 organization_id=row.organization_id,
                 role_definition_id=row.role_definition_id,
                 status=row.status,
-                created_at=row.created_at,
+                created_at=row.created_at.replace(tzinfo=timezone.utc) if row.created_at and row.created_at.tzinfo is None else row.created_at,
             )
             for row in rows
         ]

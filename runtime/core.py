@@ -164,14 +164,20 @@ class DORRuntime:
         for attempt in range(_COMMAND_RETRY_LIMIT):
             try:
                 return self._execute_command_once(context, command_request)
-            except IntegrityError as exc:
+            except (IntegrityError, RepositoryError) as exc:
                 # Concurrent executions can both calculate the same per-aggregate
                 # event sequence. The losing transaction is rolled back by the
                 # UnitOfWork; retrying from a fresh transaction lets it observe the
                 # winner's durable command receipt and become an idempotent replay.
                 if attempt == _COMMAND_RETRY_LIMIT - 1:
                     raise
-                if "domain_events.aggregate_id, domain_events.sequence" not in str(exc):
+                if isinstance(exc, IntegrityError) and (
+                    "domain_events.aggregate_id, domain_events.sequence" not in str(exc)
+                    and "command_executions" not in str(exc)
+                    and "UNIQUE constraint failed" not in str(exc)
+                ):
+                    raise
+                if isinstance(exc, RepositoryError) and "revision conflict" not in str(exc):
                     raise
                 sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
 
@@ -215,7 +221,13 @@ class DORRuntime:
                 if revision is None:
                     raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
 
-                events = workflow.transition_to(command_request.target_state, context.actor)
+                try:
+                    events = workflow.transition_to(command_request.target_state, context.actor)
+                except InvalidTransitionError:
+                    if workflow.current_state == command_request.target_state:
+                        events = []
+                    else:
+                        raise
                 for event in events:
                     workflow.apply_event(event)
                     uow.events.append(event)
