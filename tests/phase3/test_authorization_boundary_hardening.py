@@ -71,7 +71,7 @@ def test_cross_organization_resource_is_denied_and_audited(tmp_path: Path) -> No
     with pytest.raises(CommandAuthorizationError) as exc:
         runtime.execute_command(context_a, _command(context_a, workflow_b.id, "cross-org"))
 
-    assert exc.value.decision.reason_code == "resource_organization_mismatch"
+    assert exc.value.decision.reason_code == "resource_not_accessible"
     assert runtime.get_workflow(context_b, workflow_b.id).current_state.name == WorkflowState.NEW
     audit = runtime.get_events(context_a, workflow_b.id, include_authorization_audit=True)
     assert audit[-1].event_type == EventType.AUTHORIZATION_DENIED
