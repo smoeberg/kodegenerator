@@ -5,14 +5,17 @@ persistence implementation details. These are the four Phase 1 gates:
 boot, organization isolation, workflow transitions, and durable events.
 """
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from domain.actor import Actor, ActorType
+from domain.authority import RoleAssignment, RoleDefinition
 from domain.organization import Organization
 from domain.principal import Principal
 from domain.workflow import InvalidTransitionError, WorkflowState
+from infrastructure.persistence.uow import UnitOfWork
 from runtime.context import ContextError
 from runtime.core import DORRuntime, NotFoundError
 
@@ -30,6 +33,21 @@ def _context(
     actor = Actor(id=actor_id, type=ActorType.HUMAN, identity=actor_id)
     runtime.create_organization(organization)
     runtime.register_actor(actor, organization_id)
+    role = RoleDefinition(
+        id=f"workflow-executor-{actor_id}",
+        name="Workflow Executor",
+        capabilities=frozenset({"workflow.transition"}),
+    )
+    assignment = RoleAssignment(
+        actor_id=actor_id,
+        organization_id=organization_id,
+        role_definition_id=role.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    with runtime.database.session() as session:
+        with UnitOfWork(session) as uow:
+            uow.authority.add_role_definition(role)
+            uow.authority.assign_role(assignment)
     principal = Principal(
         id=actor_id,
         type="user",
