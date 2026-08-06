@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from domain.authority import RoleAssignment, RoleDefinition
+from domain.authority_resolution import resolve_effective_capabilities
 
 from .models import ActorModel, RoleAssignmentModel, RoleDefinitionModel
 
@@ -83,7 +85,29 @@ class AuthorityRepository:
                 organization_id=row.organization_id,
                 role_definition_id=row.role_definition_id,
                 status=row.status,
-                created_at=row.created_at.replace(tzinfo=timezone.utc) if row.created_at and row.created_at.tzinfo is None else row.created_at,
+                created_at=(
+                    row.created_at.replace(tzinfo=timezone.utc)
+                    if row.created_at and row.created_at.tzinfo is None
+                    else row.created_at
+                ),
             )
             for row in rows
         ]
+
+    def get_effective_capabilities(
+        self, actor_id: str, organization_id: str
+    ) -> frozenset[str]:
+        """Resolve effective capabilities through the canonical authority chain."""
+        assignments = self.get_assignments(actor_id, organization_id)
+        role_ids = {assignment.role_definition_id for assignment in assignments}
+        roles = {
+            role_id: role
+            for role_id in role_ids
+            if (role := self.get_role_definition(role_id)) is not None
+        }
+        return resolve_effective_capabilities(
+            actor_id,
+            organization_id,
+            assignments,
+            roles,
+        )
