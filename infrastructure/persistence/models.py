@@ -1,8 +1,4 @@
-"""SQLAlchemy persistence models for DOR Foundation v0.1 Phase 1.
-
-The persistence model deliberately stores only durable identifiers and
-serializable workflow/event state. Domain objects remain persistence-agnostic.
-"""
+"""SQLAlchemy persistence models for DOR Foundation v0.1 Phase 1 and Phase 2."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +10,7 @@ from sqlalchemy.types import JSON
 
 
 class Base(DeclarativeBase):
-    """Single SQLAlchemy metadata authority for Phase 1."""
+    """Single SQLAlchemy metadata authority for DOR persistence."""
 
 
 class OrganizationModel(Base):
@@ -79,3 +75,15 @@ class EventModel(Base):
     __table_args__ = (
         UniqueConstraint("aggregate_id", "sequence", name="uq_event_aggregate_sequence"),
     )
+
+
+class CommandExecutionModel(Base):
+    __tablename__ = "command_executions"
+
+    command_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    command_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    aggregate_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

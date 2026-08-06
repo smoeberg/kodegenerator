@@ -1,10 +1,11 @@
-"""Unit of Work for atomic aggregate + event persistence."""
+"""Unit of Work for atomic aggregate + event + command persistence."""
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
 
 from sqlalchemy.orm import Session
 
+from .command_repository import CommandRepository
 from .repositories import ActorRepository, EventStore, OrganizationRepository, WorkflowRepository
 
 
@@ -17,6 +18,7 @@ class UnitOfWork(AbstractContextManager["UnitOfWork"]):
         self.actors = ActorRepository(session)
         self.workflows = WorkflowRepository(session)
         self.events = EventStore(session)
+        self.commands = CommandRepository(session)
 
     def __enter__(self) -> "UnitOfWork":
         return self

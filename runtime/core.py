@@ -1,14 +1,16 @@
-"""Phase 1 DOR runtime: boot, identity context, workflow and durable events."""
+"""DOR runtime: boot, identity context, workflows, events and commands."""
 from __future__ import annotations
-from datetime import timezone
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
+from time import sleep
 from typing import Optional
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy.exc import IntegrityError
 
 from domain.actor import Actor
 from domain.event import Event, EventType
@@ -19,6 +21,7 @@ from domain.workflow import Transition, Workflow, WorkflowState
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
+from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResult
 from .context import ContextError, OrganizationContext, establish_context
 
 
@@ -30,8 +33,13 @@ class NotFoundError(RuntimeError):
     """Raised when an organization-scoped resource does not exist."""
 
 
+_ALEMBIC_BOOT_LOCK = RLock()
+_COMMAND_RETRY_LIMIT = 3
+_COMMAND_RETRY_DELAY_SECONDS = 0.02
+
+
 class DORRuntime:
-    """Minimal, persistent Phase 1 runtime vertical slice."""
+    """Persistent DOR runtime with organization-scoped command execution."""
 
     def __init__(self, database_url: str = "sqlite:///./dor_runtime.db") -> None:
         self.database_url = database_url
@@ -48,7 +56,8 @@ class DORRuntime:
         config = Config(str(alembic_ini))
         config.set_main_option("script_location", str(alembic_dir))
         config.set_main_option("sqlalchemy.url", self.database_url)
-        command.upgrade(config, "head")
+        with _ALEMBIC_BOOT_LOCK:
+            command.upgrade(config, "head")
         self.ready = True
 
     def _require_ready(self) -> None:
@@ -141,6 +150,88 @@ class DORRuntime:
                     uow.events.append(event)
                 uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
                 return workflow
+
+    def execute_command(
+        self,
+        context: OrganizationContext,
+        command_request: AdvanceWorkflowCommand,
+    ) -> CommandResult:
+        """Execute a command atomically, retrying a concurrent transaction conflict."""
+        self._require_ready()
+        if command_request.organization_id != context.organization_id:
+            raise ContextError("Command organization does not match runtime context")
+
+        for attempt in range(_COMMAND_RETRY_LIMIT):
+            try:
+                return self._execute_command_once(context, command_request)
+            except IntegrityError as exc:
+                # Concurrent executions can both calculate the same per-aggregate
+                # event sequence. The losing transaction is rolled back by the
+                # UnitOfWork; retrying from a fresh transaction lets it observe the
+                # winner's durable command receipt and become an idempotent replay.
+                if attempt == _COMMAND_RETRY_LIMIT - 1:
+                    raise
+                if "domain_events.aggregate_id, domain_events.sequence" not in str(exc):
+                    raise
+                sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
+
+        raise RuntimeError("Unreachable command execution retry state")
+
+    def _execute_command_once(
+        self,
+        context: OrganizationContext,
+        command_request: AdvanceWorkflowCommand,
+    ) -> CommandResult:
+        with self.database.session() as session:
+            with UnitOfWork(session) as uow:
+                existing = uow.commands.get(command_request.command_id)
+                if existing is not None:
+                    if (
+                        existing.organization_id != context.organization_id
+                        or existing.actor_id != context.actor_id
+                        or existing.command_type != type(command_request).__name__
+                        or existing.payload != command_request.payload
+                    ):
+                        raise CommandConflictError(
+                            f"Command ID already used with different command data: {command_request.command_id}"
+                        )
+                    workflow = uow.workflows.get_for_organization(
+                        command_request.workflow_id, context.organization_id
+                    )
+                    if workflow is None:
+                        raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+                    workflow.organization = context.organization
+                    return CommandResult(command_id=command_request.command_id, workflow=workflow)
+
+                workflow = uow.workflows.get_for_organization(
+                    command_request.workflow_id, context.organization_id
+                )
+                if workflow is None:
+                    raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+                workflow.organization = context.organization
+                revision = uow.workflows.get_revision(
+                    command_request.workflow_id, context.organization_id
+                )
+                if revision is None:
+                    raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+
+                events = workflow.transition_to(command_request.target_state, context.actor)
+                for event in events:
+                    workflow.apply_event(event)
+                    uow.events.append(event)
+                uow.workflows.update(
+                    workflow, context.organization_id, expected_revision=revision
+                )
+                uow.commands.add(
+                    command_id=command_request.command_id,
+                    organization_id=context.organization_id,
+                    actor_id=context.actor_id,
+                    command_type=type(command_request).__name__,
+                    payload=command_request.payload,
+                    aggregate_id=workflow.id,
+                    created_at=datetime.now(timezone.utc),
+                )
+                return CommandResult(command_id=command_request.command_id, workflow=workflow)
 
     def get_events(self, context: OrganizationContext, aggregate_id: str) -> list[Event]:
         self._require_ready()
