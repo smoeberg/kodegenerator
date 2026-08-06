@@ -228,7 +228,8 @@ class DORRuntime:
                     try:
                         events = workflow.transition_to(command_request.target_state, context.actor)
                     except InvalidTransitionError:
-                        if workflow.current_state == command_request.target_state:
+                        current_state = workflow.current_state.name if workflow.current_state else None
+                        if current_state == command_request.target_state:
                             events = []
                         else:
                             raise
@@ -262,11 +263,14 @@ class DORRuntime:
             events = UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
         if include_authorization_audit:
             return events
-        return [
+        filtered = [
             event
             for event in events
             if event.event_type not in {EventType.AUTHORIZATION_GRANTED, EventType.AUTHORIZATION_DENIED}
         ]
+        for sequence, event in enumerate(filtered, start=1):
+            event.sequence = sequence
+        return filtered
 
     @staticmethod
     def _new_workflow(name: str, description: str, organization: Organization) -> Workflow:
