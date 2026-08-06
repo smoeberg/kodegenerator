@@ -66,7 +66,7 @@ def test_denied_command_persists_authorization_audit_without_mutation(tmp_path: 
         runtime.execute_command(context, _command(context, workflow.id, command_id))
 
     assert runtime.get_workflow(context, workflow.id).current_state == WorkflowState.NEW
-    events = runtime.get_events(context, workflow.id)
+    events = runtime.get_events(context, workflow.id, include_authorization_audit=True)
     audit = [event for event in events if event.event_type is EventType.AUTHORIZATION_DENIED]
 
     assert len(audit) == 1
@@ -88,7 +88,7 @@ def test_allowed_command_persists_grant_audit_in_same_event_stream(tmp_path: Pat
 
     runtime.execute_command(context, _command(context, workflow.id, command_id))
 
-    events = runtime.get_events(context, workflow.id)
+    events = runtime.get_events(context, workflow.id, include_authorization_audit=True)
     event_types = [event.event_type for event in events]
     assert EventType.AUTHORIZATION_GRANTED in event_types
     assert EventType.WORKFLOW_STATE_CHANGED in event_types
@@ -112,8 +112,8 @@ def test_cross_organization_denial_is_audited_only_in_requesting_org(tmp_path: P
     with pytest.raises(CommandAuthorizationError):
         runtime.execute_command(context_a, _command(context_a, workflow_a.id, "cmd-cross-org"))
 
-    events_a = runtime.get_events(context_a, workflow_a.id)
+    events_a = runtime.get_events(context_a, workflow_a.id, include_authorization_audit=True)
     assert any(event.event_type is EventType.AUTHORIZATION_DENIED for event in events_a)
     assert all(event.organization_id == "org-a" for event in events_a)
 
-    assert runtime.get_events(context_b, workflow_a.id) == []
+    assert runtime.get_events(context_b, workflow_a.id, include_authorization_audit=True) == []
