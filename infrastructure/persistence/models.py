@@ -1,4 +1,4 @@
-"""SQLAlchemy persistence models for DOR Foundation v0.1 Phase 1 and Phase 2."""
+"""SQLAlchemy persistence models for DOR Foundation and Phase 3 authority."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -34,8 +34,33 @@ class ActorModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_actor_org_id"),)
+
+
+class RoleDefinitionModel(Base):
+    __tablename__ = "role_definitions"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+
+class RoleAssignmentModel(Base):
+    __tablename__ = "role_assignments"
+
+    actor_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    role_definition_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
     __table_args__ = (
-        UniqueConstraint("organization_id", "id", name="uq_actor_org_id"),
+        UniqueConstraint(
+            "actor_id", "organization_id", "role_definition_id",
+            name="uq_role_assignment_actor_org_role",
+        ),
     )
 
 
@@ -72,9 +97,7 @@ class EventModel(Base):
     schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.0")
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("aggregate_id", "sequence", name="uq_event_aggregate_sequence"),
-    )
+    __table_args__ = (UniqueConstraint("aggregate_id", "sequence", name="uq_event_aggregate_sequence"),)
 
 
 class CommandExecutionModel(Base):
