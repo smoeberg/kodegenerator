@@ -7,10 +7,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from domain.actor import Actor, ActorType
+from domain.authority import RoleAssignment, RoleDefinition
 from domain.organization import Organization
 from domain.principal import Principal
 from domain.workflow import WorkflowState
 from infrastructure.persistence.models import CommandExecutionModel
+from infrastructure.persistence.uow import UnitOfWork
 from runtime.commands import AdvanceWorkflowCommand
 from runtime.core import DORRuntime
 
@@ -20,6 +22,20 @@ def _context(runtime: DORRuntime):
     actor = Actor(id="actor-a", type=ActorType.HUMAN, identity="actor-a")
     runtime.create_organization(organization)
     runtime.register_actor(actor, "org-a")
+    role = RoleDefinition(
+        id="workflow.operator",
+        name="Workflow Operator",
+        capabilities=frozenset({"workflow.transition"}),
+    )
+    assignment = RoleAssignment(
+        actor_id="actor-a",
+        organization_id="org-a",
+        role_definition_id=role.id,
+    )
+    with runtime.database.session() as session:
+        with UnitOfWork(session) as uow:
+            uow.authority.add_role_definition(role)
+            uow.authority.assign_role(assignment)
     return runtime.establish_context(
         Principal(id="actor-a", type="user", metadata={"actor_id": "actor-a"}),
         "org-a",
@@ -42,7 +58,6 @@ def test_concurrent_same_command_id_has_one_durable_receipt(tmp_path: Path):
     )
 
     def invoke():
-        # Reuse the same runtime instance (already booted)
         worker_context = runtime.establish_context(
             Principal(id="actor-a", type="user", metadata={"actor_id": "actor-a"}),
             "org-a",
