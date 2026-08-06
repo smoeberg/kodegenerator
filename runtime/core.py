@@ -11,8 +11,10 @@ from uuid import uuid4
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from domain.actor import Actor
+from domain.authorization_audit import create_authorization_audit_event
 from domain.authority import AuthorizationDecision
 from domain.event import Event, EventType
 from domain.organization import Organization
@@ -161,6 +163,22 @@ class DORRuntime:
                 sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
         raise RuntimeError("Unreachable command execution retry state")
 
+    def _record_denied_authorization_audit(
+        self,
+        decision: AuthorizationDecision,
+        command_request: AdvanceWorkflowCommand,
+    ) -> None:
+        """Persist a denial audit outside the failed command transaction."""
+        audit_event = create_authorization_audit_event(
+            decision,
+            command_id=command_request.command_id,
+            command_type=type(command_request).__name__,
+            allowed=False,
+        )
+        with self.database.session() as audit_session:
+            with UnitOfWork(audit_session) as audit_uow:
+                audit_uow.events.append(audit_event)
+
     def _execute_command_once(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
@@ -172,6 +190,7 @@ class DORRuntime:
                     resource_id=command_request.workflow_id,
                 )
                 if not decision.allowed:
+                    self._record_denied_authorization_audit(decision, command_request)
                     raise CommandAuthorizationError(decision)
 
                 existing = uow.commands.get(command_request.command_id)
@@ -191,6 +210,15 @@ class DORRuntime:
                 revision = uow.workflows.get_revision(command_request.workflow_id, context.organization_id)
                 if revision is None:
                     raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+
+                audit_event = create_authorization_audit_event(
+                    decision,
+                    command_id=command_request.command_id,
+                    command_type=type(command_request).__name__,
+                    allowed=True,
+                )
+                uow.events.append(audit_event)
+
                 try:
                     events = workflow.transition_to(command_request.target_state, context.actor)
                 except InvalidTransitionError:
