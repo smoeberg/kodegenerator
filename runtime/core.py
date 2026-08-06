@@ -13,14 +13,15 @@ from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 
 from domain.actor import Actor
+from domain.authority import AuthorizationDecision
 from domain.event import Event, EventType
 from domain.organization import Organization
 from domain.principal import Principal
-from domain.workflow import Transition, Workflow, WorkflowState
-
+from domain.workflow import InvalidTransitionError, Transition, Workflow, WorkflowState
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
+from services.authorization_service import AuthorizationService
 from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResult
 from .context import ContextError, OrganizationContext, establish_context
 
@@ -31,6 +32,14 @@ class RuntimeNotReadyError(RuntimeError):
 
 class NotFoundError(RuntimeError):
     """Raised when an organization-scoped resource does not exist."""
+
+
+class CommandAuthorizationError(PermissionError):
+    """Raised when a command fails the central authorization boundary."""
+
+    def __init__(self, decision: AuthorizationDecision) -> None:
+        self.decision = decision
+        super().__init__(f"Command denied: {decision.reason_code}: {decision.reason}")
 
 
 _ALEMBIC_BOOT_LOCK = RLock()
@@ -52,7 +61,6 @@ class DORRuntime:
         alembic_dir = alembic_ini.parent / "alembic"
         if not alembic_ini.exists() or not alembic_dir.exists():
             raise RuntimeNotReadyError("DOR migration configuration is incomplete")
-
         config = Config(str(alembic_ini))
         config.set_main_option("script_location", str(alembic_dir))
         config.set_main_option("sqlalchemy.url", self.database_url)
@@ -99,15 +107,7 @@ class DORRuntime:
     def create_workflow(self, context: OrganizationContext, name: str, description: str = "") -> Workflow:
         self._require_ready()
         workflow = self._new_workflow(name=name, description=description, organization=context.organization)
-        event = Event(
-            event_type=EventType.WORKFLOW_CREATED,
-            aggregate_id=workflow.id,
-            aggregate_type="workflow",
-            organization_id=context.organization_id,
-            actor_id=context.actor_id,
-            timestamp=datetime.now(timezone.utc),
-            metadata={"workflow_id": workflow.id, "name": workflow.name},
-        )
+        event = Event(event_type=EventType.WORKFLOW_CREATED, aggregate_id=workflow.id, aggregate_type="workflow", organization_id=context.organization_id, actor_id=context.actor_id, timestamp=datetime.now(timezone.utc), metadata={"workflow_id": workflow.id, "name": workflow.name})
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
                 uow.workflows.add(workflow, context.organization_id)
@@ -125,14 +125,7 @@ class DORRuntime:
             workflow.events = uow.events.for_aggregate(workflow_id, context.organization_id)
             return workflow
 
-    def transition_workflow(
-        self,
-        context: OrganizationContext,
-        workflow_id: str,
-        new_state: WorkflowState,
-        evidence: Optional[dict] = None,
-    ) -> Workflow:
-        """Execute one workflow transition atomically with its event."""
+    def transition_workflow(self, context: OrganizationContext, workflow_id: str, new_state: WorkflowState, evidence: Optional[dict] = None) -> Workflow:
         self._require_ready()
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
@@ -143,7 +136,6 @@ class DORRuntime:
                 revision = uow.workflows.get_revision(workflow_id, context.organization_id)
                 if revision is None:
                     raise NotFoundError(f"Workflow not found: {workflow_id}")
-
                 events = workflow.transition_to(new_state, context.actor, evidence=evidence)
                 for event in events:
                     workflow.apply_event(event)
@@ -151,76 +143,54 @@ class DORRuntime:
                 uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
                 return workflow
 
-    def execute_command(
-        self,
-        context: OrganizationContext,
-        command_request: AdvanceWorkflowCommand,
-    ) -> CommandResult:
-        """Execute a command atomically, retrying a concurrent transaction conflict."""
+    def execute_command(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
+        """Execute a command atomically, enforcing central authorization before mutation."""
         self._require_ready()
         if command_request.organization_id != context.organization_id:
             raise ContextError("Command organization does not match runtime context")
-
         for attempt in range(_COMMAND_RETRY_LIMIT):
             try:
                 return self._execute_command_once(context, command_request)
             except (IntegrityError, RepositoryError) as exc:
-                # Concurrent executions can both calculate the same per-aggregate
-                # event sequence. The losing transaction is rolled back by the
-                # UnitOfWork; retrying from a fresh transaction lets it observe the
-                # winner's durable command receipt and become an idempotent replay.
                 if attempt == _COMMAND_RETRY_LIMIT - 1:
                     raise
-                if isinstance(exc, IntegrityError) and (
-                    "domain_events.aggregate_id, domain_events.sequence" not in str(exc)
-                    and "command_executions" not in str(exc)
-                    and "UNIQUE constraint failed" not in str(exc)
-                ):
+                if isinstance(exc, IntegrityError) and ("domain_events.aggregate_id, domain_events.sequence" not in str(exc) and "command_executions" not in str(exc) and "UNIQUE constraint failed" not in str(exc)):
                     raise
                 if isinstance(exc, RepositoryError) and "revision conflict" not in str(exc):
                     raise
                 sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
-
         raise RuntimeError("Unreachable command execution retry state")
 
-    def _execute_command_once(
-        self,
-        context: OrganizationContext,
-        command_request: AdvanceWorkflowCommand,
-    ) -> CommandResult:
+    def _execute_command_once(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
+                decision = AuthorizationService(uow).authorize(
+                    principal=context.principal,
+                    actor_id=context.actor_id,
+                    organization_id=context.organization_id,
+                    capability_id="workflow.transition",
+                    resource_id=command_request.workflow_id,
+                )
+                if not decision.allowed:
+                    raise CommandAuthorizationError(decision)
+
                 existing = uow.commands.get(command_request.command_id)
                 if existing is not None:
-                    if (
-                        existing.organization_id != context.organization_id
-                        or existing.actor_id != context.actor_id
-                        or existing.command_type != type(command_request).__name__
-                        or existing.payload != command_request.payload
-                    ):
-                        raise CommandConflictError(
-                            f"Command ID already used with different command data: {command_request.command_id}"
-                        )
-                    workflow = uow.workflows.get_for_organization(
-                        command_request.workflow_id, context.organization_id
-                    )
+                    if existing.organization_id != context.organization_id or existing.actor_id != context.actor_id or existing.command_type != type(command_request).__name__ or existing.payload != command_request.payload:
+                        raise CommandConflictError(f"Command ID already used with different command data: {command_request.command_id}")
+                    workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
                     if workflow is None:
                         raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
                     workflow.organization = context.organization
                     return CommandResult(command_id=command_request.command_id, workflow=workflow)
 
-                workflow = uow.workflows.get_for_organization(
-                    command_request.workflow_id, context.organization_id
-                )
+                workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
                 if workflow is None:
                     raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
                 workflow.organization = context.organization
-                revision = uow.workflows.get_revision(
-                    command_request.workflow_id, context.organization_id
-                )
+                revision = uow.workflows.get_revision(command_request.workflow_id, context.organization_id)
                 if revision is None:
                     raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
-
                 try:
                     events = workflow.transition_to(command_request.target_state, context.actor)
                 except InvalidTransitionError:
@@ -231,18 +201,8 @@ class DORRuntime:
                 for event in events:
                     workflow.apply_event(event)
                     uow.events.append(event)
-                uow.workflows.update(
-                    workflow, context.organization_id, expected_revision=revision
-                )
-                uow.commands.add(
-                    command_id=command_request.command_id,
-                    organization_id=context.organization_id,
-                    actor_id=context.actor_id,
-                    command_type=type(command_request).__name__,
-                    payload=command_request.payload,
-                    aggregate_id=workflow.id,
-                    created_at=datetime.now(timezone.utc),
-                )
+                uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
+                uow.commands.add(command_id=command_request.command_id, organization_id=context.organization_id, actor_id=context.actor_id, command_type=type(command_request).__name__, payload=command_request.payload, aggregate_id=workflow.id, created_at=datetime.now(timezone.utc))
                 return CommandResult(command_id=command_request.command_id, workflow=workflow)
 
     def get_events(self, context: OrganizationContext, aggregate_id: str) -> list[Event]:
@@ -252,23 +212,8 @@ class DORRuntime:
 
     @staticmethod
     def _new_workflow(name: str, description: str, organization: Organization) -> Workflow:
-        workflow = Workflow(
-            id=str(uuid4()),
-            name=name,
-            description=description,
-            organization=organization,
-        )
-        transitions = [
-            (WorkflowState.NEW, WorkflowState.ANALYSIS),
-            (WorkflowState.ANALYSIS, WorkflowState.DESIGN),
-            (WorkflowState.DESIGN, WorkflowState.IMPLEMENTATION),
-            (WorkflowState.IMPLEMENTATION, WorkflowState.REVIEW),
-            (WorkflowState.REVIEW, WorkflowState.APPROVED),
-            (WorkflowState.APPROVED, WorkflowState.RELEASED),
-            (WorkflowState.REVIEW, WorkflowState.REJECTED),
-            (WorkflowState.REJECTED, WorkflowState.ANALYSIS),
-            (WorkflowState.RELEASED, WorkflowState.ARCHIVED),
-        ]
+        workflow = Workflow(id=str(uuid4()), name=name, description=description, organization=organization)
+        transitions = [(WorkflowState.NEW, WorkflowState.ANALYSIS), (WorkflowState.ANALYSIS, WorkflowState.DESIGN), (WorkflowState.DESIGN, WorkflowState.IMPLEMENTATION), (WorkflowState.IMPLEMENTATION, WorkflowState.REVIEW), (WorkflowState.REVIEW, WorkflowState.APPROVED), (WorkflowState.APPROVED, WorkflowState.RELEASED), (WorkflowState.REVIEW, WorkflowState.REJECTED), (WorkflowState.REJECTED, WorkflowState.ANALYSIS), (WorkflowState.RELEASED, WorkflowState.ARCHIVED)]
         for from_state, to_state in transitions:
             workflow.add_transition(Transition(from_state=from_state, to_state=to_state))
         return workflow
