@@ -1,7 +1,7 @@
 """Authentication primitives for the DOR API.
 
-This module deliberately keeps authentication separate from DOR authorization.
-Roles, capabilities and governance policies belong to the runtime domain layer.
+Authentication is intentionally separate from runtime authorization. Fine-grained
+roles and capabilities will be introduced by the Phase 3 authorization contract.
 """
 
 import os
@@ -23,10 +23,8 @@ if not SECRET_KEY:
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
-
-# Development-only identity store. Production persistence belongs in the
-# identity repository and must never contain a default password in source.
 _users: dict[str, dict] = {}
+fake_users_db = _users
 
 
 class Token(BaseModel):
@@ -47,11 +45,6 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
-
-
-# Backwards-compatible name used by the current auth endpoint. It is empty by
-# default instead of shipping a credential in the repository.
-fake_users_db = _users
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -76,9 +69,7 @@ def authenticate_user(db: dict, username: str, password: str) -> Optional[UserIn
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=15)
-    )
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -103,31 +94,25 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     return user
 
 
-async def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-# Helpers til governance og capabilities
+
 async def get_current_actor(current_user: User = Depends(get_current_active_user)):
     from domain.actor import Actor, ActorType
-    return Actor(id=current_user.username, identity=current_user.full_name or current_user.username, type=ActorType.HUMAN)
+    return Actor(
+        id=current_user.username,
+        identity=current_user.full_name or current_user.username,
+        type=ActorType.HUMAN,
+    )
+
 
 def require_capability(capability_name: str):
+    """Temporary Phase 2 authorization boundary; Phase 3 will supply RBAC."""
     async def capability_checker(current_user: User = Depends(get_current_active_user)):
-        user_role = getattr(current_user, 'role', None)
-        from domain.predefined_roles import STANDARD_ROLES
-        has_cap = False
-        if user_role and user_role in STANDARD_ROLES:
-            role_def = STANDARD_ROLES[user_role]
-            if capability_name in role_def.capabilities:
-                has_cap = True
-        if current_user.username == "admin" or has_cap or getattr(current_user, 'is_superuser', False):
+        if current_user.username == "admin":
             return True
-        raise HTTPException(
-            status_code=403,
-            detail=f"Operation requires capability: {capability_name}"
-        )
+        raise HTTPException(status_code=403, detail=f"Operation requires capability: {capability_name}")
     return capability_checker
