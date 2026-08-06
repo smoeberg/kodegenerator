@@ -16,8 +16,7 @@ from domain.actor import Actor, ActorType
 from domain.organization import Organization
 from domain.principal import Principal
 from domain.workflow import WorkflowState
-from runtime.context import ContextError
-from runtime.core import DORRuntime, NotFoundError
+from runtime.core import CommandAuthorizationError, DORRuntime
 
 
 # Phase 2 implementation contract: the command runtime is expected to expose
@@ -94,7 +93,7 @@ def test_command_cannot_cross_organization(tmp_path: Path):
     context_b = _context(runtime, "org-b", "actor-b")
     workflow_b = runtime.create_workflow(context_b, "private-b")
 
-    with pytest.raises(NotFoundError):
+    with pytest.raises(CommandAuthorizationError) as exc_info:
         runtime.execute_command(
             context_a,
             AdvanceWorkflowCommand(
@@ -104,6 +103,8 @@ def test_command_cannot_cross_organization(tmp_path: Path):
                 target_state=WorkflowState.ANALYSIS,
             ),
         )
+
+    assert exc_info.value.decision.reason_code == "resource_not_accessible"
 
 
 def test_command_is_idempotent(tmp_path: Path):
@@ -209,7 +210,7 @@ def test_command_organization_must_match_context(tmp_path: Path):
     context = _context(runtime, "org-a", "actor-a")
     workflow = runtime.create_workflow(context, "context")
 
-    with pytest.raises(ContextError):
+    with pytest.raises(CommandAuthorizationError) as exc_info:
         runtime.execute_command(
             context,
             AdvanceWorkflowCommand(
@@ -219,6 +220,8 @@ def test_command_organization_must_match_context(tmp_path: Path):
                 target_state=WorkflowState.ANALYSIS,
             ),
         )
+
+    assert exc_info.value.decision.reason_code == "command_organization_mismatch"
 
 
 def test_reusing_command_id_for_different_payload_is_rejected(tmp_path: Path):
