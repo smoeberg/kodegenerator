@@ -148,6 +148,17 @@ class WorkflowRepository:
         )
         return workflow
 
+    def get_organization_id(self, workflow_id: str) -> Optional[str]:
+        """Resolve only the owning organization of a target resource.
+
+        This is used by the authorization boundary to distinguish a missing
+        resource from a cross-organization resource without exposing the
+        resource itself to the caller.
+        """
+        return self.session.scalar(
+            select(WorkflowModel.organization_id).where(WorkflowModel.id == workflow_id)
+        )
+
     def get_revision(self, workflow_id: str, organization_id: str) -> Optional[int]:
         return self.session.scalar(
             select(WorkflowModel.revision).where(
