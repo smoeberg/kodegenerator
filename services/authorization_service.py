@@ -31,10 +31,10 @@ class AuthorizationService:
     ) -> AuthorizationDecision:
         """Evaluate one authorization request without implicit fallback.
 
-        ``resource_organization_id`` is supplied by the command boundary after
-        resolving the target resource. A mismatch is denied before capability
-        grants are considered, preventing authority from one tenant being used
-        against another tenant's resource.
+        When a resource is supplied, its organization must resolve to the
+        active organization. Missing and cross-organization resources use the
+        same denial so authorization behavior cannot disclose protected
+        resource existence.
         """
         base = dict(
             actor_id=actor_id,
@@ -62,15 +62,11 @@ class AuthorizationService:
                 **base,
             )
 
-        if (
-            resource_organization_id is not None
-            and resource_organization_id != organization_id
-        ):
+        if resource_id is not None and resource_organization_id != organization_id:
             return AuthorizationDecision(
                 allowed=False,
-                reason="Target resource belongs to another organization",
-                reason_code="resource_organization_mismatch",
-                context={"resource_organization_id": resource_organization_id},
+                reason="Target resource is not accessible in this organization",
+                reason_code="resource_not_accessible",
                 **base,
             )
 
