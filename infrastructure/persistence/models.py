@@ -97,7 +97,14 @@ class EventModel(Base):
     schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.0")
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    __table_args__ = (UniqueConstraint("aggregate_id", "sequence", name="uq_event_aggregate_sequence"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "aggregate_id",
+            "organization_id",
+            "sequence",
+            name="uq_event_aggregate_org_sequence",
+        ),
+    )
 
 
 class CommandExecutionModel(Base):
