@@ -1,6 +1,11 @@
 """Phase 3 P3-04 tests for effective role capability resolution."""
+from pathlib import Path
+
+from domain.actor import Actor, ActorType
 from domain.authority import RoleAssignment, RoleDefinition
 from domain.authority_resolution import resolve_effective_capabilities
+from domain.organization import Organization
+from runtime.core import DORRuntime
 
 
 def _assignment(
@@ -85,3 +90,30 @@ def test_cross_actor_and_cross_organization_assignments_fail_closed() -> None:
 
 def test_actor_with_no_assignments_has_no_capabilities() -> None:
     assert resolve_effective_capabilities("actor-a", "org-a", [], {}) == frozenset()
+
+
+def test_repository_resolves_persisted_role_capabilities(tmp_path: Path) -> None:
+    runtime = DORRuntime(f"sqlite:///{tmp_path / 'authority-resolution.db'}")
+    runtime.boot()
+    runtime.create_organization(Organization(id="org-a", name="org-a"))
+    runtime.register_actor(
+        Actor(id="actor-a", type=ActorType.HUMAN, identity="actor-a"),
+        "org-a",
+    )
+
+    role = _role("operator", "workflow.read", "workflow.transition")
+    with runtime.database.session() as session:
+        from infrastructure.persistence.uow import UnitOfWork
+
+        with UnitOfWork(session) as uow:
+            uow.authority.add_role_definition(role)
+            uow.authority.assign_role(_assignment(role.id))
+
+    with runtime.database.session() as session:
+        from infrastructure.persistence.uow import UnitOfWork
+
+        uow = UnitOfWork(session)
+        assert uow.authority.get_effective_capabilities("actor-a", "org-a") == frozenset(
+            {"workflow.read", "workflow.transition"}
+        )
+        assert uow.authority.get_effective_capabilities("actor-a", "org-b") == frozenset()
