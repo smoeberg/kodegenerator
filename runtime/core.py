@@ -126,23 +126,67 @@ class DORRuntime:
             workflow.events = uow.events.for_aggregate(workflow_id, context.organization_id)
             return workflow
 
+    def _record_denied_transition_authorization_audit(
+        self,
+        decision: AuthorizationDecision,
+        operation_id: str,
+    ) -> None:
+        """Persist a direct-transition denial after its failed transaction closes."""
+        audit_event = create_authorization_audit_event(
+            decision,
+            command_id=operation_id,
+            command_type="DirectWorkflowTransition",
+            allowed=False,
+        )
+        with self.database.session() as audit_session:
+            with UnitOfWork(audit_session) as audit_uow:
+                audit_uow.events.append(audit_event)
+
     def transition_workflow(self, context: OrganizationContext, workflow_id: str, new_state: WorkflowState, evidence: Optional[dict] = None) -> Workflow:
+        """Transition a workflow only after central authorization succeeds."""
         self._require_ready()
+        operation_id = f"transition:{uuid4()}"
+        denied_decision: AuthorizationDecision | None = None
+
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
-                workflow = uow.workflows.get_for_organization(workflow_id, context.organization_id)
-                if workflow is None:
-                    raise NotFoundError(f"Workflow not found: {workflow_id}")
-                workflow.organization = context.organization
-                revision = uow.workflows.get_revision(workflow_id, context.organization_id)
-                if revision is None:
-                    raise NotFoundError(f"Workflow not found: {workflow_id}")
-                events = workflow.transition_to(new_state, context.actor, evidence=evidence)
-                for event in events:
-                    workflow.apply_event(event)
-                    uow.events.append(event)
-                uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
-                return workflow
+                decision = AuthorizationService(uow).authorize(
+                    principal=context.principal,
+                    actor_id=context.actor_id,
+                    organization_id=context.organization_id,
+                    capability_id="workflow.transition",
+                    resource_id=workflow_id,
+                )
+                if not decision.allowed:
+                    denied_decision = decision
+                else:
+                    workflow = uow.workflows.get_for_organization(workflow_id, context.organization_id)
+                    if workflow is None:
+                        raise NotFoundError(f"Workflow not found: {workflow_id}")
+                    workflow.organization = context.organization
+                    revision = uow.workflows.get_revision(workflow_id, context.organization_id)
+                    if revision is None:
+                        raise NotFoundError(f"Workflow not found: {workflow_id}")
+
+                    audit_event = create_authorization_audit_event(
+                        decision,
+                        command_id=operation_id,
+                        command_type="DirectWorkflowTransition",
+                        allowed=True,
+                    )
+                    uow.events.append(audit_event)
+
+                    events = workflow.transition_to(new_state, context.actor, evidence=evidence)
+                    for event in events:
+                        workflow.apply_event(event)
+                        uow.events.append(event)
+                    uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
+                    return workflow
+
+        if denied_decision is not None:
+            self._record_denied_transition_authorization_audit(denied_decision, operation_id)
+            raise CommandAuthorizationError(denied_decision)
+        raise RuntimeError("Workflow transition completed without a result")
 
     def execute_command(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
         """Execute a command atomically, enforcing central authorization before mutation."""
