@@ -237,10 +237,29 @@ class DORRuntime:
             raise CommandAuthorizationError(denied_decision)
         raise RuntimeError("Command execution completed without a result")
 
-    def get_events(self, context: OrganizationContext, aggregate_id: str) -> list[Event]:
+    def get_events(
+        self,
+        context: OrganizationContext,
+        aggregate_id: str,
+        *,
+        include_authorization_audit: bool = False,
+    ) -> list[Event]:
+        """Return organization-scoped domain events, optionally including auth audit events.
+
+        The default preserves the Phase 2 event-stream contract. Phase 3 audit
+        consumers explicitly opt into authorization decision events, which are
+        still persisted in the same canonical EventStore.
+        """
         self._require_ready()
         with self.database.session() as session:
-            return UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
+            events = UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
+        if include_authorization_audit:
+            return events
+        return [
+            event
+            for event in events
+            if event.event_type not in {EventType.AUTHORIZATION_GRANTED, EventType.AUTHORIZATION_DENIED}
+        ]
 
     @staticmethod
     def _new_workflow(name: str, description: str, organization: Organization) -> Workflow:
