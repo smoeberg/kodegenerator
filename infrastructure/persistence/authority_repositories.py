@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from domain.authority import RoleAssignment, RoleDefinition
 
-from .models import RoleAssignmentModel, RoleDefinitionModel
+from .models import ActorModel, RoleAssignmentModel, RoleDefinitionModel
 
 
 class AuthorityRepository:
@@ -42,6 +42,19 @@ class AuthorityRepository:
         role = self.get_role_definition(assignment.role_definition_id)
         if role is None:
             raise ValueError(f"Role definition not found: {assignment.role_definition_id}")
+
+        actor_exists = self.session.scalar(
+            select(ActorModel.id).where(
+                ActorModel.id == assignment.actor_id,
+                ActorModel.organization_id == assignment.organization_id,
+            )
+        )
+        if actor_exists is None:
+            raise ValueError(
+                "Actor does not belong to organization: "
+                f"{assignment.actor_id}@{assignment.organization_id}"
+            )
+
         self.session.add(
             RoleAssignmentModel(
                 actor_id=assignment.actor_id,
