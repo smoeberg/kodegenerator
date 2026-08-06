@@ -11,7 +11,6 @@ from uuid import uuid4
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from domain.actor import Actor
 from domain.authorization_audit import create_authorization_audit_event
@@ -168,7 +167,7 @@ class DORRuntime:
         decision: AuthorizationDecision,
         command_request: AdvanceWorkflowCommand,
     ) -> None:
-        """Persist a denial audit outside the failed command transaction."""
+        """Persist a denial audit after the failed command transaction closes."""
         audit_event = create_authorization_audit_event(
             decision,
             command_id=command_request.command_id,
@@ -180,6 +179,7 @@ class DORRuntime:
                 audit_uow.events.append(audit_event)
 
     def _execute_command_once(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
+        denied_decision: AuthorizationDecision | None = None
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
                 decision = AuthorizationService(uow).authorize(
@@ -190,48 +190,52 @@ class DORRuntime:
                     resource_id=command_request.workflow_id,
                 )
                 if not decision.allowed:
-                    self._record_denied_authorization_audit(decision, command_request)
-                    raise CommandAuthorizationError(decision)
+                    denied_decision = decision
+                else:
+                    existing = uow.commands.get(command_request.command_id)
+                    if existing is not None:
+                        if existing.organization_id != context.organization_id or existing.actor_id != context.actor_id or existing.command_type != type(command_request).__name__ or existing.payload != command_request.payload:
+                            raise CommandConflictError(f"Command ID already used with different command data: {command_request.command_id}")
+                        workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
+                        if workflow is None:
+                            raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+                        workflow.organization = context.organization
+                        return CommandResult(command_id=command_request.command_id, workflow=workflow)
 
-                existing = uow.commands.get(command_request.command_id)
-                if existing is not None:
-                    if existing.organization_id != context.organization_id or existing.actor_id != context.actor_id or existing.command_type != type(command_request).__name__ or existing.payload != command_request.payload:
-                        raise CommandConflictError(f"Command ID already used with different command data: {command_request.command_id}")
                     workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
                     if workflow is None:
                         raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
                     workflow.organization = context.organization
+                    revision = uow.workflows.get_revision(command_request.workflow_id, context.organization_id)
+                    if revision is None:
+                        raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
+
+                    audit_event = create_authorization_audit_event(
+                        decision,
+                        command_id=command_request.command_id,
+                        command_type=type(command_request).__name__,
+                        allowed=True,
+                    )
+                    uow.events.append(audit_event)
+
+                    try:
+                        events = workflow.transition_to(command_request.target_state, context.actor)
+                    except InvalidTransitionError:
+                        if workflow.current_state == command_request.target_state:
+                            events = []
+                        else:
+                            raise
+                    for event in events:
+                        workflow.apply_event(event)
+                        uow.events.append(event)
+                    uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
+                    uow.commands.add(command_id=command_request.command_id, organization_id=context.organization_id, actor_id=context.actor_id, command_type=type(command_request).__name__, payload=command_request.payload, aggregate_id=workflow.id, created_at=datetime.now(timezone.utc))
                     return CommandResult(command_id=command_request.command_id, workflow=workflow)
 
-                workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
-                if workflow is None:
-                    raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
-                workflow.organization = context.organization
-                revision = uow.workflows.get_revision(command_request.workflow_id, context.organization_id)
-                if revision is None:
-                    raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
-
-                audit_event = create_authorization_audit_event(
-                    decision,
-                    command_id=command_request.command_id,
-                    command_type=type(command_request).__name__,
-                    allowed=True,
-                )
-                uow.events.append(audit_event)
-
-                try:
-                    events = workflow.transition_to(command_request.target_state, context.actor)
-                except InvalidTransitionError:
-                    if workflow.current_state == command_request.target_state:
-                        events = []
-                    else:
-                        raise
-                for event in events:
-                    workflow.apply_event(event)
-                    uow.events.append(event)
-                uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
-                uow.commands.add(command_id=command_request.command_id, organization_id=context.organization_id, actor_id=context.actor_id, command_type=type(command_request).__name__, payload=command_request.payload, aggregate_id=workflow.id, created_at=datetime.now(timezone.utc))
-                return CommandResult(command_id=command_request.command_id, workflow=workflow)
+        if denied_decision is not None:
+            self._record_denied_authorization_audit(denied_decision, command_request)
+            raise CommandAuthorizationError(denied_decision)
+        raise RuntimeError("Command execution completed without a result")
 
     def get_events(self, context: OrganizationContext, aggregate_id: str) -> list[Event]:
         self._require_ready()
