@@ -127,28 +127,33 @@ class DORRuntime:
             return workflow
 
     def transition_workflow(self, context: OrganizationContext, workflow_id: str, new_state: WorkflowState, evidence: Optional[dict] = None) -> Workflow:
+        """Compatibility transition path routed through the canonical command boundary."""
         self._require_ready()
-        with self.database.session() as session:
-            with UnitOfWork(session) as uow:
-                workflow = uow.workflows.get_for_organization(workflow_id, context.organization_id)
-                if workflow is None:
-                    raise NotFoundError(f"Workflow not found: {workflow_id}")
-                workflow.organization = context.organization
-                revision = uow.workflows.get_revision(workflow_id, context.organization_id)
-                if revision is None:
-                    raise NotFoundError(f"Workflow not found: {workflow_id}")
-                events = workflow.transition_to(new_state, context.actor, evidence=evidence)
-                for event in events:
-                    workflow.apply_event(event)
-                    uow.events.append(event)
-                uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
-                return workflow
+        command_request = AdvanceWorkflowCommand(
+            command_id=f"legacy-transition-{uuid4()}",
+            organization_id=context.organization_id,
+            workflow_id=workflow_id,
+            target_state=new_state,
+        )
+        return self.execute_command(context, command_request).workflow
 
     def execute_command(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
         """Execute a command atomically, enforcing central authorization before mutation."""
         self._require_ready()
         if command_request.organization_id != context.organization_id:
-            raise ContextError("Command organization does not match runtime context")
+            decision = AuthorizationDecision(
+                allowed=False,
+                reason="Command organization does not match runtime context",
+                reason_code="command_organization_mismatch",
+                actor_id=context.actor_id,
+                principal_id=context.principal.id,
+                organization_id=context.organization_id,
+                capability_id="workflow.transition",
+                resource_id=command_request.workflow_id,
+                context={"command_organization_id": command_request.organization_id},
+            )
+            self._record_denied_authorization_audit(decision, command_request)
+            raise CommandAuthorizationError(decision)
         for attempt in range(_COMMAND_RETRY_LIMIT):
             try:
                 return self._execute_command_once(context, command_request)
@@ -182,12 +187,14 @@ class DORRuntime:
         denied_decision: AuthorizationDecision | None = None
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
+                resource_organization_id = uow.workflows.get_organization_id(command_request.workflow_id)
                 decision = AuthorizationService(uow).authorize(
                     principal=context.principal,
                     actor_id=context.actor_id,
                     organization_id=context.organization_id,
                     capability_id="workflow.transition",
                     resource_id=command_request.workflow_id,
+                    resource_organization_id=resource_organization_id,
                 )
                 if not decision.allowed:
                     denied_decision = decision
