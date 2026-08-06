@@ -65,7 +65,7 @@ def test_command_is_denied_without_transition_capability(tmp_path: Path) -> None
 
     assert exc.value.decision.allowed is False
     assert exc.value.decision.reason_code == "capability_not_granted"
-    assert runtime.get_workflow(context, workflow.id).current_state == WorkflowState.NEW
+    assert runtime.get_workflow(context, workflow.id).current_state.name == WorkflowState.NEW
 
 
 def test_command_is_allowed_when_transition_capability_is_granted(tmp_path: Path) -> None:
@@ -77,7 +77,7 @@ def test_command_is_allowed_when_transition_capability_is_granted(tmp_path: Path
     result = runtime.execute_command(context, _command(context, workflow.id))
 
     assert result.command_id == "cmd-1"
-    assert runtime.get_workflow(context, workflow.id).current_state == WorkflowState.ANALYSIS
+    assert runtime.get_workflow(context, workflow.id).current_state.name == WorkflowState.ANALYSIS
 
 
 def test_command_is_denied_for_actor_without_capability_in_other_organization(tmp_path: Path) -> None:

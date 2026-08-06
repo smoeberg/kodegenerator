@@ -65,7 +65,7 @@ def test_denied_command_persists_authorization_audit_without_mutation(tmp_path: 
     with pytest.raises(CommandAuthorizationError):
         runtime.execute_command(context, _command(context, workflow.id, command_id))
 
-    assert runtime.get_workflow(context, workflow.id).current_state == WorkflowState.NEW
+    assert runtime.get_workflow(context, workflow.id).current_state.name == WorkflowState.NEW
     events = runtime.get_events(context, workflow.id, include_authorization_audit=True)
     audit = [event for event in events if event.event_type is EventType.AUTHORIZATION_DENIED]
 

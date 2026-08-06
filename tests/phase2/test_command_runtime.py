@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from domain.authority import RoleDefinition, RoleAssignment
+from infrastructure.persistence.uow import UnitOfWork
 """Phase 2 acceptance tests for the DOR command runtime.
 
 These tests define the command boundary before implementation. They build on
@@ -35,6 +38,27 @@ def _context(
     actor = Actor(id=actor_id, type=ActorType.HUMAN, identity=actor_id)
     runtime.create_organization(organization)
     runtime.register_actor(actor, organization_id)
+    role = RoleDefinition(
+        id=f'workflow-executor-{actor_id}',
+        name='Workflow Executor',
+        capabilities=frozenset({'workflow.transition'}),
+    )
+    assignment = RoleAssignment(
+        actor_id=actor_id,
+        organization_id=organization_id,
+        role_definition_id=role.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    with runtime.database.session() as session:
+        with UnitOfWork(session) as uow:
+            try:
+                uow.authority.add_role_definition(role)
+            except Exception:
+                session.rollback()
+            try:
+                uow.authority.assign_role(assignment)
+            except Exception:
+                session.rollback()
     principal = Principal(
         id=actor_id,
         type="user",
