@@ -35,6 +35,7 @@ def test_role_definition_grants_capability() -> None:
     role = RoleDefinition(
         id="workflow.operator",
         name="Workflow Operator",
+        organization_id="org-a",
         capabilities=frozenset({"workflow.read", "workflow.transition"}),
     )
     assert role.grants("workflow.read") is True
@@ -48,6 +49,7 @@ def test_role_assignment_is_persisted_and_organization_scoped(tmp_path: Path) ->
     role = RoleDefinition(
         id="workflow.operator",
         name="Workflow Operator",
+        organization_id="org-a",
         capabilities=frozenset({"workflow.read"}),
     )
     assignment = RoleAssignment(
@@ -68,7 +70,7 @@ def test_role_assignment_is_persisted_and_organization_scoped(tmp_path: Path) ->
         from infrastructure.persistence.uow import UnitOfWork
 
         uow = UnitOfWork(session)
-        assert uow.authority.get_role_definition(role.id) == role
+        assert uow.authority.get_role_definition(role.id, "org-a") == role
         assert uow.authority.get_assignments("actor-a", "org-a") == [assignment]
         assert uow.authority.get_assignments("actor-a", "org-b") == []
 

@@ -1,17 +1,20 @@
 """Authentication primitives for the DOR API.
 
-Authentication is intentionally separate from runtime authorization. Fine-grained
-roles and capabilities will be introduced by the Phase 3 authorization contract.
+Authentication is separate from Phase 3 runtime authorization. A bootstrap user
+may be configured through environment variables so the token endpoint is usable
+without embedding credentials in source control.
 """
 
+import hashlib
+import hmac
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY")
@@ -21,10 +24,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("DOR_ACCESS_TOKEN_EXPIRE_MINUTES", "
 if not SECRET_KEY:
     raise RuntimeError("DOR_JWT_SECRET_KEY must be configured before starting the API")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 _users: dict[str, dict] = {}
 fake_users_db = _users
+_PBKDF2_ITERATIONS = 600_000
 
 
 class Token(BaseModel):
@@ -47,12 +50,42 @@ class UserInDB(User):
     hashed_password: str
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
-
-
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash a password with salted PBKDF2-HMAC-SHA256."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        scheme, iterations, salt_hex, digest_hex = hashed_password.split("$", 3)
+        if scheme != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            plain_password.encode("utf-8"),
+            bytes.fromhex(salt_hex),
+            int(iterations),
+        )
+        return hmac.compare_digest(digest.hex(), digest_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+def bootstrap_configured_admin() -> None:
+    """Create the explicitly configured bootstrap user, if credentials are supplied."""
+    username = os.getenv("DOR_ADMIN_USERNAME", "admin").strip()
+    password = os.getenv("DOR_ADMIN_PASSWORD")
+    if not username or not password:
+        return
+    _users[username] = {
+        "username": username,
+        "email": os.getenv("DOR_ADMIN_EMAIL"),
+        "full_name": os.getenv("DOR_ADMIN_FULL_NAME", username),
+        "disabled": False,
+        "hashed_password": get_password_hash(password),
+    }
 
 
 def get_user(db: dict, username: str) -> Optional[UserInDB]:
@@ -109,10 +142,4 @@ async def get_current_actor(current_user: User = Depends(get_current_active_user
     )
 
 
-def require_capability(capability_name: str):
-    """Temporary Phase 2 authorization boundary; Phase 3 will supply RBAC."""
-    async def capability_checker(current_user: User = Depends(get_current_active_user)):
-        if current_user.username == "admin":
-            return True
-        raise HTTPException(status_code=403, detail=f"Operation requires capability: {capability_name}")
-    return capability_checker
+bootstrap_configured_admin()

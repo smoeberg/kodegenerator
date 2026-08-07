@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -41,10 +41,15 @@ class RoleDefinitionModel(Base):
     __tablename__ = "role_definitions"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_role_definition_org_id"),
+    )
 
 
 class RoleAssignmentModel(Base):
@@ -60,6 +65,16 @@ class RoleAssignmentModel(Base):
         UniqueConstraint(
             "actor_id", "organization_id", "role_definition_id",
             name="uq_role_assignment_actor_org_role",
+        ),
+        ForeignKeyConstraint(
+            ["actor_id", "organization_id"],
+            ["actors.id", "actors.organization_id"],
+            name="fk_role_assignment_actor_org",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_definition_id"],
+            ["role_definitions.organization_id", "role_definitions.id"],
+            name="fk_role_assignment_role_org",
         ),
     )
 
