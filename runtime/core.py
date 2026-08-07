@@ -141,6 +141,9 @@ class DORRuntime:
         """Execute a command atomically, enforcing central authorization before mutation."""
         self._require_ready()
         if command_request.organization_id != context.organization_id:
+            with self.database.session() as session:
+                with UnitOfWork(session) as uow:
+                    res_org_id = uow.workflows.get_organization_id(command_request.workflow_id)
             decision = AuthorizationDecision(
                 allowed=False,
                 reason="Command organization does not match runtime context",
@@ -150,6 +153,7 @@ class DORRuntime:
                 organization_id=context.organization_id,
                 capability_id="workflow.transition",
                 resource_id=command_request.workflow_id,
+                resource_organization_id=res_org_id or context.organization_id,
                 context={"command_organization_id": command_request.organization_id},
             )
             self._record_denied_authorization_audit(decision, command_request)
