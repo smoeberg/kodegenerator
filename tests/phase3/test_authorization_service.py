@@ -24,16 +24,25 @@ def _seed(runtime: DORRuntime, organization_id: str = "org-a", actor_id: str = "
     )
 
 
-def _grant(runtime: DORRuntime, capability: str, *, status: str = "active", role_status: str = "active") -> None:
+def _grant(
+    runtime: DORRuntime,
+    capability: str,
+    *,
+    organization_id: str = "org-a",
+    actor_id: str = "actor-a",
+    status: str = "active",
+    role_status: str = "active",
+) -> None:
     role = RoleDefinition(
         id="workflow.operator",
         name="Workflow Operator",
+        organization_id=organization_id,
         capabilities=frozenset({capability}),
         status=role_status,
     )
     assignment = RoleAssignment(
-        actor_id="actor-a",
-        organization_id="org-a",
+        actor_id=actor_id,
+        organization_id=organization_id,
         role_definition_id=role.id,
         status=status,
     )
