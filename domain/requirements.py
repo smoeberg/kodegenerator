@@ -16,6 +16,7 @@ from typing import Any, ClassVar, Mapping
 ID_RE = re.compile(r"^(FR|NFR|BR|DR|IR|SR|CR|CON|AC|ASM|Q|STK|ACT)-[0-9]{3,}$")
 
 STATUSES = frozenset({"draft", "clarification_required", "review", "approved", "superseded", "rejected"})
+REQUIREMENT_STATUSES = frozenset({"proposed", "confirmed", "rejected", "superseded"})
 PRIORITIES = frozenset({"must", "should", "could", "wont"})
 PROVENANCE = frozenset({"human", "conversation", "imported", "agent_proposed", "system_derived"})
 
@@ -45,6 +46,8 @@ class Requirement:
         _nonempty(self.statement, "statement")
         if self.source not in PROVENANCE:
             raise RequirementsValidationError(f"Invalid provenance: {self.source}")
+        if self.status not in REQUIREMENT_STATUSES:
+            raise RequirementsValidationError(f"Invalid requirement status: {self.status}")
         if self.priority is not None and self.priority not in PRIORITIES:
             raise RequirementsValidationError(f"Invalid priority: {self.priority}")
         _nonempty_ids(self.acceptance_criteria, "acceptance_criteria")
@@ -60,6 +63,8 @@ class AcceptanceCriterion:
     def __post_init__(self) -> None:
         _validate_id(self.id)
         _nonempty(self.statement, "statement")
+        if self.status not in REQUIREMENT_STATUSES:
+            raise RequirementsValidationError(f"Invalid acceptance status: {self.status}")
         _nonempty_ids(self.requirement_ids, "requirement_ids")
 
 
@@ -76,8 +81,8 @@ class OpenQuestion:
         _validate_id(self.id)
         _nonempty(self.question, "question")
         _nonempty(self.owner, "owner")
-        if self.blocking and self.status not in {"resolved", "closed"}:
-            return
+        if self.status not in {"open", "resolved", "closed", "deferred"}:
+            raise RequirementsValidationError(f"Invalid question status: {self.status}")
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,8 @@ class Assumption:
         _nonempty(self.statement, "statement")
         if self.source not in PROVENANCE:
             raise RequirementsValidationError(f"Invalid assumption provenance: {self.source}")
+        if self.confidence not in {"low", "medium", "high"}:
+            raise RequirementsValidationError(f"Invalid assumption confidence: {self.confidence}")
 
 
 @dataclass(frozen=True)
@@ -165,10 +172,10 @@ class RequirementsSpecification:
         )
 
     def canonical_dict(self) -> dict[str, Any]:
-        """Return canonical JSON-compatible content excluding mutable approval proof."""
+        """Return canonical JSON-compatible content excluding approval proof."""
         def plain(value: Any) -> Any:
             if hasattr(value, "__dataclass_fields__"):
-                return {k: plain(getattr(value, k)) for k in value.__dataclass_fields__ if k not in {"approval"}}
+                return {k: plain(getattr(value, k)) for k in value.__dataclass_fields__ if k != "approval"}
             if isinstance(value, Mapping):
                 return {str(k): plain(value[k]) for k in sorted(value)}
             if isinstance(value, (tuple, list)):
