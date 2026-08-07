@@ -19,7 +19,6 @@ ADMIN_CAPABILITIES = frozenset(
         "authority.role.activate",
         "authority.role.deactivate",
         "authority.role.revoke",
-        "workflow.transition",
     }
 )
 
@@ -52,6 +51,7 @@ def test_role_definition_is_organization_scoped(tmp_path: Path) -> None:
     context_a = _context(runtime, "org-a", "actor-a")
     context_b = _context(runtime, "org-b", "actor-b")
     _seed_admin(runtime, "org-a", "actor-a")
+    _seed_admin(runtime, "org-b", "actor-b")
     role = RoleDefinition(id="role-a", name="Role A", organization_id="org-a", capabilities=frozenset({"workflow.transition"}))
     runtime.authority.create_role_definition(context_a, role=role)
     with pytest.raises(CommandAuthorizationError) as exc:
