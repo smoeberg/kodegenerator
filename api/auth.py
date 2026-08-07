@@ -1,7 +1,8 @@
 """Authentication primitives for the DOR API.
 
-Authentication is intentionally separate from runtime authorization. Fine-grained
-roles and capabilities will be introduced by the Phase 3 authorization contract.
+Authentication is separate from Phase 3 runtime authorization. A bootstrap user
+may be configured through environment variables so the token endpoint is usable
+without embedding credentials in source control.
 """
 
 import os
@@ -53,6 +54,21 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+
+def bootstrap_configured_admin() -> None:
+    """Create the explicitly configured bootstrap user, if credentials are supplied."""
+    username = os.getenv("DOR_ADMIN_USERNAME", "admin").strip()
+    password = os.getenv("DOR_ADMIN_PASSWORD")
+    if not username or not password:
+        return
+    _users[username] = {
+        "username": username,
+        "email": os.getenv("DOR_ADMIN_EMAIL"),
+        "full_name": os.getenv("DOR_ADMIN_FULL_NAME", username),
+        "disabled": False,
+        "hashed_password": get_password_hash(password),
+    }
 
 
 def get_user(db: dict, username: str) -> Optional[UserInDB]:
@@ -109,10 +125,4 @@ async def get_current_actor(current_user: User = Depends(get_current_active_user
     )
 
 
-def require_capability(capability_name: str):
-    """Temporary Phase 2 authorization boundary; Phase 3 will supply RBAC."""
-    async def capability_checker(current_user: User = Depends(get_current_active_user)):
-        if current_user.username == "admin":
-            return True
-        raise HTTPException(status_code=403, detail=f"Operation requires capability: {capability_name}")
-    return capability_checker
+bootstrap_configured_admin()
