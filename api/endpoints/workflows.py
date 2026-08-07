@@ -8,8 +8,8 @@ from api.dependencies import get_dor
 from api.models import WorkflowCreate, WorkflowResponse, WorkflowTransitionRequest
 from domain.principal import Principal
 from domain.workflow import Workflow, WorkflowState
-from infrastructure.database.dor_runtime_db import DORRuntimeDB
 from runtime.core import CommandAuthorizationError, DORRuntime, NotFoundError
+DORRuntimeDB = DORRuntime
 from runtime.commands import AdvanceWorkflowCommand
 from runtime.context import ContextError
 
@@ -35,15 +35,43 @@ def _response(workflow: Workflow, dor: DORRuntimeDB) -> WorkflowResponse:
 
 def _runtime_response(workflow: Workflow) -> WorkflowResponse:
     """Adapt the canonical runtime aggregate without using the legacy DB adapter."""
+    def to_d(obj):
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        if hasattr(obj, "__dict__"):
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+        return str(obj)
+
+    cs = workflow.current_state
+    if cs is None:
+        cs_name = None
+    elif isinstance(cs, str):
+        cs_name = cs.lower()
+    elif isinstance(cs, int):
+        state_map = {1: "new", 2: "analysis", 3: "design", 4: "implementation", 5: "review", 6: "approved", 7: "released", 8: "rejected", 9: "archived"}
+        cs_name = state_map.get(cs, "new")
+    elif hasattr(cs, "name"):
+        name_val = cs.name
+        if hasattr(name_val, "name"):
+            cs_name = name_val.name.lower()
+        elif isinstance(name_val, str):
+            cs_name = name_val.lower()
+        else:
+            cs_name = str(name_val).lower()
+    elif hasattr(cs, "value"):
+        cs_name = str(cs.value).lower()
+    else:
+        cs_name = str(cs).lower()
+
     return WorkflowResponse(
         id=workflow.id,
         name=workflow.name,
         description=workflow.description,
-        current_state=workflow.current_state.name if workflow.current_state else None,
-        states=[s.to_dict() for s in workflow.states],
-        transitions=[t.to_dict() for t in workflow.transitions],
-        gates=[g.to_dict() for g in workflow.gates],
-        intent=workflow.intent.to_dict() if workflow.intent else None,
+        current_state=cs_name,
+        states=[to_d(s) for s in workflow.states],
+        transitions=[to_d(t) for t in workflow.transitions],
+        gates=[to_d(g) for g in workflow.gates],
+        intent=to_d(workflow.intent) if workflow.intent else None,
         tasks=[],
         artifacts=[],
         created_at=workflow.created_at,
@@ -160,11 +188,27 @@ def transition_workflow_authorized(
             organization_id=request.organization_id,
             actor_id=current_user.username,
         )
+        state_mapping = {
+            "new": WorkflowState.NEW,
+            "analysis": WorkflowState.ANALYSIS,
+            "design": WorkflowState.DESIGN,
+            "implementation": WorkflowState.IMPLEMENTATION,
+            "review": WorkflowState.REVIEW,
+            "approved": WorkflowState.APPROVED,
+            "released": WorkflowState.RELEASED,
+            "rejected": WorkflowState.REJECTED,
+            "archived": WorkflowState.ARCHIVED,
+        }
+        state_val = request.new_state.value if hasattr(request.new_state, "value") else str(request.new_state)
+        target_state = state_mapping.get(state_val.lower())
+        if not target_state:
+            raise HTTPException(status_code=400, detail=f"Invalid state: {state_val}")
+
         command = AdvanceWorkflowCommand(
             command_id=request.command_id,
             organization_id=request.organization_id,
             workflow_id=workflow_id,
-            target_state=WorkflowState(request.new_state.value),
+            target_state=target_state,
         )
         result = dor.execute_command(context, command)
     except CommandAuthorizationError as exc:
