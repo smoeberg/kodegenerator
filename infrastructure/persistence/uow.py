@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .authority_repositories import AuthorityRepository
 from .command_repository import CommandRepository
 from .repositories import ActorRepository, EventStore, OrganizationRepository, WorkflowRepository
+from .task_execution_repository import TaskExecutionRepository
 
 
 class UnitOfWork(AbstractContextManager["UnitOfWork"]):
@@ -21,6 +22,7 @@ class UnitOfWork(AbstractContextManager["UnitOfWork"]):
         self.events = EventStore(session)
         self.commands = CommandRepository(session)
         self.authority = AuthorityRepository(session)
+        self.task_executions = TaskExecutionRepository(session)
 
     def __enter__(self) -> "UnitOfWork":
         return self
