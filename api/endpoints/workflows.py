@@ -136,31 +136,12 @@ def get_workflows(
 @router.post("/{workflow_id}/transition", response_model=WorkflowResponse)
 def transition_workflow(
     workflow_id: str,
-    new_state: str,
-    actor_id: str,
-    dor: DORRuntimeDB = Depends(get_dor),
+    request: WorkflowTransitionRequest,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
 ):
-    """Skift tilstand for et Workflow."""
-    workflow = dor.db_adapter.get_workflow(workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    actor = dor.db_adapter.get_actor(actor_id)
-    if not actor:
-        raise HTTPException(status_code=404, detail="Actor not found")
-
-    try:
-        new_state_enum = WorkflowState(new_state)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid workflow state") from exc
-
-    if not dor.workflow_engine.transition_workflow(workflow_id, new_state_enum, actor):
-        raise HTTPException(status_code=400, detail="Transition failed")
-
-    workflow_model = dor.db_adapter.uow.workflow.get(workflow_id)
-    workflow_model.current_state = new_state_enum
-    dor.db_adapter.uow.commit()
-    return _response(dor.db_adapter.get_workflow(workflow_id), dor)
+    """Skift tilstand for et Workflow via canonical Phase 3 authorization boundary."""
+    return transition_workflow_authorized(workflow_id=workflow_id, request=request, current_user=current_user, dor=dor)
 
 
 @router.post("/{workflow_id}/transition-authorized", response_model=WorkflowResponse)
