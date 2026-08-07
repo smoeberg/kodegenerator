@@ -34,13 +34,48 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q api domain execution infrastructure runtime monitoring
 
-      - name: Run tests
+      - name: Verify Alembic has exactly one canonical head
+        run: |
+          set -euo pipefail
+          heads="$(alembic heads)"
+          printf '%s\n' "$heads"
+          printf '%s\n' "$heads" | grep -Eq '^006_merge_heads[[:space:]]+\(head\)$'
+          test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
+
+      - name: Verify clean database migration
+        run: |
+          set -euo pipefail
+          rm -f dor_runtime.db
+          alembic upgrade head
+          test -f dor_runtime.db
+
+      - name: Run complete test suite
         env:
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
         run: pytest -q
+
+      - name: API startup and health smoke test
+        env:
+          DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
+          DOR_ADMIN_PASSWORD: ci-admin-password
+          DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          uvicorn api.main:app --host 127.0.0.1 --port 8000 >/tmp/dor-uvicorn.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/dor-uvicorn.log
+          exit 1
 
   security:
     runs-on: ubuntu-latest
