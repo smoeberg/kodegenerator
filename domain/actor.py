@@ -6,45 +6,42 @@ from enum import Enum, auto
 
 class ActorType(Enum):
     """Typer af Actors i DOR."""
-    HUMAN = auto()          # Menneske (f.eks. John Doe)
-    DIGITAL_EMPLOYEE = auto()  # AI-medarbejder (f.eks. Claude-5)
-    SERVICE = auto()        # Service (f.eks. GitHub Bot)
-    EXTERNAL = auto()       # Ekstern system (f.eks. Kundeportal)
+    HUMAN = auto()
+    DIGITAL_EMPLOYEE = auto()
+    SERVICE = auto()
+    EXTERNAL = auto()
 
 @dataclass
 class Actor:
     """Repræsenterer en enhed, der kan udføre handlinger i DOR."""
     id: str
     type: ActorType
-    identity: str  # f.eks. "Claude-5", "John Doe", "GitHub Bot"
+    identity: str
     role: Optional["RoleDefinition"] = None
     capabilities: List["Capability"] = field(default_factory=list)
-    status: str = "active"  # "active", "inactive", "suspended"
+    status: str = "active"
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
-    # Relationer
     organization: Optional["Organization"] = None
     department: Optional["Department"] = None
     team: Optional["Team"] = None
 
     def add_capability(self, capability: "Capability") -> None:
-        """Tilføj en Capability til Actor."""
+        """Legacy compatibility helper; does not grant runtime authority."""
         if capability not in self.capabilities:
             self.capabilities.append(capability)
 
     def has_capability(self, capability_id: str) -> bool:
-        """Tjek om Actor har en given Capability."""
+        """Legacy compatibility inspection; not a canonical authorization check."""
         return any(cap.id == capability_id for cap in self.capabilities)
 
     def can_perform(self, action: str) -> bool:
-        """Tjek om Actor kan udføre en given handling (baseret på RoleDefinition)."""
-        if not self.role:
-            return False
-        return self.role.authority.get(f"can_{action}", False)
+        """Legacy path is intentionally non-authoritative and never grants access."""
+        return False
 
     def needs_approval_for(self, action: str) -> List[str]:
-        """Hent liste af roller, der skal godkende en given handling."""
+        """Legacy compatibility helper; authority is resolved outside Actor."""
         if not self.role:
             return []
         return self.role.needs_approval_from.get(action, [])
