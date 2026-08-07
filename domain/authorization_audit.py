@@ -16,16 +16,17 @@ def create_authorization_audit_event(
     command_id: str,
     command_type: str,
     allowed: bool,
+    aggregate_type: str = "workflow",
 ) -> Event:
-    """Create an immutable authorization audit event for a command decision."""
+    """Create an immutable authorization audit event for a state-changing command."""
     if allowed != decision.allowed:
         raise ValueError("Audit outcome must match the authorization decision")
 
     event_type = EventType.AUTHORIZATION_GRANTED if allowed else EventType.AUTHORIZATION_DENIED
     return Event(
         event_type=event_type,
-        aggregate_id=decision.resource_id,
-        aggregate_type="workflow",
+        aggregate_id=decision.resource_id or command_id,
+        aggregate_type=aggregate_type,
         organization_id=decision.organization_id,
         actor_id=decision.actor_id,
         correlation_id=command_id,
