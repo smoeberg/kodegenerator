@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/smoeberg/kodegenerator/blob/main/docs/schemas/requirements-specification-v0.1.schema.json",
+  "title": "Kodegenerator Requirements Specification v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "specification_id", "project", "version", "status", "intent", "stakeholders", "actors", "functional_requirements", "non_functional_requirements", "business_rules", "data_requirements", "integration_requirements", "security_requirements", "compliance_requirements", "constraints", "acceptance_criteria", "assumptions", "open_questions", "traceability", "approval"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "specification_id": {"type": "string", "minLength": 1},
+    "project": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}, "additionalProperties": true},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "status": {"enum": ["draft", "clarification_required", "review", "approved", "superseded", "rejected"]},
+    "intent": {"type": "object", "required": ["problem_statement", "desired_outcome"], "properties": {"problem_statement": {"type": "string", "minLength": 1}, "desired_outcome": {"type": "string", "minLength": 1}}, "additionalProperties": true},
+    "stakeholders": {"type": "array", "items": {"type": "object"}},
+    "actors": {"type": "array", "items": {"type": "object"}},
+    "functional_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "non_functional_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "business_rules": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "data_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "integration_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "security_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "compliance_requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "constraints": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+    "acceptance_criteria": {"type": "array", "items": {"$ref": "#/$defs/acceptance"}},
+    "assumptions": {"type": "array", "items": {"$ref": "#/$defs/assumption"}},
+    "open_questions": {"type": "array", "items": {"$ref": "#/$defs/question"}},
+    "traceability": {"type": "array", "items": {"$ref": "#/$defs/trace"}},
+    "approval": {"$ref": "#/$defs/approval"}
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "required": ["id", "statement", "source", "status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^(FR|NFR|BR|DR|IR|SR|CR|CON)-[0-9]{3,}$"},
+        "statement": {"type": "string", "minLength": 1},
+        "source": {"enum": ["human", "conversation", "imported", "agent_proposed", "system_derived"]},
+        "status": {"enum": ["proposed", "confirmed", "rejected", "superseded"]},
+        "priority": {"enum": ["must", "should", "could", "wont"]},
+        "acceptance_criteria": {"type": "array", "items": {"type": "string", "pattern": "^AC-[0-9]{3,}$"}}
+      },
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["id", "statement", "status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^AC-[0-9]{3,}$"},
+        "statement": {"type": "string", "minLength": 1},
+        "status": {"enum": ["proposed", "confirmed", "rejected", "superseded"]},
+        "requirement_ids": {"type": "array", "items": {"type": "string", "pattern": "^(FR|NFR|BR|DR|IR|SR|CR|CON)-[0-9]{3,}$"}}
+      },
+      "additionalProperties": false
+    },
+    "assumption": {
+      "type": "object",
+      "required": ["id", "statement", "source", "confidence", "requires_confirmation"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^ASM-[0-9]{3,}$"},
+        "statement": {"type": "string", "minLength": 1},
+        "source": {"enum": ["human", "conversation", "imported", "agent_proposed", "system_derived"]},
+        "confidence": {"enum": ["low", "medium", "high"]},
+        "requires_confirmation": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "object",
+      "required": ["id", "question", "blocking", "owner", "status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^Q-[0-9]{3,}$"},
+        "question": {"type": "string", "minLength": 1},
+        "blocking": {"type": "boolean"},
+        "owner": {"type": "string", "minLength": 1},
+        "status": {"enum": ["open", "resolved", "closed", "deferred"]},
+        "resolution": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "trace": {
+      "type": "object",
+      "required": ["source_id", "target_id", "relation"],
+      "properties": {
+        "source_id": {"type": "string", "minLength": 1},
+        "target_id": {"type": "string", "minLength": 1},
+        "relation": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "rejected"]},
+        "specification_id": {"type": "string"},
+        "version": {"type": "string"},
+        "content_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "approver_id": {"type": "string"},
+        "approved_at": {"type": "string", "format": "date-time"},
+        "validation_result": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}
