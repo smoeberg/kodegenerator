@@ -2,9 +2,9 @@ name: DOR CI
 
 on:
   push:
-    branches: [main, phase3/p3-12-authority-model-consolidation]
+    branches: [main, phase3/p3-13-runtime-api-consolidation]
   pull_request:
-    branches: [main, phase3/p3-11-api-authorization-boundary]
+    branches: [main]
 
 permissions:
   contents: read
@@ -64,4 +64,4 @@ jobs:
         run: bandit -r api domain execution infrastructure runtime monitoring -x tests -ll
 
       - name: Dependency audit
-        run: pip-audit --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-1325 || true
+        run: pip-audit --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-1325
