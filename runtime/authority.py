@@ -36,10 +36,7 @@ class AuthorityRuntime:
 
     def create_role_definition(self, context: "OrganizationContext", *, role: RoleDefinition, command_id: str | None = None) -> RoleDefinition:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())
-        if role.organization_id != context.organization_id:
-            decision = AuthorizationDecision(allowed=False, reason="Role definition belongs to another organization", reason_code="resource_not_accessible", actor_id=context.actor_id, principal_id=context.principal.id, organization_id=context.organization_id, capability_id="authority.role.create", resource_id=role.id, resource_organization_id=role.organization_id)
-            self._deny(decision, command_id, "role_created")
-        decision = self._authorize(context, "authority.role.create", None, None)
+        decision = self._authorize(context, "authority.role.create", role.id, role.organization_id)
         if not decision.allowed: self._deny(decision, command_id, "role_created")
         with self.runtime.database.session() as session:
             with UnitOfWork(session) as uow:
