@@ -31,10 +31,10 @@ class AuthorizationService:
     ) -> AuthorizationDecision:
         """Evaluate one authorization request without implicit fallback.
 
-        When a resource is supplied, its organization must resolve to the
-        active organization. Missing and cross-organization resources use the
-        same denial so authorization behavior cannot disclose protected
-        resource existence.
+        Every returned decision carries the complete organization context used
+        by the boundary. Missing and cross-organization resources use the same
+        denial so authorization behavior cannot disclose protected resource
+        existence.
         """
         base = dict(
             actor_id=actor_id,
@@ -42,6 +42,7 @@ class AuthorizationService:
             organization_id=organization_id,
             capability_id=capability_id,
             resource_id=resource_id,
+            resource_organization_id=resource_organization_id,
         )
 
         if principal.id != actor_id:
