@@ -28,17 +28,18 @@ class Capability:
 
 @dataclass(frozen=True)
 class RoleDefinition:
-    """Defines authority without identifying the actor holding it."""
+    """Organization-owned definition of authority."""
 
     id: str
     name: str
+    organization_id: str
     capabilities: frozenset[str] = field(default_factory=frozenset)
     description: str = ""
     status: str = "active"
 
     def __post_init__(self) -> None:
-        if not self.id or not self.name:
-            raise ValueError("RoleDefinition requires id and name")
+        if not self.id or not self.name or not self.organization_id:
+            raise ValueError("RoleDefinition requires id, name and organization")
         if self.status not in {"active", "inactive"}:
             raise ValueError("RoleDefinition status must be active or inactive")
         for capability in self.capabilities:
