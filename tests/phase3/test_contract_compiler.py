@@ -70,14 +70,24 @@ def test_compiler_requires_human_approved_architecture():
         compile_contracts(make_approved_requirements(), make_architecture())
 
 
-def test_compiler_rejects_invalid_requirements():
-    invalid = make_requirements()
-    invalid = replace(invalid, open_questions=())
-    approval = approval_for(invalid, "soeren")
-    approved = replace(invalid, status="approved", approval=approval)
-    # Mutating a valid immutable contract into an invalid one is impossible;
-    # use the explicit validator gate as the architectural guarantee.
-    assert compile_contracts(approved, make_approved_architecture()).package.contracts
+def test_compiler_blocks_invalid_approved_requirements():
+    invalid_review = replace(
+        make_requirements(),
+        functional_requirements=(
+            Requirement(
+                id="FR-001",
+                statement="Agent suggestion",
+                priority="must",
+                source="agent_proposed",
+                status="confirmed",
+                acceptance_criteria=("AC-001",),
+            ),
+        ),
+    )
+    approval = approval_for(invalid_review, "soeren")
+    invalid_approved = replace(invalid_review, status="approved", approval=approval)
+    with pytest.raises(ContractCompilationError, match="Requirements contract is not valid"):
+        compile_contracts(invalid_approved, make_approved_architecture())
 
 
 def test_compiler_emits_all_specialist_contracts():
