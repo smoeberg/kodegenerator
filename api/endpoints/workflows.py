@@ -1,77 +1,42 @@
-# api/endpoints/workflows.py
-from typing import List, Optional
+"""Canonical workflow API backed exclusively by DORRuntime."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from api.models import WorkflowCreate, WorkflowResponse, WorkflowTransitionRequest
 from domain.principal import Principal
 from domain.workflow import Workflow, WorkflowState
-from runtime.core import CommandAuthorizationError, DORRuntime, NotFoundError
-DORRuntimeDB = DORRuntime
-from runtime.commands import AdvanceWorkflowCommand
 from runtime.context import ContextError
+from runtime.core import CommandAuthorizationError, DORRuntime, NotFoundError
+from runtime.commands import AdvanceWorkflowCommand
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
-def _response(workflow: Workflow, dor: DORRuntimeDB) -> WorkflowResponse:
-    return WorkflowResponse(
-        id=workflow.id,
-        name=workflow.name,
-        description=workflow.description,
-        current_state=workflow.current_state.name if workflow.current_state else None,
-        states=[s.to_dict() for s in workflow.states],
-        transitions=[t.to_dict() for t in workflow.transitions],
-        gates=[g.to_dict() for g in workflow.gates],
-        intent=workflow.intent.to_dict() if workflow.intent else None,
-        tasks=[t.to_dict() for t in dor.db_adapter.uow.task.get_by_workflow(workflow.id)],
-        artifacts=[a.to_dict() for a in dor.db_adapter.uow.artifact.get_by_workflow(workflow.id)],
-        created_at=workflow.created_at,
-        updated_at=workflow.updated_at,
-    )
+def _response(workflow: Workflow) -> WorkflowResponse:
+    def to_dict(value):
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if hasattr(value, "__dict__"):
+            return {key: item for key, item in value.__dict__.items() if not key.startswith("_")}
+        return str(value)
 
-
-def _runtime_response(workflow: Workflow) -> WorkflowResponse:
-    """Adapt the canonical runtime aggregate without using the legacy DB adapter."""
-    def to_d(obj):
-        if hasattr(obj, "to_dict"):
-            return obj.to_dict()
-        if hasattr(obj, "__dict__"):
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
-        return str(obj)
-
-    cs = workflow.current_state
-    if cs is None:
-        cs_name = None
-    elif isinstance(cs, str):
-        cs_name = cs.lower()
-    elif isinstance(cs, int):
-        state_map = {1: "new", 2: "analysis", 3: "design", 4: "implementation", 5: "review", 6: "approved", 7: "released", 8: "rejected", 9: "archived"}
-        cs_name = state_map.get(cs, "new")
-    elif hasattr(cs, "name"):
-        name_val = cs.name
-        if hasattr(name_val, "name"):
-            cs_name = name_val.name.lower()
-        elif isinstance(name_val, str):
-            cs_name = name_val.lower()
-        else:
-            cs_name = str(name_val).lower()
-    elif hasattr(cs, "value"):
-        cs_name = str(cs.value).lower()
-    else:
-        cs_name = str(cs).lower()
+    current_state = workflow.current_state
+    current_name = None
+    if current_state is not None:
+        state_name = getattr(current_state, "name", current_state)
+        current_name = str(getattr(state_name, "name", state_name)).lower()
 
     return WorkflowResponse(
         id=workflow.id,
         name=workflow.name,
         description=workflow.description,
-        current_state=cs_name,
-        states=[to_d(s) for s in workflow.states],
-        transitions=[to_d(t) for t in workflow.transitions],
-        gates=[to_d(g) for g in workflow.gates],
-        intent=to_d(workflow.intent) if workflow.intent else None,
+        current_state=current_name,
+        states=[to_dict(item) for item in workflow.states],
+        transitions=[to_dict(item) for item in workflow.transitions],
+        gates=[to_dict(item) for item in workflow.gates],
+        intent=to_dict(workflow.intent) if workflow.intent else None,
         tasks=[],
         artifacts=[],
         created_at=workflow.created_at,
@@ -79,58 +44,44 @@ def _runtime_response(workflow: Workflow) -> WorkflowResponse:
     )
 
 
+def _context(dor: DORRuntime, current_user: User, organization_id: str):
+    principal = Principal(id=current_user.username, type="user", metadata={"username": current_user.username})
+    try:
+        return dor.establish_context(principal=principal, organization_id=organization_id, actor_id=current_user.username)
+    except (ContextError, NotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(
     workflow: WorkflowCreate,
-    dor: DORRuntimeDB = Depends(get_dor),
+    organization_id: str = Query(...),
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
 ):
-    """Opret et nyt Workflow."""
-    intent = dor.db_adapter.get_intent(workflow.intent_id) if workflow.intent_id else None
-    if workflow.intent_id and not intent:
-        raise HTTPException(status_code=404, detail="Intent not found")
-
-    if workflow.template_id:
-        template = dor.get_workflow_template(workflow.template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail="WorkflowTemplate not found")
-        db_workflow = template.instantiate(
-            workflow_id=workflow.id,
-            intent_id=workflow.intent_id,
-            organization_id=dor.organization.id,
-        )
-    else:
-        db_workflow = Workflow(
-            id=workflow.id,
-            name=workflow.name,
-            description=workflow.description,
-            intent=intent,
-            organization=dor.organization,
-        )
-
-    workflow_model = dor.db_adapter.create_workflow(db_workflow)
-    dor.workflow_engine.add_workflow(db_workflow)
-    return _response(workflow_model, dor)
+    """Create a workflow through the canonical organization-scoped runtime."""
+    if workflow.intent_id or workflow.template_id:
+        raise HTTPException(status_code=400, detail="intent_id and template_id are not supported by the canonical P3-13 runtime API")
+    context = _context(dor, current_user, organization_id)
+    try:
+        created = dor.create_workflow(context, name=workflow.name, description=workflow.description or "")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _response(created)
 
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
-def get_workflow(workflow_id: str, dor: DORRuntimeDB = Depends(get_dor)):
-    """Hent et Workflow ud fra ID."""
-    workflow = dor.db_adapter.get_workflow(workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    return _response(workflow, dor)
-
-
-@router.get("/", response_model=List[WorkflowResponse])
-def get_workflows(
-    intent_id: Optional[str] = None,
-    dor: DORRuntimeDB = Depends(get_dor),
+def get_workflow(
+    workflow_id: str,
+    organization_id: str = Query(...),
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
 ):
-    """Hent alle Workflows, eventuelt filtreret efter Intent."""
-    workflows = dor.db_adapter.uow.workflow.get_all()
-    if intent_id:
-        workflows = [wf for wf in workflows if wf.intent_id == intent_id]
-    return [_response(dor.db_adapter.get_workflow(wf.id), dor) for wf in workflows]
+    context = _context(dor, current_user, organization_id)
+    try:
+        return _response(dor.get_workflow(context, workflow_id))
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Workflow not found") from exc
 
 
 @router.post("/{workflow_id}/transition", response_model=WorkflowResponse)
@@ -140,69 +91,17 @@ def transition_workflow(
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ):
-    """Skift tilstand for et Workflow via canonical Phase 3 authorization boundary."""
-    return transition_workflow_authorized(workflow_id=workflow_id, request=request, current_user=current_user, dor=dor)
-
-
-@router.post("/{workflow_id}/transition-authorized", response_model=WorkflowResponse)
-def transition_workflow_authorized(
-    workflow_id: str,
-    request: WorkflowTransitionRequest,
-    current_user: User = Depends(get_current_active_user),
-    dor: DORRuntime = Depends(get_dor),
-):
-    """Execute a workflow transition through the canonical Phase 3 authorization boundary.
-
-    The authenticated principal is bound to the actor by ``establish_context``;
-    the request supplies the organization and command identity, while ``workflow_id``
-    is always taken from the path and therefore cannot be substituted by an actor field.
-    """
-    principal = Principal(
-        id=current_user.username,
-        type="user",
-        metadata={"username": current_user.username},
-    )
-
+    """Execute a workflow transition through the single canonical command boundary."""
+    principal = Principal(id=current_user.username, type="user", metadata={"username": current_user.username})
     try:
-        context = dor.establish_context(
-            principal=principal,
-            organization_id=request.organization_id,
-            actor_id=current_user.username,
-        )
-        state_mapping = {
-            "new": WorkflowState.NEW,
-            "analysis": WorkflowState.ANALYSIS,
-            "design": WorkflowState.DESIGN,
-            "implementation": WorkflowState.IMPLEMENTATION,
-            "review": WorkflowState.REVIEW,
-            "approved": WorkflowState.APPROVED,
-            "released": WorkflowState.RELEASED,
-            "rejected": WorkflowState.REJECTED,
-            "archived": WorkflowState.ARCHIVED,
-        }
-        state_val = request.new_state.value if hasattr(request.new_state, "value") else str(request.new_state)
-        target_state = state_mapping.get(state_val.lower())
-        if not target_state:
-            raise HTTPException(status_code=400, detail=f"Invalid state: {state_val}")
-
-        command = AdvanceWorkflowCommand(
-            command_id=request.command_id,
-            organization_id=request.organization_id,
-            workflow_id=workflow_id,
-            target_state=target_state,
-        )
+        context = dor.establish_context(principal=principal, organization_id=request.organization_id, actor_id=current_user.username)
+        target_state = WorkflowState[request.new_state.name.upper()]
+        command = AdvanceWorkflowCommand(command_id=request.command_id, organization_id=request.organization_id, workflow_id=workflow_id, target_state=target_state)
         result = dor.execute_command(context, command)
     except CommandAuthorizationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "authorization_denied",
-                "reason_code": exc.decision.reason_code,
-                "reason": exc.decision.reason,
-                "workflow_id": workflow_id,
-            },
-        ) from exc
+        raise HTTPException(status_code=403, detail={"error": "authorization_denied", "reason_code": exc.decision.reason_code, "reason": exc.decision.reason, "workflow_id": workflow_id}) from exc
     except (ContextError, NotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-
-    return _runtime_response(result.workflow)
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid state: {request.new_state}") from exc
+    return _response(result.workflow)

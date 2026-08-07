@@ -117,6 +117,17 @@ class DORRuntime:
                 uow.events.append(event)
         return workflow
 
+    def list_workflows(self, context: OrganizationContext) -> list[Workflow]:
+        """Return only workflows owned by the authenticated organization context."""
+        self._require_ready()
+        with self.database.session() as session:
+            uow = UnitOfWork(session)
+            workflows = uow.workflows.list_for_organization(context.organization_id)
+            for workflow in workflows:
+                workflow.organization = context.organization
+                workflow.events = uow.events.for_aggregate(workflow.id, context.organization_id)
+            return workflows
+
     def get_workflow(self, context: OrganizationContext, workflow_id: str) -> Workflow:
         self._require_ready()
         with self.database.session() as session:
@@ -146,17 +157,7 @@ class DORRuntime:
             with self.database.session() as session:
                 with UnitOfWork(session) as uow:
                     res_org_id = uow.workflows.get_organization_id(command_request.workflow_id)
-            decision = AuthorizationDecision(
-                allowed=False,
-                reason="Command organization does not match runtime context",
-                reason_code="command_organization_mismatch",
-                actor_id=context.actor_id,
-                principal_id=context.principal.id,
-                organization_id=context.organization_id,
-                capability_id="workflow.transition",
-                resource_id=command_request.workflow_id,
-                resource_organization_id=res_org_id or context.organization_id,
-            )
+            decision = AuthorizationDecision(allowed=False, reason="Command organization does not match runtime context", reason_code="command_organization_mismatch", actor_id=context.actor_id, principal_id=context.principal.id, organization_id=context.organization_id, capability_id="workflow.transition", resource_id=command_request.workflow_id, resource_organization_id=res_org_id or context.organization_id)
             self._record_denied_authorization_audit(decision, command_request)
             raise CommandAuthorizationError(decision)
         for attempt in range(_COMMAND_RETRY_LIMIT):
@@ -173,7 +174,6 @@ class DORRuntime:
         raise RuntimeError("Unreachable command execution retry state")
 
     def _record_denied_authorization_audit(self, decision: AuthorizationDecision, command_request: AdvanceWorkflowCommand) -> None:
-        """Persist a denial audit after the failed command transaction closes."""
         audit_event = create_authorization_audit_event(decision, command_id=command_request.command_id, command_type=type(command_request).__name__, allowed=False)
         with self.database.session() as audit_session:
             with UnitOfWork(audit_session) as audit_uow:
@@ -197,7 +197,6 @@ class DORRuntime:
                             raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
                         workflow.organization = context.organization
                         return CommandResult(command_id=command_request.command_id, workflow=workflow)
-
                     workflow = uow.workflows.get_for_organization(command_request.workflow_id, context.organization_id)
                     if workflow is None:
                         raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
@@ -221,14 +220,12 @@ class DORRuntime:
                     uow.workflows.update(workflow, context.organization_id, expected_revision=revision)
                     uow.commands.add(command_id=command_request.command_id, organization_id=context.organization_id, actor_id=context.actor_id, command_type=type(command_request).__name__, payload=command_request.payload, aggregate_id=workflow.id, created_at=datetime.now(timezone.utc))
                     return CommandResult(command_id=command_request.command_id, workflow=workflow)
-
         if denied_decision is not None:
             self._record_denied_authorization_audit(denied_decision, command_request)
             raise CommandAuthorizationError(denied_decision)
         raise RuntimeError("Command execution completed without a result")
 
     def get_events(self, context: OrganizationContext, aggregate_id: str, *, include_authorization_audit: bool = False) -> list[Event]:
-        """Return organization-scoped domain events, optionally including auth audit events."""
         self._require_ready()
         with self.database.session() as session:
             events = UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
