@@ -1,11 +1,5 @@
 # domain/event.py
-"""
-Event Domain Model
-
-Represents domain events that occur within DOR.
-Events are the mechanism by which state changes and actions are recorded and propagated.
-"""
-
+"""Domain event primitives used by DOR persistence and audit."""
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from datetime import datetime, timezone
@@ -22,43 +16,15 @@ if TYPE_CHECKING:
 
 class EventType(Enum):
     """Types of Events in DOR."""
-    INTENT_CREATED = auto()
-    INTENT_RESOLVED = auto()
-    INTENT_FAILED = auto()
-    WORKFLOW_CREATED = auto()
-    WORKFLOW_STARTED = auto()
-    WORKFLOW_STATE_CHANGED = auto()
-    WORKFLOW_COMPLETED = auto()
-    WORKFLOW_FAILED = auto()
-    TASK_CREATED = auto()
-    TASK_ASSIGNED = auto()
-    TASK_STARTED = auto()
-    TASK_COMPLETED = auto()
-    TASK_FAILED = auto()
-    TASK_BLOCKED = auto()
-    ARTIFACT_CREATED = auto()
-    ARTIFACT_SUBMITTED = auto()
-    ARTIFACT_APPROVED = auto()
-    ARTIFACT_REJECTED = auto()
-    ARTIFACT_RELEASED = auto()
-    POLICY_CREATED = auto()
-    POLICY_VIOLATED = auto()
-    GOVERNANCE_APPROVAL = auto()
-    GOVERNANCE_REJECTION = auto()
-    AUTHORIZATION_GRANTED = auto()
-    AUTHORIZATION_DENIED = auto()
-    AUTHORITY_ROLE_CREATED = auto()
-    AUTHORITY_ROLE_ACTIVATED = auto()
-    AUTHORITY_ROLE_DEACTIVATED = auto()
-    AUTHORITY_ROLE_ASSIGNED = auto()
-    AUTHORITY_ROLE_ASSIGNMENT_DEACTIVATED = auto()
-    AUTHORITY_ROLE_REVOKED = auto()
-    EXECUTION_STARTED = auto()
-    EXECUTION_COMPLETED = auto()
-    EXECUTION_FAILED = auto()
-    SIDE_EFFECT_VERIFIED = auto()
-    SYSTEM_BOOTED = auto()
-    SYSTEM_SHUTDOWN = auto()
+    INTENT_CREATED = auto(); INTENT_RESOLVED = auto(); INTENT_FAILED = auto()
+    WORKFLOW_CREATED = auto(); WORKFLOW_STARTED = auto(); WORKFLOW_STATE_CHANGED = auto(); WORKFLOW_COMPLETED = auto(); WORKFLOW_FAILED = auto()
+    TASK_CREATED = auto(); TASK_ASSIGNED = auto(); TASK_STARTED = auto(); TASK_COMPLETED = auto(); TASK_FAILED = auto(); TASK_BLOCKED = auto()
+    ARTIFACT_CREATED = auto(); ARTIFACT_SUBMITTED = auto(); ARTIFACT_APPROVED = auto(); ARTIFACT_REJECTED = auto(); ARTIFACT_RELEASED = auto()
+    POLICY_CREATED = auto(); POLICY_VIOLATED = auto(); GOVERNANCE_APPROVAL = auto(); GOVERNANCE_REJECTION = auto()
+    AUTHORIZATION_GRANTED = auto(); AUTHORIZATION_DENIED = auto()
+    AUTHORITY_ROLE_CREATED = auto(); AUTHORITY_ROLE_ACTIVATED = auto(); AUTHORITY_ROLE_DEACTIVATED = auto()
+    AUTHORITY_ROLE_ASSIGNED = auto(); AUTHORITY_ROLE_ASSIGNMENT_ACTIVATED = auto(); AUTHORITY_ROLE_ASSIGNMENT_DEACTIVATED = auto(); AUTHORITY_ROLE_REVOKED = auto()
+    EXECUTION_STARTED = auto(); EXECUTION_COMPLETED = auto(); EXECUTION_FAILED = auto(); SIDE_EFFECT_VERIFIED = auto(); SYSTEM_BOOTED = auto(); SYSTEM_SHUTDOWN = auto()
 
 
 @dataclass
@@ -78,38 +44,11 @@ class Event:
     sequence: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "event_type": self.event_type.name,
-            "aggregate_id": self.aggregate_id,
-            "aggregate_type": self.aggregate_type,
-            "organization_id": self.organization_id,
-            "actor_id": self.actor_id,
-            "timestamp": self.timestamp.isoformat(),
-            "correlation_id": self.correlation_id,
-            "causation_id": self.causation_id,
-            "metadata": self.metadata,
-            "schema_version": self.schema_version,
-            "sequence": self.sequence
-        }
+        return {"id": self.id, "event_type": self.event_type.name, "aggregate_id": self.aggregate_id, "aggregate_type": self.aggregate_type, "organization_id": self.organization_id, "actor_id": self.actor_id, "timestamp": self.timestamp.isoformat(), "correlation_id": self.correlation_id, "causation_id": self.causation_id, "metadata": self.metadata, "schema_version": self.schema_version, "sequence": self.sequence}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], **kwargs) -> "Event":
-        return cls(
-            event_type=EventType[data["event_type"]],
-            id=data.get("id", str(uuid.uuid4())),
-            aggregate_id=data.get("aggregate_id"),
-            aggregate_type=data.get("aggregate_type"),
-            organization_id=data.get("organization_id"),
-            actor_id=data.get("actor_id"),
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
-            correlation_id=data.get("correlation_id"),
-            causation_id=data.get("causation_id"),
-            metadata=data.get("metadata", {}),
-            schema_version=data.get("schema_version", "1.0"),
-            sequence=data.get("sequence", 0),
-            **kwargs
-        )
+        return cls(event_type=EventType[data["event_type"]], id=data.get("id", str(uuid.uuid4())), aggregate_id=data.get("aggregate_id"), aggregate_type=data.get("aggregate_type"), organization_id=data.get("organization_id"), actor_id=data.get("actor_id"), timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc), correlation_id=data.get("correlation_id"), causation_id=data.get("causation_id"), metadata=data.get("metadata", {}), schema_version=data.get("schema_version", "1.0"), sequence=data.get("sequence", 0), **kwargs)
 
 
 DomainEvent = Event
