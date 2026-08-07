@@ -157,11 +157,15 @@ class RequirementsSpecification:
         if not isinstance(self.intent, Mapping):
             raise RequirementsValidationError("intent must be an object")
         _validate_unique_ids(self.all_items())
+        if self.status == "approved" and self.approval.status != "approved":
+            raise RequirementsValidationError("Approved specification requires approval status")
         if self.approval.status == "approved":
             if self.approval.specification_id != self.specification_id or self.approval.version != self.version:
                 raise RequirementsValidationError("Approval must identify the exact specification version")
             if not self.approval.content_fingerprint or not self.approval.approver_id or not self.approval.approved_at:
                 raise RequirementsValidationError("Approved specification requires fingerprint, approver and timestamp")
+            if self.approval.content_fingerprint != self.fingerprint:
+                raise RequirementsValidationError("Approval fingerprint does not match specification content")
 
     def all_items(self) -> tuple[Any, ...]:
         return (
@@ -172,10 +176,14 @@ class RequirementsSpecification:
         )
 
     def canonical_dict(self) -> dict[str, Any]:
-        """Return canonical JSON-compatible content excluding approval proof."""
+        """Return stable contract content excluding workflow metadata."""
         def plain(value: Any) -> Any:
             if hasattr(value, "__dataclass_fields__"):
-                return {k: plain(getattr(value, k)) for k in value.__dataclass_fields__ if k != "approval"}
+                return {
+                    k: plain(getattr(value, k))
+                    for k in value.__dataclass_fields__
+                    if k not in {"approval", "status"}
+                }
             if isinstance(value, Mapping):
                 return {str(k): plain(value[k]) for k in sorted(value)}
             if isinstance(value, (tuple, list)):
@@ -185,6 +193,7 @@ class RequirementsSpecification:
             return value
         data = plain(self)
         data.pop("approval", None)
+        data.pop("status", None)
         return data
 
     @property
