@@ -23,10 +23,16 @@ def _assignment(
     )
 
 
-def _role(role_id: str, *capabilities: str, status: str = "active") -> RoleDefinition:
+def _role(
+    role_id: str,
+    *capabilities: str,
+    organization_id: str = "org-a",
+    status: str = "active",
+) -> RoleDefinition:
     return RoleDefinition(
         id=role_id,
         name=role_id,
+        organization_id=organization_id,
         capabilities=frozenset(capabilities),
         status=status,
     )
@@ -80,7 +86,7 @@ def test_cross_actor_and_cross_organization_assignments_fail_closed() -> None:
     ]
     roles = {
         "other-actor": _role("other-actor", "workflow.release"),
-        "other-org": _role("other-org", "workflow.approve"),
+        "other-org": _role("other-org", "workflow.approve", organization_id="org-b"),
         "valid": _role("valid", "workflow.read"),
     }
     assert resolve_effective_capabilities("actor-a", "org-a", assignments, roles) == frozenset(
