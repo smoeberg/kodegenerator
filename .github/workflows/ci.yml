@@ -2,7 +2,7 @@ name: DOR CI
 
 on:
   push:
-    branches: [main, phase3/p3-13-runtime-api-consolidation]
+    branches: [main]
   pull_request:
     branches: [main]
 
