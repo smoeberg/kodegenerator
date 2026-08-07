@@ -25,6 +25,7 @@ def _context(runtime: DORRuntime):
     role = RoleDefinition(
         id="workflow.operator",
         name="Workflow Operator",
+        organization_id="org-a",
         capabilities=frozenset({"workflow.transition"}),
     )
     assignment = RoleAssignment(
