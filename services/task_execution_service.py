@@ -7,11 +7,10 @@ execution contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
 from datetime import datetime, timezone
+from typing import Any, Protocol
 
 from domain.authorization_audit import create_authorization_audit_event
-from domain.authority import AuthorizationDecision
 from domain.event import Event, EventType
 from domain.principal import Principal
 from domain.task_execution import (
@@ -69,11 +68,7 @@ class TaskExecutionService:
         self.executor_factory = executor_factory
         self.runtime_ready = runtime_ready
 
-    def execute(
-        self,
-        principal: Principal,
-        request: TaskExecutionRequest,
-    ) -> ExecutionResult:
+    def execute(self, principal: Principal, request: TaskExecutionRequest) -> ExecutionResult:
         if not self.runtime_ready:
             raise RuntimeNotReadyError("DOR runtime has not been booted")
 
@@ -145,11 +140,7 @@ class TaskExecutionService:
         self.uow.task_executions.update(existing)
         self._append_execution_event(EventType.EXECUTION_COMPLETED, existing)
         self.uow.session.commit()
-        return ExecutionResult(
-            execution_id=existing.execution_id,
-            status=existing.status,
-            result=existing.result,
-        )
+        return ExecutionResult(execution_id=existing.execution_id, status=existing.status, result=existing.result)
 
     def _finish_failed(self, receipt: TaskExecutionReceipt, error_code: str) -> None:
         receipt.mark_failed(error_code, "Task execution failed")
@@ -157,13 +148,14 @@ class TaskExecutionService:
         self._append_execution_event(EventType.EXECUTION_FAILED, receipt)
         self.uow.session.commit()
 
-    def _record_authorization(self, decision: AuthorizationDecision, request: TaskExecutionRequest) -> None:
+    def _record_authorization(self, decision, request: TaskExecutionRequest) -> None:
         self.uow.events.append(
             create_authorization_audit_event(
                 decision,
                 command_id=request.execution_id,
                 command_type=request.task_type,
                 allowed=decision.allowed,
+                aggregate_type="task_execution",
             )
         )
         self.uow.session.commit()
