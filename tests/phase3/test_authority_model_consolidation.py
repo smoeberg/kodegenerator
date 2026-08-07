@@ -12,15 +12,13 @@ from domain.workflow import WorkflowState
 from infrastructure.persistence.uow import UnitOfWork
 from runtime.core import CommandAuthorizationError, DORRuntime
 
-ADMIN_CAPABILITIES = frozenset(
-    {
-        "authority.role.create",
-        "authority.role.assign",
-        "authority.role.activate",
-        "authority.role.deactivate",
-        "authority.role.revoke",
-    }
-)
+ADMIN_CAPABILITIES = frozenset({
+    "authority.role.create",
+    "authority.role.assign",
+    "authority.role.activate",
+    "authority.role.deactivate",
+    "authority.role.revoke",
+})
 
 
 def _runtime(tmp_path: Path) -> DORRuntime:
@@ -55,7 +53,14 @@ def test_role_definition_is_organization_scoped(tmp_path: Path) -> None:
     role = RoleDefinition(id="role-a", name="Role A", organization_id="org-a", capabilities=frozenset({"workflow.transition"}))
     runtime.authority.create_role_definition(context_a, role=role)
     with pytest.raises(CommandAuthorizationError) as exc:
-        runtime.authority.assign_role(context_b, assignment=RoleAssignment(actor_id="actor-b", organization_id="org-b", role_definition_id="role-a"))
+        runtime.authority.assign_role(
+            context_b,
+            assignment=RoleAssignment(
+                actor_id="actor-b",
+                organization_id="org-a",
+                role_definition_id="role-a",
+            ),
+        )
     assert exc.value.decision.reason_code == "resource_not_accessible"
 
 
