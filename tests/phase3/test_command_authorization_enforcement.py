@@ -33,6 +33,7 @@ def _grant_transition(runtime: DORRuntime, organization_id: str, actor_id: str) 
     role = RoleDefinition(
         id="workflow.operator",
         name="Workflow Operator",
+        organization_id=organization_id,
         capabilities=frozenset({"workflow.transition"}),
     )
     assignment = RoleAssignment(
@@ -59,10 +60,8 @@ def test_command_is_denied_without_transition_capability(tmp_path: Path) -> None
     runtime = _runtime(tmp_path)
     context = _seed_context(runtime)
     workflow = runtime.create_workflow(context, "protected")
-
     with pytest.raises(CommandAuthorizationError) as exc:
         runtime.execute_command(context, _command(context, workflow.id))
-
     assert exc.value.decision.allowed is False
     assert exc.value.decision.reason_code == "capability_not_granted"
     assert runtime.get_workflow(context, workflow.id).current_state.name == WorkflowState.NEW
@@ -73,9 +72,7 @@ def test_command_is_allowed_when_transition_capability_is_granted(tmp_path: Path
     context = _seed_context(runtime)
     _grant_transition(runtime, context.organization_id, context.actor_id)
     workflow = runtime.create_workflow(context, "protected")
-
     result = runtime.execute_command(context, _command(context, workflow.id))
-
     assert result.command_id == "cmd-1"
     assert runtime.get_workflow(context, workflow.id).current_state.name == WorkflowState.ANALYSIS
 
@@ -86,8 +83,6 @@ def test_command_is_denied_for_actor_without_capability_in_other_organization(tm
     context_b = _seed_context(runtime, "org-b", "actor-b")
     _grant_transition(runtime, "org-b", "actor-b")
     workflow_a = runtime.create_workflow(context_a, "org-a-workflow")
-
     with pytest.raises(CommandAuthorizationError) as exc:
         runtime.execute_command(context_a, _command(context_a, workflow_a.id, "cmd-cross-org"))
-
     assert exc.value.decision.reason_code == "capability_not_granted"
