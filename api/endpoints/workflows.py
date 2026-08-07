@@ -1,7 +1,6 @@
 """Canonical workflow API backed exclusively by DORRuntime."""
-from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
@@ -27,8 +26,7 @@ def _response(workflow: Workflow) -> WorkflowResponse:
     current_name = None
     if current_state is not None:
         state_name = getattr(current_state, "name", current_state)
-        current_name = getattr(state_name, "name", state_name)
-        current_name = str(current_name).lower()
+        current_name = str(getattr(state_name, "name", state_name)).lower()
 
     return WorkflowResponse(
         id=workflow.id,
@@ -57,15 +55,13 @@ def _context(dor: DORRuntime, current_user: User, organization_id: str):
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(
     workflow: WorkflowCreate,
+    organization_id: str = Query(...),
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ):
     """Create a workflow through the canonical organization-scoped runtime."""
     if workflow.intent_id or workflow.template_id:
         raise HTTPException(status_code=400, detail="intent_id and template_id are not supported by the canonical P3-13 runtime API")
-    organization_id = getattr(workflow, "organization_id", None)
-    if not organization_id:
-        raise HTTPException(status_code=422, detail="organization_id is required")
     context = _context(dor, current_user, organization_id)
     try:
         created = dor.create_workflow(context, name=workflow.name, description=workflow.description or "")
@@ -74,20 +70,10 @@ def create_workflow(
     return _response(created)
 
 
-@router.get("/", response_model=List[WorkflowResponse])
-def get_workflows(
-    organization_id: str,
-    current_user: User = Depends(get_current_active_user),
-    dor: DORRuntime = Depends(get_dor),
-):
-    context = _context(dor, current_user, organization_id)
-    return [_response(workflow) for workflow in dor.list_workflows(context)]
-
-
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
 def get_workflow(
     workflow_id: str,
-    organization_id: str,
+    organization_id: str = Query(...),
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ):
