@@ -11,8 +11,9 @@ def test_api_main_imports_with_canonical_runtime(monkeypatch):
     module = importlib.import_module("api.main")
 
     assert module.app.title == "Digital Organization Runtime (DOR)"
-    assert any(route.path == "/health" for route in module.app.routes)
-    assert any(route.path == "/workflows/{workflow_id}/transition" for route in module.app.routes)
+    routes = [route for route in module.app.routes if getattr(route, "path", None) is not None]
+    assert any(route.path == "/health" for route in routes)
+    assert any(route.path == "/workflows/{workflow_id}/transition" for route in routes)
 
 
 def test_mounted_api_has_no_legacy_persistence_adapter_reference():
