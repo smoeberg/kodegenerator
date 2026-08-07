@@ -132,3 +132,28 @@ class CommandExecutionModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     aggregate_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TaskExecutionModel(Base):
+    """Durable organization-scoped execution receipt."""
+
+    __tablename__ = "task_executions"
+
+    execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    task_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    capability_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resource_organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("execution_id", "organization_id", name="uq_task_execution_org_id"),
+    )
