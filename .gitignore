@@ -13,3 +13,9 @@ ENV/
 .coverage
 htmlcov/
 .env
+
+# Local/runtime key material — never commit
+*.key
+*.salt
+data/fleet_master.key
+data/fleet_salt
