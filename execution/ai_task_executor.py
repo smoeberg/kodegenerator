@@ -1,7 +1,9 @@
 # execution/ai_task_executor.py
-from typing import Dict, List, Optional, Any
-from domain.task import Task, TaskStatus
-from domain.artifact import Artifact, ArtifactType, ArtifactState
+from datetime import datetime, timezone
+from typing import Dict, List, Any
+
+from domain.task import Task
+from domain.artifact import Artifact, ArtifactType
 from domain.actor import Actor, ActorType
 from domain.model import Model
 from ai.client import AIClient
@@ -9,17 +11,17 @@ from runtime.model_registry import ModelRegistry
 from runtime.artifact_lifecycle_manager import ArtifactLifecycleManager
 from runtime.event_bus import EventBus
 from domain.event import Event, EventType
-import asyncio
+
 
 class AITaskExecutor:
-    """Udfører tasks ved at kalde LLM'er."""
+    """Execute AI tasks through the explicit, provider-neutral AI boundary."""
 
     def __init__(
         self,
         model_registry: ModelRegistry,
         ai_client: AIClient,
         artifact_manager: ArtifactLifecycleManager,
-        event_bus: EventBus
+        event_bus: EventBus,
     ):
         self.model_registry = model_registry
         self.ai_client = ai_client
@@ -27,386 +29,178 @@ class AITaskExecutor:
         self.event_bus = event_bus
 
     async def execute(self, task: Task, actor: Actor) -> Dict[str, Any]:
-        """
-        Udfør en Task ved at kalde en LLM.
-        Returner et dictionary med resultater (f.eks. {"output": "genereret kode", "status": "success"}).
-        """
-        # Tjek om Actor er en Digital Employee med en model
         if actor.type != ActorType.DIGITAL_EMPLOYEE:
             return {"status": "failed", "error": "Actor is not a Digital Employee"}
 
-        # Hent modellen for Actor
         model = self.model_registry.get_model(actor.identity)
         if not model:
             return {"status": "failed", "error": f"Model {actor.identity} not found"}
 
-        # Bestem handling baseret på Task-navn
         if "generate" in task.name.lower() or "implement" in task.name.lower():
             return await self._execute_code_generation(task, actor, model)
-        elif "review" in task.name.lower():
+        if "review" in task.name.lower():
             return await self._execute_code_review(task, actor, model)
-        elif "test" in task.name.lower():
+        if "test" in task.name.lower():
             return await self._execute_test_generation(task, actor, model)
-        elif "document" in task.name.lower():
+        if "document" in task.name.lower():
             return await self._execute_documentation(task, actor, model)
-        else:
-            return await self._execute_generic(task, actor, model)
+        return await self._execute_generic(task, actor, model)
 
-    async def _execute_code_generation(
-        self,
-        task: Task,
-        actor: Actor,
-        model: Model
-    ) -> Dict[str, Any]:
-        """Generér kode baseret på Task-beskrivelsen."""
-        # Hent input-artefakter (f.eks. specifikationer)
-        input_artifacts = []
-        for artifact_id in task.input_artifacts:
-            artifact = self.artifact_manager.artifacts.get(artifact_id)
-            if artifact:
-                input_artifacts.append(artifact)
+    async def _generate(self, *, model: Model, prompt: str, system_message: str, temperature: float) -> str:
+        """Call the canonical AI boundary; provider integration intentionally remains deferred."""
+        return await self.ai_client.generate_response(
+            model=model,
+            prompt=prompt,
+            system_message=system_message,
+            temperature=temperature,
+            max_tokens=model.max_tokens,
+        )
 
-        # Byg prompt
+    async def _execute_code_generation(self, task: Task, actor: Actor, model: Model) -> Dict[str, Any]:
+        input_artifacts = [
+            artifact for artifact_id in task.input_artifacts
+            if (artifact := self.artifact_manager.artifacts.get(artifact_id))
+        ]
         prompt = f"""
-        You are a {actor.role.name} with expertise in {', '.join(actor.role.capabilities)}.
-        Your task is to: {task.description}
+You are a {actor.role.name} with expertise in {', '.join(actor.role.capabilities)}.
+Your task is to: {task.description}
 
-        Input artifacts:
-        {self._format_artifacts(input_artifacts)}
+Input artifacts:
+{self._format_artifacts(input_artifacts)}
 
-        Generate the required code. Ensure it is:
-        - Well-structured
-        - Properly documented
-        - Follows best practices
-        - Handles edge cases
-        """
-
-        # Kald LLM
+Generate the required code. Ensure it is well-structured, documented, robust, and handles edge cases.
+"""
         try:
-            output = await self.ai_client.generate(
+            output = await self._generate(
+                model=model,
                 prompt=prompt,
-                model_id=model.id,
                 system_message="You are a senior software engineer. Generate high-quality code.",
-                temperature=0.3,  # Lav temperatur for mere deterministisk output
-                max_tokens=model.max_tokens
+                temperature=0.3,
             )
-
-            # Opret et nyt Artefakt med den genererede kode
             artifact = self.artifact_manager.create_artifact(
                 artifact_type=ArtifactType.IMPLEMENTATION,
                 owner=actor,
                 department_id=actor.department.id if actor.department else None,
                 workflow_id=task.workflow_id,
-                metadata={
-                    "code": output,
-                    "language": "python",  # Antag Python (kan udvides)
-                    "task_id": task.id
-                }
+                metadata={"code": output, "language": "python", "task_id": task.id},
             )
-
-            # Log Event
             self.event_bus.publish(Event(
                 id=f"event_{len(self.event_bus.events) + 1}",
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc),
             ))
+            return {"status": "success", "output": output, "artifact_id": artifact.id}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
 
-            return {
-                "status": "success",
-                "output": output,
-                "artifact_id": artifact.id
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
-
-    async def _execute_code_review(
-        self,
-        task: Task,
-        actor: Actor,
-        model: Model
-    ) -> Dict[str, Any]:
-        """Review kode baseret på input-artefakter."""
-        # Hent input-artefakter (f.eks. implementeringskode)
-        input_artifacts = []
-        for artifact_id in task.input_artifacts:
-            artifact = self.artifact_manager.artifacts.get(artifact_id)
-            if artifact:
-                input_artifacts.append(artifact)
-
+    async def _execute_code_review(self, task: Task, actor: Actor, model: Model) -> Dict[str, Any]:
+        input_artifacts = [
+            artifact for artifact_id in task.input_artifacts
+            if (artifact := self.artifact_manager.artifacts.get(artifact_id))
+        ]
         if not input_artifacts:
             return {"status": "failed", "error": "No input artifacts for review"}
-
-        # Byg prompt
         prompt = f"""
-        You are a {actor.role.name} with expertise in code review.
-        Your task is to: {task.description}
+You are a senior code reviewer. Your task is to: {task.description}
 
-        Review the following code:
-        {self._format_artifacts(input_artifacts)}
+Review the following code:
+{self._format_artifacts(input_artifacts)}
 
-        Provide a detailed review including:
-        - Code quality
-        - Potential bugs
-        - Performance issues
-        - Security concerns
-        - Suggestions for improvement
-
-        Format your response as JSON:
-        {{
-            "feedback": "Your detailed feedback here",
-            "score": 0-10,
-            "issues": ["List of issues"],
-            "suggestions": ["List of suggestions"]
-        }}
-        """
-
-        # Kald LLM
+Provide detailed feedback on quality, bugs, performance, security, and improvements.
+"""
         try:
-            output = await self.ai_client.generate(
+            output = await self._generate(
+                model=model,
                 prompt=prompt,
-                model_id=model.id,
                 system_message="You are a senior code reviewer. Provide thorough and constructive feedback.",
-                temperature=0.2,  # Lav temperatur for mere konsistent output
-                max_tokens=model.max_tokens
+                temperature=0.2,
             )
-
-            # Parse JSON (simplificeret)
-            try:
-                import json
-                review_data = json.loads(output)
-            except:
-                review_data = {"feedback": output, "score": 8, "issues": [], "suggestions": []}
-
-            # Opret et Review Artefakt
             artifact = self.artifact_manager.create_artifact(
                 artifact_type=ArtifactType.REVIEW,
                 owner=actor,
                 department_id=actor.department.id if actor.department else None,
                 workflow_id=task.workflow_id,
-                metadata={
-                    "review": review_data,
-                    "task_id": task.id
-                }
+                metadata={"review": output, "task_id": task.id},
             )
-
-            # Log Event
             self.event_bus.publish(Event(
                 id=f"event_{len(self.event_bus.events) + 1}",
                 event_type=EventType.ARTIFACT_CREATED,
                 actor=actor,
                 artifact=artifact,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc),
             ))
+            return {"status": "success", "output": output, "artifact_id": artifact.id}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
 
-            return {
-                "status": "success",
-                "output": review_data,
-                "artifact_id": artifact.id
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
-
-    async def _execute_test_generation(
-        self,
-        task: Task,
-        actor: Actor,
-        model: Model
-    ) -> Dict[str, Any]:
-        """Generér tests baseret på input-artefakter."""
-        # Hent input-artefakter (f.eks. implementeringskode)
-        input_artifacts = []
-        for artifact_id in task.input_artifacts:
-            artifact = self.artifact_manager.artifacts.get(artifact_id)
-            if artifact:
-                input_artifacts.append(artifact)
-
+    async def _execute_test_generation(self, task: Task, actor: Actor, model: Model) -> Dict[str, Any]:
+        input_artifacts = [
+            artifact for artifact_id in task.input_artifacts
+            if (artifact := self.artifact_manager.artifacts.get(artifact_id))
+        ]
         if not input_artifacts:
             return {"status": "failed", "error": "No input artifacts for test generation"}
-
-        # Byg prompt
-        prompt = f"""
-        You are a {actor.role.name} with expertise in testing.
-        Your task is to: {task.description}
-
-        Generate comprehensive tests for the following code:
-        {self._format_artifacts(input_artifacts)}
-
-        Include:
-        - Unit tests
-        - Integration tests
-        - Edge case tests
-        - Performance tests (if applicable)
-
-        Format your response as Python code with pytest.
-        """
-
-        # Kald LLM
+        prompt = f"Generate pytest tests for:\n{self._format_artifacts(input_artifacts)}\nTask: {task.description}"
         try:
-            output = await self.ai_client.generate(
+            output = await self._generate(
+                model=model,
                 prompt=prompt,
-                model_id=model.id,
                 system_message="You are a senior test engineer. Generate thorough and effective tests.",
                 temperature=0.3,
-                max_tokens=model.max_tokens
             )
-
-            # Opret et Test Artefakt
             artifact = self.artifact_manager.create_artifact(
                 artifact_type=ArtifactType.IMPLEMENTATION,
                 owner=actor,
                 department_id=actor.department.id if actor.department else None,
                 workflow_id=task.workflow_id,
-                metadata={
-                    "tests": output,
-                    "task_id": task.id,
-                    "coverage": 0.95  # Antag 95% dækning (kan beregnes senere)
-                }
+                metadata={"tests": output, "task_id": task.id},
             )
+            return {"status": "success", "output": output, "artifact_id": artifact.id}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
 
-            # Log Event
-            self.event_bus.publish(Event(
-                id=f"event_{len(self.event_bus.events) + 1}",
-                event_type=EventType.ARTIFACT_CREATED,
-                actor=actor,
-                artifact=artifact,
-                timestamp=datetime.utcnow()
-            ))
-
-            return {
-                "status": "success",
-                "output": output,
-                "artifact_id": artifact.id
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
-
-    async def _execute_documentation(
-        self,
-        task: Task,
-        actor: Actor,
-        model: Model
-    ) -> Dict[str, Any]:
-        """Generér dokumentation baseret på input-artefakter."""
-        # Hent input-artefakter (f.eks. kode, arkitektur)
-        input_artifacts = []
-        for artifact_id in task.input_artifacts:
-            artifact = self.artifact_manager.artifacts.get(artifact_id)
-            if artifact:
-                input_artifacts.append(artifact)
-
+    async def _execute_documentation(self, task: Task, actor: Actor, model: Model) -> Dict[str, Any]:
+        input_artifacts = [
+            artifact for artifact_id in task.input_artifacts
+            if (artifact := self.artifact_manager.artifacts.get(artifact_id))
+        ]
         if not input_artifacts:
             return {"status": "failed", "error": "No input artifacts for documentation"}
-
-        # Byg prompt
-        prompt = f"""
-        You are a {actor.role.name} with expertise in documentation.
-        Your task is to: {task.description}
-
-        Generate comprehensive documentation for the following:
-        {self._format_artifacts(input_artifacts)}
-
-        Include:
-        - Overview
-        - Installation instructions
-        - Usage examples
-        - API documentation (if applicable)
-        - Architecture diagrams (as text)
-        - Best practices
-        - Troubleshooting
-
-        Format your response as Markdown.
-        """
-
-        # Kald LLM
+        prompt = f"Generate Markdown documentation for:\n{self._format_artifacts(input_artifacts)}\nTask: {task.description}"
         try:
-            output = await self.ai_client.generate(
+            output = await self._generate(
+                model=model,
                 prompt=prompt,
-                model_id=model.id,
                 system_message="You are a senior technical writer. Generate clear and comprehensive documentation.",
                 temperature=0.3,
-                max_tokens=model.max_tokens
             )
-
-            # Opret et Dokumentations Artefakt
             artifact = self.artifact_manager.create_artifact(
                 artifact_type=ArtifactType.DOCUMENTATION,
                 owner=actor,
                 department_id=actor.department.id if actor.department else None,
                 workflow_id=task.workflow_id,
-                metadata={
-                    "documentation": output,
-                    "task_id": task.id
-                }
+                metadata={"documentation": output, "task_id": task.id},
             )
+            return {"status": "success", "output": output, "artifact_id": artifact.id}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
 
-            # Log Event
-            self.event_bus.publish(Event(
-                id=f"event_{len(self.event_bus.events) + 1}",
-                event_type=EventType.ARTIFACT_CREATED,
-                actor=actor,
-                artifact=artifact,
-                timestamp=datetime.utcnow()
-            ))
-
-            return {
-                "status": "success",
-                "output": output,
-                "artifact_id": artifact.id
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
-
-    async def _execute_generic(
-        self,
-        task: Task,
-        actor: Actor,
-        model: Model
-    ) -> Dict[str, Any]:
-        """Udfør en generisk Task (faldback)."""
-        # Byg prompt
-        prompt = f"""
-        You are a {actor.role.name} with expertise in {', '.join(actor.role.capabilities)}.
-        Your task is to: {task.description}
-
-        Provide a detailed and thorough response.
-        """
-
-        # Kald LLM
+    async def _execute_generic(self, task: Task, actor: Actor, model: Model) -> Dict[str, Any]:
+        prompt = f"You are a {actor.role.name}. Your task is to: {task.description}"
         try:
-            output = await self.ai_client.generate(
+            output = await self._generate(
+                model=model,
                 prompt=prompt,
-                model_id=model.id,
                 system_message="You are a helpful assistant. Provide detailed and accurate responses.",
                 temperature=0.7,
-                max_tokens=model.max_tokens
             )
-
-            return {
-                "status": "success",
-                "output": output
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
+            return {"status": "success", "output": output}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
 
     def _format_artifacts(self, artifacts: List[Artifact]) -> str:
-        """Formater en liste af Artefakter til en prompt."""
         formatted = []
         for artifact in artifacts:
             if artifact.artifact_type == ArtifactType.IMPLEMENTATION:

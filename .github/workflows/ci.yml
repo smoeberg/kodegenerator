@@ -2,9 +2,9 @@ name: DOR CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, phase3/p3-12-authority-model-consolidation]
   pull_request:
-    branches: [main]
+    branches: [main, phase3/p3-11-api-authorization-boundary]
 
 permissions:
   contents: read

@@ -185,6 +185,14 @@ class WorkflowCreate(WorkflowBase):
     template_id: Optional[str] = None
 
 
+class WorkflowTransitionRequest(BaseModel):
+    """Authenticated request for the canonical Phase 3 command boundary."""
+
+    organization_id: str
+    command_id: str = Field(min_length=1)
+    new_state: WorkflowStateEnum
+
+
 class WorkflowResponse(WorkflowBase):
     states: List[Dict[str, Any]] = Field(default_factory=list)
     transitions: List[Dict[str, Any]] = Field(default_factory=list)

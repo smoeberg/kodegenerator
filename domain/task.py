@@ -1,71 +1,170 @@
 # domain/task.py
+"""
+Task Domain Model
+
+Represents a unit of work to be executed within a Workflow.
+Tasks are the atomic units of execution in DOR.
+"""
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-from datetime import datetime
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from datetime import datetime, timezone
 from enum import Enum, auto
+import uuid
+
+if TYPE_CHECKING:
+    from domain.actor import Actor
+    from domain.workflow import Workflow
+    from domain.artifact import Artifact
+    from domain.organization import Organization
+
 
 class TaskStatus(Enum):
-    """Tilstande for en Task."""
-    PENDING = auto()       # Venter på at blive startet
-    ASSIGNED = auto()      # Tildelt til en Actor
-    IN_PROGRESS = auto()   # I gang
-    BLOCKED = auto()       # Blokeret (venter på afhængigheder)
-    COMPLETED = auto()      # Færdiggjort
-    FAILED = auto()        # Fejlet
-    CANCELLED = auto()     # Annulleret
+    """Status of a Task."""
+    PENDING = auto()
+    READY = auto()
+    CLAIMED = auto()
+    RUNNING = auto()
+    SUCCEEDED = auto()
+    FAILED = auto()
+    BLOCKED = auto()
+    CANCELLED = auto()
+    RETRYING = auto()
+
 
 class TaskPriority(Enum):
-    """Prioritetsniveauer for Tasks."""
+    """Priority levels for Tasks."""
     LOW = 0
     MEDIUM = 1
     HIGH = 2
     CRITICAL = 3
 
+
+class DependencyStatus(Enum):
+    """Status of Task dependencies."""
+    WAITING_FOR_DEPENDENCY = auto()
+    READY = auto()
+
+
 @dataclass
 class Task:
-    """Repræsenterer en opgave, der skal udføres i et Workflow."""
+    """Represents a unit of work to be executed within a Workflow."""
     id: str
     name: str
     description: str = ""
     status: TaskStatus = TaskStatus.PENDING
+    dependency_status: DependencyStatus = DependencyStatus.WAITING_FOR_DEPENDENCY
     priority: TaskPriority = TaskPriority.MEDIUM
-    workflow_id: Optional[str] = None  # Hvilket Workflow tilhører Tasken?
-    assigned_actor: Optional["Actor"] = None  # Hvilken Actor er tildelt?
-    dependencies: List[str] = field(default_factory=list)  # Liste af Task-ID'er, der skal færdiggøres først
-    input_artifacts: List[str] = field(default_factory=list)  # Liste af Artefakt-ID'er (input)
-    output_artifacts: List[str] = field(default_factory=list)  # Liste af Artefakt-ID'er (output)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    metadata: Dict = field(default_factory=dict)  # Yderligere data (f.eks. deadline, estimeret tid)
+    workflow_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    
+    dependencies: List[str] = field(default_factory=list)
+    assigned_actor: Optional["Actor"] = None
+    input_artifacts: List[str] = field(default_factory=list)
+    output_artifacts: List[str] = field(default_factory=list)
+    
+    retry_count: int = 0
+    max_retries: int = 3
+    last_error: Optional[str] = None
+    execution_parameters: Dict[str, Any] = field(default_factory=dict)
+    
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self):
+        if not hasattr(self, 'id') or self.id is None:
+            object.__setattr__(self, 'id', str(uuid.uuid4()))
 
     def can_start(self, completed_tasks: List[str]) -> bool:
-        """Tjek om Tasken kan startes (alle afhængigheder er færdige)."""
         return all(dep_id in completed_tasks for dep_id in self.dependencies)
 
     def is_blocked(self, completed_tasks: List[str]) -> bool:
-        """Tjek om Tasken er blokeret (venter på afhængigheder)."""
         return not self.can_start(completed_tasks)
 
+    def update_dependency_status(self, completed_tasks: List[str]) -> None:
+        if self.can_start(completed_tasks):
+            self.dependency_status = DependencyStatus.READY
+        else:
+            self.dependency_status = DependencyStatus.WAITING_FOR_DEPENDENCY
+
     def assign_to(self, actor: "Actor") -> None:
-        """Tildel Tasken til en Actor."""
         self.assigned_actor = actor
-        self.status = TaskStatus.ASSIGNED
-        self.updated_at = datetime.now()
+        self.status = TaskStatus.CLAIMED
+        self.updated_at = datetime.now(timezone.utc)
 
     def start(self) -> None:
-        """Start Tasken."""
-        if self.status == TaskStatus.ASSIGNED:
-            self.status = TaskStatus.IN_PROGRESS
-            self.updated_at = datetime.now()
+        if self.status == TaskStatus.CLAIMED:
+            self.status = TaskStatus.RUNNING
+            self.updated_at = datetime.now(timezone.utc)
 
-    def complete(self, output_artifacts: List[str]) -> None:
-        """Færdiggør Tasken."""
-        self.status = TaskStatus.COMPLETED
+    def succeed(self, output_artifacts: List[str], execution_result: Optional[Dict] = None) -> None:
+        self.status = TaskStatus.SUCCEEDED
         self.output_artifacts = output_artifacts
-        self.updated_at = datetime.now()
+        if execution_result:
+            self.metadata["execution_result"] = execution_result
+        self.updated_at = datetime.now(timezone.utc)
 
-    def fail(self, reason: str) -> None:
-        """Markér Tasken som fejlet."""
+    def fail(self, error: str, retry: bool = False) -> None:
         self.status = TaskStatus.FAILED
-        self.metadata["failure_reason"] = reason
-        self.updated_at = datetime.now()
+        self.last_error = error
+        self.retry_count += 1
+        if retry and self.retry_count < self.max_retries:
+            self.status = TaskStatus.RETRYING
+        self.updated_at = datetime.now(timezone.utc)
+
+    def cancel(self) -> None:
+        self.status = TaskStatus.CANCELLED
+        self.updated_at = datetime.now(timezone.utc)
+
+    def block(self, reason: str) -> None:
+        self.status = TaskStatus.BLOCKED
+        self.last_error = f"Blocked: {reason}"
+        self.updated_at = datetime.now(timezone.utc)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.name,
+            "dependency_status": self.dependency_status.name,
+            "priority": self.priority.name,
+            "workflow_id": self.workflow_id,
+            "organization_id": self.organization_id,
+            "dependencies": self.dependencies,
+            "assigned_actor_id": self.assigned_actor.id if self.assigned_actor else None,
+            "input_artifacts": self.input_artifacts,
+            "output_artifacts": self.output_artifacts,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "last_error": self.last_error,
+            "execution_parameters": self.execution_parameters,
+            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], **kwargs) -> "Task":
+        return cls(
+            id=data.get("id", str(uuid.uuid4())),
+            name=data["name"],
+            description=data.get("description", ""),
+            status=TaskStatus[data.get("status", "PENDING")],
+            dependency_status=DependencyStatus[data.get("dependency_status", "WAITING_FOR_DEPENDENCY")],
+            priority=TaskPriority[data.get("priority", "MEDIUM")],
+            workflow_id=data.get("workflow_id"),
+            organization_id=data.get("organization_id"),
+            dependencies=data.get("dependencies", []),
+            input_artifacts=data.get("input_artifacts", []),
+            output_artifacts=data.get("output_artifacts", []),
+            retry_count=data.get("retry_count", 0),
+            max_retries=data.get("max_retries", 3),
+            last_error=data.get("last_error"),
+            execution_parameters=data.get("execution_parameters", {}),
+            metadata=data.get("metadata", {}),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
+            **kwargs
+        )
