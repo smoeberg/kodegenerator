@@ -23,6 +23,7 @@ from infrastructure.persistence.database import Database
 from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
 from services.authorization_service import AuthorizationService
+from .authority import AuthorityRuntime
 from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResult
 from .context import ContextError, OrganizationContext, establish_context
 
@@ -55,6 +56,7 @@ class DORRuntime:
         self.database_url = database_url
         self.database = Database(database_url)
         self.ready = False
+        self.authority = AuthorityRuntime(self)
 
     def boot(self) -> None:
         """Run the canonical database migration and mark the runtime ready."""
@@ -154,7 +156,6 @@ class DORRuntime:
                 capability_id="workflow.transition",
                 resource_id=command_request.workflow_id,
                 resource_organization_id=res_org_id or context.organization_id,
-                context={"command_organization_id": command_request.organization_id},
             )
             self._record_denied_authorization_audit(decision, command_request)
             raise CommandAuthorizationError(decision)
@@ -171,18 +172,9 @@ class DORRuntime:
                 sleep(_COMMAND_RETRY_DELAY_SECONDS * (attempt + 1))
         raise RuntimeError("Unreachable command execution retry state")
 
-    def _record_denied_authorization_audit(
-        self,
-        decision: AuthorizationDecision,
-        command_request: AdvanceWorkflowCommand,
-    ) -> None:
+    def _record_denied_authorization_audit(self, decision: AuthorizationDecision, command_request: AdvanceWorkflowCommand) -> None:
         """Persist a denial audit after the failed command transaction closes."""
-        audit_event = create_authorization_audit_event(
-            decision,
-            command_id=command_request.command_id,
-            command_type=type(command_request).__name__,
-            allowed=False,
-        )
+        audit_event = create_authorization_audit_event(decision, command_id=command_request.command_id, command_type=type(command_request).__name__, allowed=False)
         with self.database.session() as audit_session:
             with UnitOfWork(audit_session) as audit_uow:
                 audit_uow.events.append(audit_event)
@@ -192,14 +184,7 @@ class DORRuntime:
         with self.database.session() as session:
             with UnitOfWork(session) as uow:
                 resource_organization_id = uow.workflows.get_organization_id(command_request.workflow_id)
-                decision = AuthorizationService(uow).authorize(
-                    principal=context.principal,
-                    actor_id=context.actor_id,
-                    organization_id=context.organization_id,
-                    capability_id="workflow.transition",
-                    resource_id=command_request.workflow_id,
-                    resource_organization_id=resource_organization_id,
-                )
+                decision = AuthorizationService(uow).authorize(principal=context.principal, actor_id=context.actor_id, organization_id=context.organization_id, capability_id="workflow.transition", resource_id=command_request.workflow_id, resource_organization_id=resource_organization_id)
                 if not decision.allowed:
                     denied_decision = decision
                 else:
@@ -220,15 +205,8 @@ class DORRuntime:
                     revision = uow.workflows.get_revision(command_request.workflow_id, context.organization_id)
                     if revision is None:
                         raise NotFoundError(f"Workflow not found: {command_request.workflow_id}")
-
-                    audit_event = create_authorization_audit_event(
-                        decision,
-                        command_id=command_request.command_id,
-                        command_type=type(command_request).__name__,
-                        allowed=True,
-                    )
+                    audit_event = create_authorization_audit_event(decision, command_id=command_request.command_id, command_type=type(command_request).__name__, allowed=True)
                     uow.events.append(audit_event)
-
                     try:
                         events = workflow.transition_to(command_request.target_state, context.actor)
                     except InvalidTransitionError:
@@ -249,29 +227,14 @@ class DORRuntime:
             raise CommandAuthorizationError(denied_decision)
         raise RuntimeError("Command execution completed without a result")
 
-    def get_events(
-        self,
-        context: OrganizationContext,
-        aggregate_id: str,
-        *,
-        include_authorization_audit: bool = False,
-    ) -> list[Event]:
-        """Return organization-scoped domain events, optionally including auth audit events.
-
-        The default preserves the Phase 2 event-stream contract. Phase 3 audit
-        consumers explicitly opt into authorization decision events, which are
-        still persisted in the same canonical EventStore.
-        """
+    def get_events(self, context: OrganizationContext, aggregate_id: str, *, include_authorization_audit: bool = False) -> list[Event]:
+        """Return organization-scoped domain events, optionally including auth audit events."""
         self._require_ready()
         with self.database.session() as session:
             events = UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
         if include_authorization_audit:
             return events
-        filtered = [
-            event
-            for event in events
-            if event.event_type not in {EventType.AUTHORIZATION_GRANTED, EventType.AUTHORIZATION_DENIED}
-        ]
+        filtered = [event for event in events if event.event_type not in {EventType.AUTHORIZATION_GRANTED, EventType.AUTHORIZATION_DENIED}]
         for sequence, event in enumerate(filtered, start=1):
             event.sequence = sequence
         return filtered
