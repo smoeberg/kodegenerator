@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Iterable
 
 from domain.distribution import DispatchRecord
 from domain.orchestration import (
@@ -24,7 +24,7 @@ from services.verification_execution_service import VerificationExecutionService
 
 
 class OrchestrationFailure(RuntimeError):
-    """Raised only for infrastructure or orchestration contract failures."""
+    """Raised only for unexpected orchestration infrastructure failures."""
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class OrchestrationOutcome:
 
 
 class Orchestrator:
-    """Coordinate the deterministic Phase 3 boundaries without becoming an authority."""
+    """Coordinate deterministic Phase 3 boundaries without becoming an authority."""
 
     def __init__(self, execution: VerificationExecutionService | None = None) -> None:
         self._execution = execution or VerificationExecutionService()
@@ -49,33 +49,54 @@ class Orchestrator:
         cwd: str | Path,
         adapters: Iterable[CommandEvidenceAdapter],
     ) -> OrchestrationOutcome:
+        """Run the lifecycle, repeating only an explicit, bounded retry policy.
+
+        A retry always creates RETRYING -> DISPATCHED and starts another
+        execution/evidence cycle. P3-20 remains the sole PASS/FAIL authority.
+        """
         self._validate_dispatch(request, dispatch)
         self._validate_product(dispatch, product)
+        adapter_list = tuple(adapters)
+        if not adapter_list:
+            raise OrchestrationError("At least one execution adapter is required")
 
         snapshot = OrchestrationSnapshot(request.orchestration_id, OrchestrationState.RECEIVED)
         snapshot = snapshot.transition(OrchestrationState.DISPATCHED).bind_dispatch(dispatch)
         snapshot = snapshot.transition(OrchestrationState.DELIVERED).bind_product(product)
+        current_product = product
+        last_verification: VerificationResult | None = None
 
-        try:
-            delivered, verification = self._execution.execute(
-                dispatch, product, cwd=cwd, adapters=adapters
-            )
-        except VerificationExecutionError as exc:
-            snapshot = snapshot.transition(OrchestrationState.EXECUTED, failure_reason=str(exc))
-            snapshot = snapshot.transition(OrchestrationState.FAILED, failure_reason="EXECUTION_FAILURE")
-            return OrchestrationOutcome(self._result(snapshot))
-        except Exception as exc:
-            raise OrchestrationFailure("Unexpected orchestration infrastructure failure") from exc
+        while True:
+            try:
+                delivered, verification = self._execution.execute(
+                    dispatch, current_product, cwd=cwd, adapters=adapter_list
+                )
+            except VerificationExecutionError as exc:
+                snapshot = snapshot.transition(OrchestrationState.EXECUTED, failure_reason=str(exc))
+                snapshot = snapshot.transition(OrchestrationState.FAILED, failure_reason="EXECUTION_FAILURE")
+                return OrchestrationOutcome(self._result(snapshot), last_verification, current_product)
+            except Exception as exc:
+                raise OrchestrationFailure("Unexpected orchestration infrastructure failure") from exc
 
-        snapshot = snapshot.transition(OrchestrationState.EXECUTED).bind_product(delivered)
-        snapshot = snapshot.transition(OrchestrationState.VERIFIED).bind_verification(verification)
+            current_product = delivered
+            last_verification = verification
+            snapshot = snapshot.transition(OrchestrationState.EXECUTED).bind_product(delivered)
+            snapshot = snapshot.transition(OrchestrationState.VERIFIED).bind_verification(verification)
 
-        if verification.status == "PASS":
-            snapshot = snapshot.transition(OrchestrationState.COMPLETED)
-        else:
-            snapshot = self._handle_verification_failure(snapshot, request, "VERIFICATION_FAIL")
+            if verification.status == "PASS":
+                snapshot = snapshot.transition(OrchestrationState.COMPLETED)
+                return OrchestrationOutcome(self._result(snapshot), verification, delivered)
 
-        return OrchestrationOutcome(self._result(snapshot), verification, delivered)
+            if not request.policy.can_retry("VERIFICATION_FAIL", snapshot.attempt):
+                if request.policy.max_attempts > 1 and snapshot.attempt >= request.policy.max_attempts:
+                    snapshot = snapshot.transition(OrchestrationState.ESCALATED, failure_reason="POLICY_EXHAUSTED")
+                else:
+                    snapshot = snapshot.transition(OrchestrationState.FAILED, failure_reason="VERIFICATION_FAIL")
+                return OrchestrationOutcome(self._result(snapshot), verification, delivered)
+
+            snapshot = snapshot.transition(OrchestrationState.RETRYING, failure_reason="VERIFICATION_FAIL")
+            snapshot = snapshot.transition(OrchestrationState.DISPATCHED)
+            snapshot = snapshot.transition(OrchestrationState.DELIVERED).bind_product(current_product)
 
     @staticmethod
     def _validate_dispatch(request: OrchestrationRequest, dispatch: DispatchRecord) -> None:
@@ -96,18 +117,6 @@ class Orchestrator:
             raise OrchestrationError("Delivered product must declare outputs")
         if not all(output in dispatch.permitted_outputs for output in product.output_names):
             raise OrchestrationError("Delivered product contains outputs outside the dispatch contract")
-
-    @staticmethod
-    def _handle_verification_failure(
-        snapshot: OrchestrationSnapshot,
-        request: OrchestrationRequest,
-        failure: str,
-    ) -> OrchestrationSnapshot:
-        if request.policy.can_retry(failure, snapshot.attempt):
-            return snapshot.transition(OrchestrationState.RETRYING, failure_reason=failure)
-        if request.policy.max_attempts > 1 and snapshot.attempt >= request.policy.max_attempts:
-            return snapshot.transition(OrchestrationState.ESCALATED, failure_reason="POLICY_EXHAUSTED")
-        return snapshot.transition(OrchestrationState.FAILED, failure_reason=failure)
 
     @staticmethod
     def _result(snapshot: OrchestrationSnapshot) -> OrchestrationResult:
