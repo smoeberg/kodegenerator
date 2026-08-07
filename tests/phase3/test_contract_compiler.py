@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from domain.architecture_contract import ArchitectureContract, ArchitectureDecision
-from domain.requirements import AcceptanceCriterion, Requirement, RequirementsSpecification, approval_for
+from domain.requirements import Approval, AcceptanceCriterion, Requirement, RequirementsSpecification, approval_for
 from services.contract_compiler import ContractCompilationError, compile_contracts
 
 
@@ -135,9 +135,14 @@ def test_package_fingerprint_changes_when_architecture_changes():
 
 def test_package_fingerprint_changes_when_requirements_change():
     first_requirements = make_approved_requirements()
-    changed_review = replace(first_requirements, intent={"problem_statement": "Different", "desired_outcome": "Working service"})
+    changed_review = replace(
+        first_requirements,
+        status="review",
+        approval=Approval(status="pending"),
+        intent={"problem_statement": "Different", "desired_outcome": "Working service"},
+    )
     changed_approval = approval_for(changed_review, "soeren")
-    changed_requirements = replace(changed_review, approval=changed_approval)
+    changed_requirements = replace(changed_review, status="approved", approval=changed_approval)
     first = compile_contracts(first_requirements, make_approved_architecture()).package
     second = compile_contracts(changed_requirements, make_approved_architecture()).package
     assert first.fingerprint != second.fingerprint
