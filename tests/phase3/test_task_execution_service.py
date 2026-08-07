@@ -4,12 +4,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from domain.actor import Actor
-from domain.authority import AuthorizationDecision
+from domain.actor import Actor, ActorType
 from domain.event import EventType
 from domain.principal import Principal
 from domain.task_execution import TaskExecutionRequest, TaskExecutionStatus
-from infrastructure.persistence.task_execution_repository import TaskExecutionRepository
 from services.task_execution_service import (
     DictTaskExecutorFactory,
     ExecutionConflictError,
@@ -36,10 +34,7 @@ class MemoryExecutions:
         self.items = {}
 
     def get(self, execution_id, organization_id):
-        receipt = self.items.get((execution_id, organization_id))
-        if receipt is None:
-            return None
-        return receipt
+        return self.items.get((execution_id, organization_id))
 
     def add(self, receipt):
         self.items[(receipt.execution_id, receipt.organization_id)] = receipt
@@ -57,13 +52,14 @@ class MemoryAuthority:
 
 
 class MemoryActors:
-    def __init__(self, actor: Actor | None) -> None:
+    def __init__(self, actor: Actor | None, organization_id: str = "org-a") -> None:
         self.actor = actor
+        self.organization_id = organization_id
 
     def get_for_organization(self, actor_id, organization_id):
         if self.actor is None:
             return None
-        if self.actor.id != actor_id or self.actor.organization_id != organization_id:
+        if self.actor.id != actor_id or self.organization_id != organization_id:
             return None
         return self.actor
 
@@ -93,8 +89,7 @@ class CountingExecutor:
 def actor(status="active"):
     return Actor(
         id="actor-1",
-        organization_id="org-a",
-        type="DIGITAL_EMPLOYEE",
+        type=ActorType.DIGITAL_EMPLOYEE,
         identity="employee-1",
         status=status,
     )
@@ -118,7 +113,7 @@ def request(**overrides):
 
 
 def service(*, capabilities=None, actor_status="active", executor=None, ready=True):
-    uow = MemoryUow(actor(actor_status), capabilities or {"workflow.transition"})
+    uow = MemoryUow(actor(actor_status), capabilities if capabilities is not None else {"workflow.transition"})
     executor = executor or CountingExecutor()
     svc = TaskExecutionService(
         uow,
