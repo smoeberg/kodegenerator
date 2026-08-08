@@ -48,16 +48,18 @@ class AuthorityRequest:
         context: Mapping[str, str] | None = None,
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
-        payload = {
+        canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
+        # Timestamp is deliberately excluded: request identity represents the
+        # authorization question, not when it happened.
+        identity_payload = {
             "agent_identity": agent_identity,
             "action": action,
             "resource": resource,
             "context_packet_id": context_packet_id,
             "agent_role": agent_role,
-            "context": sorted((str(k), str(v)) for k, v in (context or {}).items()),
-            "requested_at": timestamp,
+            "context": canonical_context,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
         request_id = hashlib.sha256(encoded).hexdigest()
         return AuthorityRequest(
             request_id=request_id,
@@ -67,7 +69,7 @@ class AuthorityRequest:
             context_packet_id=context_packet_id,
             requested_at=timestamp,
             agent_role=agent_role,
-            context=tuple(payload["context"]),
+            context=tuple(canonical_context),
         )
 
 
