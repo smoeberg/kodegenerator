@@ -115,7 +115,7 @@ def execution_id_for(request: ExecutionRequest, decision: AuthorityDecision) -> 
         "action": request.action,
         "resource": request.resource,
         "context_packet_id": request.context_packet_id,
-        "parameters": list(request.parameters),
+        "parameters": sorted(list(request.parameters)),
         "idempotency_key": request.idempotency_key,
         "authority_decision": decision.decision.value,
         "policy_id": decision.policy_id,
