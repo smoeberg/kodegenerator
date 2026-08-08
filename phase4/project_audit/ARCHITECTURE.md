@@ -1,4 +1,4 @@
-# Phase 4B-2 — Project Audit Agent
+# Phase 4B — Project Audit Agent
 
 ## Purpose
 
@@ -38,6 +38,12 @@ path and SHA-256. `ProjectEvidenceCollector`:
 Manifest generation and proof that the declared manifest is the complete Git
 tree are application responsibilities outside the agent boundary.
 
+The operational application layer supplies that proof through
+`GitRepositoryManifestBuilder`. It resolves one exact commit, lists its complete
+tracked tree, and rejects any tracked working-tree drift before the collector
+reads repository bytes. Untracked files are outside the revision and therefore
+outside the evidence bundle.
+
 ## Authority and execution binding
 
 `ProjectAuditRequest` binds the registered agent, repository resource, AI-2
@@ -69,13 +75,46 @@ critical risks with an overly permissive recommendation. Semantic judgment
 beyond the supported predicates remains advisory and must be independently
 reviewed.
 
+## Operational command and providers
+
+The read-only command executes the complete AI-1 through AI-5 chain and writes
+artifacts only after the report passes evidence validation:
+
+```bash
+python -m phase4.project_audit audit \
+  --repository-root . \
+  --provider baseline
+```
+
+The deterministic `baseline` provider establishes DOR's reproducible minimum
+integrity assessment. It makes no network calls and reports only fixed,
+machine-checkable observations.
+
+The opt-in `openai` provider sends the bounded evidence bundle through the
+OpenAI Responses API using strict Structured Outputs. It requires both
+`OPENAI_API_KEY` and either `--model` or `DOR_PROJECT_AUDIT_MODEL`. The API key
+is used only in the authorization header and is never included in request
+identity, prompts, reports, or errors. The provider fails instead of silently
+truncating an oversized complete evidence bundle.
+
+```bash
+python -m phase4.project_audit audit \
+  --repository-root . \
+  --provider openai \
+  --model <approved-model>
+```
+
+JSON and Markdown artifacts include the exact commit, manifest, bundle,
+request, report, AI-3 decision, AI-4 execution, and AI-5 outcome identities.
+They remain advisory and do not mutate repository source.
+
 ## Explicit non-goals
 
-This slice does not:
+The Project Audit Agent does not:
 
 - write or patch repository files;
 - execute tests, commands, deployments, or migrations;
-- call a concrete model SDK or choose a model;
+- choose a model or silently fall back between providers;
 - replace P3-20 deterministic verification;
 - turn an agent claim into authority;
 - declare production readiness from package-level tests alone.
