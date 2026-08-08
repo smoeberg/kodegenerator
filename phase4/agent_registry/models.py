@@ -2,13 +2,15 @@
 
 The registry owns identity and declarations. It does not authorize actions.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import hashlib
 import json
-from typing import Any, Mapping, Optional, Tuple
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
 
 class AgentRole(str, Enum):
@@ -18,6 +20,7 @@ class AgentRole(str, Enum):
     ORCHESTRATOR = "orchestrator"
     EXECUTOR = "executor"
     CONTEXT_PROVIDER = "context_provider"
+    AUDITOR = "auditor"
     OTHER = "other"
 
 
@@ -32,7 +35,7 @@ class AgentVersion:
             raise ValueError("version components must be non-negative")
 
     @classmethod
-    def parse(cls, value: str) -> "AgentVersion":
+    def parse(cls, value: str) -> AgentVersion:
         parts = value.split(".")
         if len(parts) != 3 or not all(p.isdigit() for p in parts):
             raise ValueError(f"invalid semantic version: {value!r}")
@@ -45,17 +48,18 @@ class AgentVersion:
 @dataclass(frozen=True)
 class Capability:
     """A declared capability. Declaration is not authorization."""
+
     name: str
     version: AgentVersion
-    parameters: Tuple[Tuple[str, Any], ...] = ()
+    parameters: tuple[tuple[str, Any], ...] = ()
 
     @classmethod
     def create(
         cls,
         name: str,
         version: AgentVersion,
-        parameters: Optional[Mapping[str, Any]] = None,
-    ) -> "Capability":
+        parameters: Mapping[str, Any] | None = None,
+    ) -> Capability:
         if not name or not name.strip():
             raise ValueError("capability name must be non-empty")
         params = tuple(sorted((parameters or {}).items(), key=lambda item: item[0]))
@@ -72,6 +76,7 @@ class Capability:
 @dataclass(frozen=True)
 class AgentIdentity:
     """Stable content identity for an agent declaration."""
+
     value: str
 
     @classmethod
@@ -81,15 +86,17 @@ class AgentIdentity:
         version: AgentVersion,
         role: AgentRole,
         capabilities: tuple[Capability, ...],
-        trust_anchor: Optional[str] = None,
-    ) -> "AgentIdentity":
+        trust_anchor: str | None = None,
+    ) -> AgentIdentity:
         canonical = {
             "agent_type": agent_type,
             "version": str(version),
             "role": role.value,
             "capabilities": [
                 c.canonical()
-                for c in sorted(capabilities, key=lambda c: (c.name, str(c.version), c.parameters))
+                for c in sorted(
+                    capabilities, key=lambda c: (c.name, str(c.version), c.parameters)
+                )
             ],
             "trust_anchor": trust_anchor,
         }
@@ -105,12 +112,13 @@ class AgentIdentity:
 @dataclass(frozen=True)
 class AgentRecord:
     """Immutable registered declaration plus lifecycle metadata."""
+
     identity: AgentIdentity
     agent_type: str
     version: AgentVersion
     role: AgentRole
     capabilities: tuple[Capability, ...]
-    trust_anchor: Optional[str] = None
+    trust_anchor: str | None = None
     registered_by: str = "system"
     registered_at: str = ""
     active: bool = True
