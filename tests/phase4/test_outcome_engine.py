@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from phase4.execution.models import ExecutionResult, ExecutionStatus
+from phase4.outcome.engine import OutcomeEngine
 
 
 class TestAI5OutcomeContract:
@@ -41,10 +42,12 @@ class TestAI5OutcomeContract:
 
     def test_duplicate_outcome_does_not_repeat_transition(self):
         result = _result(ExecutionStatus.SUCCEEDED)
-        first = _process(result, transition=("pending", "confirmed"))
-        second = _process(result, transition=("pending", "confirmed"))
+        engine = OutcomeEngine()
+        first = engine.process(result, transition=("pending", "confirmed"))
+        second = engine.process(result, transition=("pending", "confirmed"))
+        assert first is second
         assert first.transitions == second.transitions
-        assert len(second.transitions) <= 1
+        assert len(second.transitions) == 1
 
     def test_invalid_transition_fails_closed(self):
         result = _result(ExecutionStatus.SUCCEEDED)
@@ -94,5 +97,8 @@ def _result(status: ExecutionStatus) -> ExecutionResult:
 
 
 def _process(result, *, transition=None, force_unknown=False):
-    """Placeholder: implementation is intentionally absent in contract phase."""
-    raise NotImplementedError("AI-5 contract implementation pending")
+    return OutcomeEngine().process(
+        result,
+        transition=transition,
+        force_unknown=force_unknown,
+    )
