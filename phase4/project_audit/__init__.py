@@ -1,4 +1,4 @@
-"""Phase 4B-2 evidence-backed Project Audit Agent public contract."""
+"""Evidence-backed and operational Project Audit Agent public contract."""
 
 from .adapter import (
     DuplicateProjectAuditRequestError,
@@ -9,6 +9,7 @@ from .adapter import (
     ProjectAuditRequestBindingError,
     ProjectAuditRequestNotFoundError,
 )
+from .baseline import DORBaselineProjectAuditProvider
 from .collector import (
     EvidenceCollectionError,
     EvidenceIntegrityError,
@@ -38,12 +39,33 @@ from .models import (
     ProjectEvidenceBundle,
     RepositoryManifest,
 )
+from .openai_provider import (
+    OPENAI_RESPONSES_URL,
+    OpenAIProjectAuditInputLimitError,
+    OpenAIProjectAuditProvider,
+    OpenAIProjectAuditProviderError,
+    OpenAIProjectAuditResponseError,
+)
+from .repository import (
+    GitRepositoryDriftError,
+    GitRepositoryError,
+    GitRepositoryManifestBuilder,
+)
+from .runtime import (
+    DEFAULT_AUDIT_OBJECTIVES,
+    ProjectAuditRun,
+    ProjectAuditRuntime,
+    ProjectAuditRuntimeError,
+)
 
 __all__ = [
+    "DEFAULT_AUDIT_OBJECTIVES",
+    "OPENAI_RESPONSES_URL",
     "PROJECT_AUDIT_ACTION",
     "AuditFinding",
     "AuditFindingCandidate",
     "AuditRecommendation",
+    "DORBaselineProjectAuditProvider",
     "DuplicateProjectAuditRequestError",
     "EvidenceArtifact",
     "EvidenceAssertion",
@@ -54,11 +76,18 @@ __all__ = [
     "EvidencePredicate",
     "FindingClassification",
     "FindingSeverity",
+    "GitRepositoryDriftError",
+    "GitRepositoryError",
+    "GitRepositoryManifestBuilder",
     "InvalidProjectAuditReportError",
     "ManifestEntry",
     "MaturityAssessment",
     "MaturityLevel",
     "MaturityStatus",
+    "OpenAIProjectAuditInputLimitError",
+    "OpenAIProjectAuditProvider",
+    "OpenAIProjectAuditProviderError",
+    "OpenAIProjectAuditResponseError",
     "ProjectAuditAdapterError",
     "ProjectAuditCandidate",
     "ProjectAuditContractError",
@@ -69,9 +98,12 @@ __all__ = [
     "ProjectAuditRequest",
     "ProjectAuditRequestBindingError",
     "ProjectAuditRequestNotFoundError",
+    "ProjectAuditRun",
+    "ProjectAuditRuntime",
+    "ProjectAuditRuntimeError",
     "ProjectEvidenceBundle",
     "ProjectEvidenceCollector",
     "RepositoryManifest",
 ]
 
-__version__ = "4.2.0"
+__version__ = "4.3.0"
