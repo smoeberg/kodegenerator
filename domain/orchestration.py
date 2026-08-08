@@ -1,141 +1,132 @@
-"""Immutable, deterministic orchestration contracts for P3-22."""
+"""P3-22 deterministic lifecycle orchestrator.
+
+This layer coordinates P3-19 dispatch, specialist delivery, P3-21 execution,
+and the P3-20 verification authority. It never interprets or overrides the
+verification decision.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-import hashlib
-import json
+from pathlib import Path
 from typing import Iterable
 
 from domain.distribution import DispatchRecord
+from domain.orchestration import (
+    OrchestrationError,
+    OrchestrationRequest,
+    OrchestrationResult,
+    OrchestrationSnapshot,
+    OrchestrationState,
+)
 from domain.verification import DeliveredProduct, VerificationResult
+from services.verification_execution import CommandEvidenceAdapter, VerificationExecutionError
+from services.verification_execution_service import VerificationExecutionService
 
 
-class OrchestrationError(ValueError):
-    """Raised when orchestration input or a lifecycle transition is invalid."""
-
-
-class OrchestrationState(str, Enum):
-    RECEIVED = "RECEIVED"
-    DISPATCHED = "DISPATCHED"
-    DELIVERED = "DELIVERED"
-    EXECUTED = "EXECUTED"
-    VERIFIED = "VERIFIED"
-    RETRYING = "RETRYING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    ESCALATED = "ESCALATED"
-
-
-TERMINAL_STATES = frozenset({OrchestrationState.COMPLETED, OrchestrationState.FAILED, OrchestrationState.ESCALATED})
-_ALLOWED_TRANSITIONS = {
-    OrchestrationState.RECEIVED: frozenset({OrchestrationState.DISPATCHED, OrchestrationState.FAILED}),
-    OrchestrationState.DISPATCHED: frozenset({OrchestrationState.DELIVERED, OrchestrationState.FAILED}),
-    OrchestrationState.DELIVERED: frozenset({OrchestrationState.EXECUTED, OrchestrationState.FAILED}),
-    OrchestrationState.EXECUTED: frozenset({OrchestrationState.VERIFIED, OrchestrationState.FAILED}),
-    OrchestrationState.VERIFIED: frozenset({OrchestrationState.COMPLETED, OrchestrationState.RETRYING, OrchestrationState.ESCALATED}),
-    OrchestrationState.RETRYING: frozenset({OrchestrationState.DISPATCHED, OrchestrationState.FAILED}),
-    OrchestrationState.COMPLETED: frozenset(),
-    OrchestrationState.FAILED: frozenset(),
-    OrchestrationState.ESCALATED: frozenset(),
-}
+class OrchestrationFailure(RuntimeError):
+    """Raised only for unexpected orchestration infrastructure failures."""
 
 
 @dataclass(frozen=True)
-class RetryPolicy:
-    policy_id: str = "no-retry"
-    max_attempts: int = 1
-    retryable_failures: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.policy_id.strip():
-            raise OrchestrationError("policy_id must be non-empty")
-        if self.max_attempts < 1:
-            raise OrchestrationError("max_attempts must be at least 1")
-        if len(self.retryable_failures) != len(set(self.retryable_failures)):
-            raise OrchestrationError("retryable_failures must be unique")
-
-    def can_retry(self, failure: str, attempt: int) -> bool:
-        return attempt < self.max_attempts and failure in self.retryable_failures
+class OrchestrationOutcome:
+    result: OrchestrationResult
+    verification: VerificationResult | None = None
+    product: DeliveredProduct | None = None
 
 
-@dataclass(frozen=True)
-class OrchestrationRequest:
-    task_id: str
-    task_fingerprint: str
-    package_id: str
-    package_fingerprint: str
-    available_inputs: tuple[str, ...]
-    selected_role: str
-    policy: RetryPolicy = RetryPolicy()
+class Orchestrator:
+    """Coordinate deterministic Phase 3 boundaries without becoming an authority."""
 
-    def __post_init__(self) -> None:
-        for name, value in (
-            ("task_id", self.task_id), ("task_fingerprint", self.task_fingerprint),
-            ("package_id", self.package_id), ("package_fingerprint", self.package_fingerprint),
-            ("selected_role", self.selected_role),
-        ):
-            if not isinstance(value, str) or not value.strip():
-                raise OrchestrationError(f"{name} must be non-empty")
-        if not self.available_inputs:
-            raise OrchestrationError("available_inputs must not be empty")
-        if len(self.available_inputs) != len(set(self.available_inputs)):
-            raise OrchestrationError("available_inputs must be unique")
+    def __init__(self, execution: VerificationExecutionService | None = None) -> None:
+        self._execution = execution or VerificationExecutionService()
 
-    @property
-    def orchestration_id(self) -> str:
-        payload = {
-            "task_id": self.task_id,
-            "task_fingerprint": self.task_fingerprint,
-            "package_id": self.package_id,
-            "package_fingerprint": self.package_fingerprint,
-            "available_inputs": list(self.available_inputs),
-            "selected_role": self.selected_role,
-            "policy_id": self.policy.policy_id,
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        return "orchestration-" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+    def run(
+        self,
+        request: OrchestrationRequest,
+        *,
+        dispatch: DispatchRecord,
+        product: DeliveredProduct,
+        cwd: str | Path,
+        adapters: Iterable[CommandEvidenceAdapter],
+    ) -> OrchestrationOutcome:
+        """Run the lifecycle, repeating only an explicit, bounded retry policy.
 
+        A retry always creates RETRYING -> DISPATCHED and starts another
+        execution/evidence cycle. P3-20 remains the sole PASS/FAIL authority.
+        """
+        self._validate_dispatch(request, dispatch)
+        self._validate_product(dispatch, product)
+        adapter_list = tuple(adapters)
+        if not adapter_list:
+            raise OrchestrationError("At least one execution adapter is required")
 
-@dataclass(frozen=True)
-class OrchestrationSnapshot:
-    orchestration_id: str
-    state: OrchestrationState
-    attempt: int = 1
-    dispatch_fingerprint: str | None = None
-    artifact_fingerprint: str | None = None
-    verification_fingerprint: str | None = None
-    failure_reason: str | None = None
+        snapshot = OrchestrationSnapshot(request.orchestration_id, OrchestrationState.RECEIVED)
+        snapshot = snapshot.transition(OrchestrationState.DISPATCHED).bind_dispatch(dispatch)
+        snapshot = snapshot.transition(OrchestrationState.DELIVERED).bind_product(product)
+        current_product = product
+        last_verification: VerificationResult | None = None
 
-    def transition(self, target: OrchestrationState, *, failure_reason: str | None = None) -> "OrchestrationSnapshot":
-        allowed = _ALLOWED_TRANSITIONS[self.state]
-        if target not in allowed:
-            raise OrchestrationError(f"Invalid transition: {self.state.value} -> {target.value}")
-        attempt = self.attempt + 1 if target == OrchestrationState.RETRYING else self.attempt
-        return OrchestrationSnapshot(self.orchestration_id, target, attempt, self.dispatch_fingerprint,
-                                     self.artifact_fingerprint, self.verification_fingerprint, failure_reason)
+        while True:
+            try:
+                delivered, verification = self._execution.execute(
+                    dispatch, current_product, cwd=cwd, adapters=adapter_list
+                )
+            except VerificationExecutionError as exc:
+                snapshot = snapshot.transition(OrchestrationState.EXECUTED, failure_reason=str(exc))
+                snapshot = snapshot.transition(OrchestrationState.FAILED, failure_reason="EXECUTION_FAILURE")
+                return OrchestrationOutcome(self._result(snapshot), last_verification, current_product)
+            except Exception as exc:
+                raise OrchestrationFailure("Unexpected orchestration infrastructure failure") from exc
 
-    def bind_dispatch(self, dispatch: DispatchRecord) -> "OrchestrationSnapshot":
-        if dispatch.fingerprint == "":
-            raise OrchestrationError("dispatch fingerprint must be non-empty")
-        return OrchestrationSnapshot(self.orchestration_id, self.state, self.attempt, dispatch.fingerprint,
-                                     self.artifact_fingerprint, self.verification_fingerprint, self.failure_reason)
+            current_product = delivered
+            last_verification = verification
+            snapshot = snapshot.transition(OrchestrationState.EXECUTED).bind_product(delivered)
+            snapshot = snapshot.bind_verification(verification)
+            snapshot = snapshot.transition(OrchestrationState.VERIFIED)
 
-    def bind_product(self, product: DeliveredProduct) -> "OrchestrationSnapshot":
-        return OrchestrationSnapshot(self.orchestration_id, self.state, self.attempt, self.dispatch_fingerprint,
-                                     product.artifact_fingerprint, self.verification_fingerprint, self.failure_reason)
+            if verification.status == "PASS":
+                snapshot = snapshot.transition(OrchestrationState.COMPLETED)
+                return OrchestrationOutcome(self._result(snapshot), verification, delivered)
 
-    def bind_verification(self, result: VerificationResult) -> "OrchestrationSnapshot":
-        return OrchestrationSnapshot(self.orchestration_id, self.state, self.attempt, self.dispatch_fingerprint,
-                                     self.artifact_fingerprint, result.fingerprint, self.failure_reason)
+            if not request.policy.can_retry("VERIFICATION_FAIL", snapshot.attempt):
+                if request.policy.max_attempts > 1 and snapshot.attempt >= request.policy.max_attempts:
+                    snapshot = snapshot.transition(OrchestrationState.ESCALATED, failure_reason="POLICY_EXHAUSTED")
+                else:
+                    snapshot = snapshot.transition(OrchestrationState.FAILED, failure_reason="VERIFICATION_FAIL")
+                return OrchestrationOutcome(self._result(snapshot), verification, delivered)
 
+            snapshot = snapshot.transition(OrchestrationState.RETRYING, failure_reason="VERIFICATION_FAIL")
+            snapshot = snapshot.transition(OrchestrationState.DISPATCHED)
+            snapshot = snapshot.transition(OrchestrationState.DELIVERED).bind_product(current_product)
 
-@dataclass(frozen=True)
-class OrchestrationResult:
-    orchestration_id: str
-    final_state: OrchestrationState
-    attempt: int
-    dispatch_fingerprint: str | None = None
-    artifact_fingerprint: str | None = None
-    verification_fingerprint: str | None = None
-    failure_reason: str | None = None
+    @staticmethod
+    def _validate_dispatch(request: OrchestrationRequest, dispatch: DispatchRecord) -> None:
+        checks = (
+            (dispatch.task_id == request.task_id, "Dispatch task_id mismatch"),
+            (dispatch.task_fingerprint == request.task_fingerprint, "Dispatch task fingerprint mismatch"),
+            (dispatch.package_id == request.package_id, "Dispatch package_id mismatch"),
+            (dispatch.package_fingerprint == request.package_fingerprint, "Dispatch package fingerprint mismatch"),
+            (dispatch.selected_role == request.selected_role, "Dispatch role mismatch"),
+        )
+        for valid, message in checks:
+            if not valid:
+                raise OrchestrationError(message)
+
+    @staticmethod
+    def _validate_product(dispatch: DispatchRecord, product: DeliveredProduct) -> None:
+        if not product.output_names:
+            raise OrchestrationError("Delivered product must declare outputs")
+        if not all(output in dispatch.permitted_outputs for output in product.output_names):
+            raise OrchestrationError("Delivered product contains outputs outside the dispatch contract")
+
+    @staticmethod
+    def _result(snapshot: OrchestrationSnapshot) -> OrchestrationResult:
+        return OrchestrationResult(
+            orchestration_id=snapshot.orchestration_id,
+            final_state=snapshot.state,
+            attempt=snapshot.attempt,
+            dispatch_fingerprint=snapshot.dispatch_fingerprint,
+            artifact_fingerprint=snapshot.artifact_fingerprint,
+            verification_fingerprint=snapshot.verification_fingerprint,
+            failure_reason=snapshot.failure_reason,
+        )
