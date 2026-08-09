@@ -52,3 +52,35 @@ def test_audit_builder_rejects_outcome_mismatch() -> None:
     decision = AuthorizationDecision(allowed=False, reason="Actor does not hold the requested capability", reason_code="capability_not_granted", actor_id="actor-a", principal_id="actor-a", organization_id="org-a", capability_id="workflow.transition", resource_id="workflow-a", resource_organization_id="org-a")
     with pytest.raises(ValueError, match="Audit outcome must match"):
         create_authorization_audit_event(decision, command_id="cmd-a", command_type="AdvanceWorkflowCommand", allowed=True)
+
+
+def test_missing_resource_can_be_denied_without_claiming_an_owner() -> None:
+    decision = AuthorizationDecision(
+        allowed=False,
+        reason="Target resource is not accessible in this organization",
+        reason_code="resource_not_accessible",
+        actor_id="actor-a",
+        principal_id="actor-a",
+        organization_id="org-a",
+        capability_id="project.read",
+        resource_id="missing-project",
+        resource_organization_id=None,
+    )
+
+    assert decision.allowed is False
+    assert decision.resource_organization_id is None
+
+
+def test_allowed_resource_decision_still_requires_exact_owner() -> None:
+    with pytest.raises(ValueError, match="inaccessible-resource denials"):
+        AuthorizationDecision(
+            allowed=True,
+            reason="Capability granted by effective role authority",
+            reason_code="capability_granted",
+            actor_id="actor-a",
+            principal_id="actor-a",
+            organization_id="org-a",
+            capability_id="project.read",
+            resource_id="project-a",
+            resource_organization_id=None,
+        )

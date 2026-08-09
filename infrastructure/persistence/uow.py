@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from .authority_repositories import AuthorityRepository
 from .command_repository import CommandRepository
-from .repositories import ActorRepository, EventStore, OrganizationRepository, WorkflowRepository
+from .repositories import (
+    ActorRepository,
+    EventStore,
+    OrganizationRepository,
+    ProjectRepository,
+    WorkflowRepository,
+)
 from .task_execution_repository import TaskExecutionRepository
 
 
@@ -19,6 +25,7 @@ class UnitOfWork(AbstractContextManager["UnitOfWork"]):
         self.organizations = OrganizationRepository(session)
         self.actors = ActorRepository(session)
         self.workflows = WorkflowRepository(session)
+        self.projects = ProjectRepository(session)
         self.events = EventStore(session)
         self.commands = CommandRepository(session)
         self.authority = AuthorityRepository(session)

@@ -9,7 +9,7 @@ def test_api_main_imports_with_canonical_runtime(monkeypatch):
     monkeypatch.setenv("DOR_ADMIN_PASSWORD", "phase3-test-password")
 
     module = importlib.import_module("api.main")
-    from api.endpoints import implementation_agent, workflows
+    from api.endpoints import control_plane, implementation_agent, workflows
 
     assert module.app.title == "Digital Organization Runtime (DOR)"
     routes = [route for route in module.app.routes if getattr(route, "path", None) is not None]
@@ -24,6 +24,19 @@ def test_api_main_imports_with_canonical_runtime(monkeypatch):
     assert any(
         route.path == "/implementation-agent/proposals"
         for route in implementation_routes
+    )
+    control_plane_routes = [
+        route
+        for route in control_plane.router.routes
+        if getattr(route, "path", None) is not None
+    ]
+    assert any(
+        route.path == "/api/v1/control-plane/projects"
+        for route in control_plane_routes
+    )
+    assert any(
+        route.path == "/api/v1/control-plane/projects/{project_id}/launch"
+        for route in control_plane_routes
     )
 
 

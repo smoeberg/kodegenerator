@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 class EventType(Enum):
     """Types of Events in DOR."""
     INTENT_CREATED = auto(); INTENT_RESOLVED = auto(); INTENT_FAILED = auto()
+    PROJECT_CREATED = auto(); PROJECT_LAUNCH_REQUESTED = auto()
     WORKFLOW_CREATED = auto(); WORKFLOW_STARTED = auto(); WORKFLOW_STATE_CHANGED = auto(); WORKFLOW_COMPLETED = auto(); WORKFLOW_FAILED = auto()
     TASK_CREATED = auto(); TASK_ASSIGNED = auto(); TASK_STARTED = auto(); TASK_COMPLETED = auto(); TASK_FAILED = auto(); TASK_BLOCKED = auto()
     ARTIFACT_CREATED = auto(); ARTIFACT_SUBMITTED = auto(); ARTIFACT_APPROVED = auto(); ARTIFACT_REJECTED = auto(); ARTIFACT_RELEASED = auto()

@@ -9,9 +9,16 @@ from sqlalchemy.orm import Session
 from domain.actor import Actor, ActorType
 from domain.event import Event, EventType
 from domain.organization import Organization
+from domain.project import Project, ProjectIntent, ProjectStatus
 from domain.workflow import Gate, State, Transition, Workflow, WorkflowState, WorkflowStatus
 
-from .models import ActorModel, EventModel, OrganizationModel, WorkflowModel
+from .models import (
+    ActorModel,
+    EventModel,
+    OrganizationModel,
+    ProjectModel,
+    WorkflowModel,
+)
 
 
 class RepositoryError(RuntimeError):
@@ -237,6 +244,112 @@ class WorkflowRepository:
             created_at=workflow.created_at,
             updated_at=workflow.updated_at,
             revision=revision,
+        )
+
+
+class ProjectRepository:
+    """Organization-scoped durable project storage with integrity checks."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(self, project: Project) -> None:
+        self.session.add(self._to_model(project))
+        self.session.flush()
+
+    def get_for_organization(
+        self,
+        project_id: str,
+        organization_id: str,
+    ) -> Optional[Project]:
+        row = self.session.scalar(
+            select(ProjectModel).where(
+                ProjectModel.id == project_id,
+                ProjectModel.organization_id == organization_id,
+            )
+        )
+        if row is None:
+            return None
+        project = self._to_domain(row)
+        if row.intent_fingerprint != project.intent.fingerprint:
+            raise RepositoryError("Persisted project intent fingerprint mismatch")
+        if row.project_fingerprint != project.fingerprint:
+            raise RepositoryError("Persisted project fingerprint mismatch")
+        return project
+
+    def get_organization_id(self, project_id: str) -> Optional[str]:
+        return self.session.scalar(
+            select(ProjectModel.organization_id).where(ProjectModel.id == project_id)
+        )
+
+    def update(self, project: Project, *, expected_revision: int) -> None:
+        row = self.session.scalar(
+            select(ProjectModel).where(
+                ProjectModel.id == project.id,
+                ProjectModel.organization_id == project.organization_id,
+                ProjectModel.revision == expected_revision,
+            )
+        )
+        if row is None:
+            raise RepositoryError("Project not found or revision conflict")
+        row.status = project.status.value
+        row.launched_by = project.launched_by
+        row.launched_at = project.launched_at
+        row.launch_request_fingerprint = project.launch_request_fingerprint
+        row.launch_command_id = project.launch_command_id
+        row.updated_at = project.updated_at
+        row.revision = project.revision
+        self.session.flush()
+
+    @staticmethod
+    def _to_model(project: Project) -> ProjectModel:
+        return ProjectModel(
+            id=project.id,
+            organization_id=project.organization_id,
+            name=project.name,
+            description=project.description,
+            status=project.status.value,
+            contract_version=project.contract_version,
+            intent=project.intent.canonical_dict(),
+            intent_fingerprint=project.intent.fingerprint,
+            project_fingerprint=project.fingerprint,
+            created_by=project.created_by,
+            launched_by=project.launched_by,
+            launch_request_fingerprint=project.launch_request_fingerprint,
+            launch_command_id=project.launch_command_id,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            launched_at=project.launched_at,
+            revision=project.revision,
+        )
+
+    @staticmethod
+    def _to_domain(row: ProjectModel) -> Project:
+        intent = ProjectIntent(
+            goal=row.intent["goal"],
+            description=row.intent.get("description", ""),
+            priority=row.intent.get("priority", "medium"),
+            constraints=row.intent.get("constraints", {}),
+            required_capabilities=tuple(
+                row.intent.get("required_capabilities", [])
+            ),
+        )
+        return Project(
+            id=row.id,
+            organization_id=row.organization_id,
+            name=row.name,
+            description=row.description,
+            intent=intent,
+            status=ProjectStatus(row.status),
+            created_by=row.created_by,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            launched_by=row.launched_by,
+            launched_at=row.launched_at,
+            launch_request_fingerprint=row.launch_request_fingerprint,
+            launch_command_id=row.launch_command_id,
+            revision=row.revision,
+            contract_version=row.contract_version,
         )
 
 
