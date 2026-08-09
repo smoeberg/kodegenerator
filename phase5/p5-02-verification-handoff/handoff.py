@@ -17,6 +17,10 @@ from .p5_00_loader import load_p5_00
 p5 = load_p5_00()
 
 
+class HandoffTransportError(RuntimeError):
+    """Raised by the transport adapter when P3-20 cannot be reached."""
+
+
 @dataclass(frozen=True)
 class HandoffEvent:
     event_id: str
@@ -39,11 +43,13 @@ class VerificationHandoffEngine:
         self._requests: Dict[tuple[str, str, str], VerificationRequest] = {}
         self._events: Dict[str, Tuple[HandoffEvent, ...]] = {}
 
-    def prepare(self, contract, submission, *, request_id: str | None = None, now: datetime | None = None) -> VerificationRequest:
+    def prepare(self, contract, submission, *, lifecycle_events=(), request_id: str | None = None, now: datetime | None = None) -> VerificationRequest:
         if submission.contract_fingerprint != contract.contract_fingerprint:
             raise HandoffError("submission contract fingerprint mismatch")
         if not submission.submission_id or not submission.submission_fingerprint:
             raise HandoffError("submission identity is incomplete")
+        if not lifecycle_events or p5.derive_delivery_state(tuple(lifecycle_events)) is not p5.DeliveryState.SUBMITTED:
+            raise HandoffError("verification handoff requires SUBMITTED state")
         request_id = request_id or str(uuid4())
         key = (submission.submission_id, submission.submission_fingerprint, contract.contract_fingerprint)
         existing = self._requests.get(key)
@@ -69,16 +75,14 @@ class VerificationHandoffEngine:
         if request.verifier_id != self.verifier_id or request.verifier_id != "p3-20":
             raise HandoffError("verification route is not p3-20")
         self._ensure_known(request)
-        timestamp = now or datetime.now(timezone.utc)
-        self._append(request, HandoffState.VERIFICATION_DISPATCHED, timestamp)
+        self._append(request, HandoffState.VERIFICATION_DISPATCHED, now or datetime.now(timezone.utc))
         try:
             decision = verifier(request)
-        except Exception as exc:
+        except HandoffTransportError as exc:
             self._append(request, HandoffState.VERIFICATION_REJECTED, datetime.now(timezone.utc))
             raise HandoffError("verification transport failed; no verification decision was created") from exc
-        response = VerificationResponse(decision=decision, received_at=timestamp)
-        handoff = self.bind_response(request, response)
-        return handoff
+        response = VerificationResponse(decision=decision, received_at=datetime.now(timezone.utc))
+        return self.bind_response(request, response)
 
     def bind_response(self, request: VerificationRequest, response: VerificationResponse) -> VerificationHandoff:
         self._ensure_known(request)
