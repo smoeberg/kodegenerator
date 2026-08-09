@@ -8,7 +8,7 @@ import sys
 
 PACKAGE_DIR = Path(__file__).parents[2] / "phase5" / "p5-00-ai-work-product-contract"
 SPEC = importlib.util.spec_from_file_location(
-    "p5_00_contract", PACKAGE_DIR / "__init__.py", submodule_search_locations=[str(PACKAGE_DIR)]
+    "p5_00_contract", PACKAGE_DIR / "contract.py", submodule_search_locations=[str(PACKAGE_DIR)]
 )
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
@@ -172,7 +172,7 @@ def test_lifecycle_rejects_contract_fingerprint_change():
     events = module.append_event(events, e("0", "SUB-1", module.DeliveryState.DISPATCHED, "dor-runtime", datetime.now(timezone.utc), "fp-a", AR.RUNTIME))
     try:
         module.append_event(events, e("1", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc), "fp-b", AR.AGENT)); assert False
-    except VErr:
+    except ValueError:
         pass
 
 
