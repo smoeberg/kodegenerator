@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import sys
+from pathlib import Path
 
-from phase5.p5_01_ai_work_product_execution.execution import ExecutionEngine, ExecutionError
-from phase5.p5_01_ai_work_product_execution.p5_00_loader import load_contract_api
+SLICE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SLICE))
+
+from execution import ExecutionEngine, ExecutionError  # noqa: E402
+from p5_00_loader import load_contract_api  # noqa: E402
 
 api = load_contract_api()
 
