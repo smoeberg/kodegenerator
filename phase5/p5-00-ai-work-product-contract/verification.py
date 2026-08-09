@@ -1,9 +1,4 @@
-"""Independent verification boundary for P5-00.
-
-The engine consumes repository facts supplied by a governed verifier. It never
-promotes agent claims to authoritative evidence and never accepts an agent
-supplied PASS/FAIL as a decision.
-"""
+"""Independent verification boundary for P5-00."""
 
 from __future__ import annotations
 
@@ -50,12 +45,7 @@ class VerificationEngine:
         predicates: Mapping[str, Predicate] | None = None,
         now: datetime | None = None,
     ) -> VerificationDecision:
-        """Evaluate every criterion and return the authoritative decision.
-
-        Repository fingerprints, governed facts and predicate functions must
-        originate from the verification runtime. Agent candidate evidence is
-        intentionally ignored as proof.
-        """
+        """Evaluate every criterion and return the authoritative decision."""
         if submission.contract_fingerprint != contract.contract_fingerprint:
             raise VerificationError("contract fingerprint mismatch")
         if not submission.repository_state.repository or not submission.repository_state.revision:
@@ -127,7 +117,12 @@ class VerificationEngine:
         passed = bool(results) and all(r.passed for r in results)
         timestamp = now or datetime.now(timezone.utc)
         return VerificationDecision(
-            decision_id=decision_id, submission_id=submission.submission_id,
-            contract_fingerprint=contract.contract_fingerprint, verifier=self.verifier_id,
-            passed=passed, criterion_results=tuple(results), decided_at=timestamp,
+            decision_id=decision_id,
+            submission_id=submission.submission_id,
+            submission_fingerprint=submission.submission_fingerprint,
+            contract_fingerprint=contract.contract_fingerprint,
+            verifier=self.verifier_id,
+            passed=passed,
+            criterion_results=tuple(results),
+            decided_at=timestamp,
         )
