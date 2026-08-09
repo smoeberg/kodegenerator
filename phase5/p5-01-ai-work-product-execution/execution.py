@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Protocol, Tuple
 from uuid import uuid4
 
-from .p5_00_loader import load_contract_api
+from p5_00_loader import load_contract_api
 
 api = load_contract_api()
 ActorRole = api.ActorRole
