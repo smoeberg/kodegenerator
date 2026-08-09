@@ -1,8 +1,4 @@
-"""P5-02 verification handoff engine.
-
-This layer binds and routes verification. It is deliberately incapable of
-creating a verification decision itself.
-"""
+"""P5-02 verification handoff engine."""
 
 from __future__ import annotations
 
@@ -11,8 +7,8 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, Tuple
 from uuid import uuid4
 
-from .models import HandoffError, HandoffState, VerificationHandoff, VerificationRequest, VerificationResponse
-from .p5_00_loader import load_p5_00
+from models import HandoffError, HandoffState, VerificationHandoff, VerificationRequest, VerificationResponse
+from p5_00_loader import load_p5_00
 
 p5 = load_p5_00()
 
