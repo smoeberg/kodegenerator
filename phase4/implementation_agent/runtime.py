@@ -38,6 +38,7 @@ from .models import (
     ImplementationRequest,
     PatchProposal,
 )
+from .patch_models import IMPLEMENTATION_APPLY_ACTION
 
 
 class ImplementationAgentRuntimeError(RuntimeError):
@@ -270,8 +271,12 @@ class ImplementationAgentRuntime:
     def execution_audit(self) -> tuple[ExecutionResult, ...]:
         return self._execution.audit_trail()
 
+    def get_proposal(self, proposal_id: str) -> PatchProposal:
+        """Retrieve one already-validated immutable proposal by content identity."""
+        return self._adapter.get_proposal(proposal_id)
+
     def _register_agent(self, provider_id: str) -> AgentRecord:
-        version = AgentVersion(1, 1, 0)
+        version = AgentVersion(1, 2, 0)
         return self._registry.register(
             agent_type="implementation-agent",
             version=version,
@@ -282,7 +287,14 @@ class ImplementationAgentRuntime:
                     version,
                     parameters={
                         "provider": provider_id,
-                        "mode": "patch-proposal-only",
+                        "mode": "bounded-patch-proposal",
+                    },
+                ),
+                Capability.create(
+                    IMPLEMENTATION_APPLY_ACTION,
+                    version,
+                    parameters={
+                        "mode": "governed-patch-execution",
                     },
                 ),
             ),
