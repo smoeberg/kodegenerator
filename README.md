@@ -124,7 +124,9 @@ DOR bruger:
    Opret en `.env`-fil i roden af projektet:
    ```env
    DATABASE_URL=sqlite:///./dor_runtime.db
-   JWT_SECRET_KEY=your-secret-key
+   DOR_JWT_SECRET_KEY=replace-with-a-long-random-secret
+   DOR_ADMIN_PASSWORD=replace-with-a-dashboard-password
+   DOR_ENCRYPTION_KEY=replace-with-a-generated-fernet-key
    OPENAI_API_KEY=your-openai-key
    ANTHROPIC_API_KEY=your-anthropic-key
    ```

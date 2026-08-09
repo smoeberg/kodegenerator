@@ -1,15 +1,19 @@
 """DOR Runtime API application entrypoint."""
 
+from typing import Annotated
+
 from fastapi import Depends, FastAPI
 
 from api.auth import User, get_current_active_user
 from api.endpoints import auth, workflows
+from monitoring.tracer import configure_tracing
 
 app = FastAPI(
     title="Digital Organization Runtime (DOR)",
     version="0.1.0",
     description="Canonical runtime API for organization-scoped workflow execution.",
 )
+configure_tracing(app)
 
 
 @app.get("/health", tags=["system"])
@@ -20,7 +24,7 @@ async def health() -> dict:
 
 @app.get("/protected", tags=["system"])
 async def protected_route(
-    current_user: User = Depends(get_current_active_user),
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> dict:
     """Example authenticated endpoint."""
     return {"message": f"Hello, {current_user.username}!"}

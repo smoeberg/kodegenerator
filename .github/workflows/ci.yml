@@ -32,7 +32,10 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Compile Python sources
-        run: python -m compileall -q api domain execution generation infrastructure runtime monitoring
+        run: >-
+          python -m compileall -q
+          ai api dashboard domain execution generation infrastructure monitoring
+          phase4 runtime services main.py seed_data.py
 
       - name: Verify Alembic has exactly one canonical head
         run: |
@@ -99,7 +102,11 @@ jobs:
           pip install bandit pip-audit
 
       - name: Bandit
-        run: bandit -r api domain execution generation infrastructure runtime monitoring -x tests -ll
+        run: >-
+          bandit -r
+          ai api dashboard domain execution generation infrastructure monitoring
+          phase4 runtime services
+          -x tests -ll
 
       - name: Dependency audit
         run: pip-audit --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-1325

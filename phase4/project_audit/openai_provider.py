@@ -146,6 +146,10 @@ def _http_transport(
     body: bytes,
     timeout_seconds: float,
 ) -> Mapping[str, object]:
+    if url != OPENAI_RESPONSES_URL:
+        raise OpenAIProjectAuditProviderError(
+            "OpenAI Responses API endpoint is not allowed"
+        )
     request = urllib.request.Request(
         url,
         data=body,
@@ -153,7 +157,11 @@ def _http_transport(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        # The exact HTTPS endpoint is allowlisted above; redirects remain subject
+        # to urllib's HTTPS handling and no caller-controlled URL reaches urlopen.
+        with urllib.request.urlopen(  # nosec B310
+            request, timeout=timeout_seconds
+        ) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raise OpenAIProjectAuditProviderError(
