@@ -207,6 +207,11 @@ class CriterionResult:
     verifier: str
     reason: str
 
+    def __post_init__(self) -> None:
+        if not self.criterion_id or self.verifier != "p3-20":
+            raise ValueError("criterion result must be identified and issued by p3-20")
+        object.__setattr__(self, "evidence_ids", tuple(self.evidence_ids))
+
 
 @dataclass(frozen=True)
 class VerificationDecision:
@@ -224,5 +229,11 @@ class VerificationDecision:
             raise ValueError("verification decision must bind to decision, submission and contract identities")
         if self.verifier != "p3-20":
             raise ValueError("only p3-20 may issue verification decisions")
+        object.__setattr__(self, "criterion_results", tuple(self.criterion_results))
+        criterion_ids = [result.criterion_id for result in self.criterion_results]
+        if len(criterion_ids) != len(set(criterion_ids)):
+            raise ValueError("verification decision cannot contain duplicate criterion results")
+        if any(result.verifier != self.verifier for result in self.criterion_results):
+            raise ValueError("all criterion results must be issued by the decision authority")
         if self.decided_at.tzinfo is None:
             object.__setattr__(self, "decided_at", self.decided_at.replace(tzinfo=timezone.utc))
