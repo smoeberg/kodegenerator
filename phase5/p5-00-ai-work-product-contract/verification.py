@@ -43,6 +43,7 @@ class VerificationEngine:
         *,
         decision_id: str,
         predicates: Mapping[str, Predicate] | None = None,
+        governed_evidence_fingerprints: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> VerificationDecision:
         """Evaluate every criterion and return the authoritative decision."""
@@ -90,6 +91,11 @@ class VerificationEngine:
             raise VerificationError("governed evidence IDs must be unique")
         if any(not f.evidence_id or not f.payload_fingerprint or not f.source for f in governed_facts):
             raise VerificationError("governed evidence must have identity, source and fingerprint")
+        evidence_fingerprints = governed_evidence_fingerprints or {}
+        for fact in governed_facts:
+            actual = evidence_fingerprints.get(fact.evidence_id)
+            if actual is None or actual != fact.payload_fingerprint:
+                raise VerificationError(f"governed evidence fingerprint mismatch: {fact.evidence_id}")
 
         facts_by_criterion: dict[str, list[GovernedFact]] = {}
         for fact in governed_facts:
