@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Tuple
-from uuid import uuid4
 
-from .fingerprinting import fingerprint
+from fingerprinting import fingerprint
 
 
 class HandoffError(ValueError):
@@ -79,6 +77,9 @@ class VerificationHandoff:
                 raise HandoffError("decision submission fingerprint mismatch")
             if decision.contract_fingerprint != self.request.contract_fingerprint:
                 raise HandoffError("decision contract fingerprint mismatch")
+            expected = HandoffState.VERIFIED_PASSED if decision.passed else HandoffState.VERIFIED_FAILED
+            if self.state is not expected:
+                raise HandoffError("handoff state does not match p3-20 decision")
         object.__setattr__(self, "handoff_fingerprint", fingerprint({
             "request": self.request.request_fingerprint,
             "state": self.state,
