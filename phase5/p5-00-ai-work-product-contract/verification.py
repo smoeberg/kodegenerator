@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Mapping, Tuple
 
-from .models import AIWorkProductContract, CriterionResult, VerificationDecision, WorkProductSubmission
+from .models import AIWorkProductContract, CriterionResult, RepositoryState, VerificationDecision, WorkProductSubmission
 
 
 class VerificationError(ValueError):
@@ -42,17 +42,28 @@ class VerificationEngine:
         repository_artifact_fingerprints: Mapping[str, str],
         *,
         decision_id: str,
+        actual_repository_state: RepositoryState | None = None,
         predicates: Mapping[str, Predicate] | None = None,
         governed_evidence_fingerprints: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> VerificationDecision:
-        """Evaluate every criterion and return the authoritative decision."""
+        """Evaluate every criterion and return the authoritative decision.
+
+        ``actual_repository_state`` and artifact fingerprints are supplied by
+        the governed verification runtime. They are compared with the exact
+        repository snapshot claimed at submission time, so post-submission
+        repository changes cannot be silently accepted.
+        """
         if submission.contract_fingerprint != contract.contract_fingerprint:
             raise VerificationError("contract fingerprint mismatch")
-        if not submission.repository_state.repository or not submission.repository_state.revision:
+        submitted_repo = submission.repository_state
+        if not submitted_repo.repository or not submitted_repo.revision:
             raise VerificationError("repository identity/revision missing")
-        if not submission.repository_state.tree_fingerprint:
+        if not submitted_repo.tree_fingerprint:
             raise VerificationError("repository tree fingerprint missing")
+        if actual_repository_state is not None:
+            if actual_repository_state != submitted_repo:
+                raise VerificationError("repository state changed after submission")
 
         declared = {a.artifact_id: a for a in contract.required_artifacts}
         submitted_ids = [a.artifact_id for a in submission.artifacts]
@@ -91,6 +102,10 @@ class VerificationEngine:
             raise VerificationError("governed evidence IDs must be unique")
         if any(not f.evidence_id or not f.payload_fingerprint or not f.source for f in governed_facts):
             raise VerificationError("governed evidence must have identity, source and fingerprint")
+        declared_criteria = {criterion.criterion_id for criterion in contract.acceptance_criteria}
+        unknown_criteria = {fact.criterion_id for fact in governed_facts} - declared_criteria
+        if unknown_criteria:
+            raise VerificationError(f"governed evidence references undeclared criteria: {sorted(unknown_criteria)}")
         evidence_fingerprints = governed_evidence_fingerprints or {}
         for fact in governed_facts:
             actual = evidence_fingerprints.get(fact.evidence_id)
@@ -142,9 +157,8 @@ class VerificationEngine:
             if not r.criterion_id.startswith("artifact:")
             and next(c for c in contract.acceptance_criteria if c.criterion_id == r.criterion_id).mandatory
         ]
-        passed = bool(results) and all(r.passed for r in results if r.criterion_id.startswith("artifact:")) and all(
-            r.passed for r in mandatory_results
-        )
+        artifact_results = [r for r in results if r.criterion_id.startswith("artifact:")]
+        passed = bool(results) and all(r.passed for r in artifact_results) and all(r.passed for r in mandatory_results)
         timestamp = now or datetime.now(timezone.utc)
         return VerificationDecision(
             decision_id=decision_id,
