@@ -70,6 +70,12 @@ class VerificationProcedure:
     method: str
     version: str
 
+    def __post_init__(self) -> None:
+        if not all((self.procedure_id, self.verifier, self.method, self.version)):
+            raise ValueError("verification procedure identity, verifier, method and version are required")
+        if self.verifier != "p3-20":
+            raise ValueError("verification procedure must designate p3-20")
+
 
 @dataclass(frozen=True)
 class AIWorkProductContract:
@@ -97,6 +103,8 @@ class AIWorkProductContract:
             raise ValueError("P5-00 requires P3-20 as verification authority")
         if not self.required_artifacts:
             raise ValueError("contract must declare required artifacts")
+        if not self.acceptance_criteria:
+            raise ValueError("contract must declare acceptance criteria")
         criterion_ids = [c.criterion_id for c in self.acceptance_criteria]
         if len(criterion_ids) != len(set(criterion_ids)):
             raise ValueError("criterion_id values must be unique")
@@ -142,6 +150,10 @@ class SubmittedArtifact:
     content_fingerprint: str
     size: Optional[int] = None
 
+    def __post_init__(self) -> None:
+        if not self.artifact_id or not self.location or not self.content_fingerprint:
+            raise ValueError("submitted artifact identity, location and fingerprint are required")
+
 
 @dataclass(frozen=True)
 class CandidateEvidence:
@@ -152,6 +164,8 @@ class CandidateEvidence:
     authority: EvidenceAuthority = EvidenceAuthority.CANDIDATE
 
     def __post_init__(self) -> None:
+        if not self.evidence_id or not self.criterion_id or not self.source or not self.payload_fingerprint:
+            raise ValueError("candidate evidence identity, criterion, source and fingerprint are required")
         if self.authority is not EvidenceAuthority.CANDIDATE:
             raise ValueError("agent submissions may only create candidate evidence")
 
@@ -206,6 +220,8 @@ class VerificationDecision:
     decided_at: datetime
 
     def __post_init__(self) -> None:
+        if not self.decision_id or not self.submission_id or not self.submission_fingerprint or not self.contract_fingerprint:
+            raise ValueError("verification decision must bind to decision, submission and contract identities")
         if self.verifier != "p3-20":
             raise ValueError("only p3-20 may issue verification decisions")
         if self.decided_at.tzinfo is None:
