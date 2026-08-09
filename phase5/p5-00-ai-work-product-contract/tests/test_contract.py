@@ -1,10 +1,22 @@
-from phase5.p5_00_ai_work_product_contract import (
-    AIWorkProductContract,
-    AcceptanceCriterion,
-    ArtifactRequirement,
-    ArtifactType,
-    VerificationProcedure,
+import importlib.util
+from pathlib import Path
+import sys
+
+
+PACKAGE_DIR = Path(__file__).parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "p5_00_contract", PACKAGE_DIR / "__init__.py", submodule_search_locations=[str(PACKAGE_DIR)]
 )
+assert SPEC and SPEC.loader
+module = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = module
+SPEC.loader.exec_module(module)
+
+AIWorkProductContract = module.AIWorkProductContract
+AcceptanceCriterion = module.AcceptanceCriterion
+ArtifactRequirement = module.ArtifactRequirement
+ArtifactType = module.ArtifactType
+VerificationProcedure = module.VerificationProcedure
 
 
 def make_contract():
