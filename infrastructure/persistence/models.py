@@ -96,6 +96,44 @@ class WorkflowModel(Base):
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class ProjectModel(Base):
+    """Durable first-party Control Plane project aggregate."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    contract_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    intent: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    intent_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    launched_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    launch_request_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    launch_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    launched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_project_org_id"),
+    )
+
+
 class EventModel(Base):
     __tablename__ = "domain_events"
 

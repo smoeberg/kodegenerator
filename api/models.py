@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ActorTypeEnum(str, Enum):
@@ -414,3 +414,115 @@ class ImplementationPatchExecutionResponse(BaseModel):
     error: Optional[str]
     artifact: Optional[ImplementationPatchArtifactResponse]
     evidence: List[ImplementationToolEvidenceResponse]
+
+
+class ControlPlaneIntentInput(BaseModel):
+    """Versioned immutable intent input for one project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1, max_length=2_000)
+    description: str = Field(default="", max_length=20_000)
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    required_capabilities: List[str] = Field(default_factory=list, max_length=64)
+
+    @field_validator("goal")
+    @classmethod
+    def _trimmed_goal(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("goal must be trimmed")
+        return value
+
+    @field_validator("required_capabilities")
+    @classmethod
+    def _unique_capabilities(cls, value: List[str]) -> List[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("required_capabilities must be unique")
+        return value
+
+
+class ControlPlaneCreateProjectRequest(BaseModel):
+    """API v1 command for creating a governed project intent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1.0"] = "1.0"
+    organization_id: str = Field(min_length=1, max_length=128)
+    command_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=20_000)
+    intent: ControlPlaneIntentInput
+
+
+class ControlPlaneLaunchProjectRequest(BaseModel):
+    """API v1 command for one exact, fingerprint-bound launch request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1.0"] = "1.0"
+    organization_id: str = Field(min_length=1, max_length=128)
+    command_id: str = Field(min_length=1, max_length=128)
+    expected_project_fingerprint: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+
+class ControlPlaneIntentResponse(BaseModel):
+    goal: str
+    description: str
+    priority: str
+    constraints: Dict[str, Any]
+    required_capabilities: List[str]
+    fingerprint: str
+
+
+class ControlPlaneProjectResponse(BaseModel):
+    contract_version: Literal["1.0"] = "1.0"
+    project_id: str
+    organization_id: str
+    name: str
+    description: str
+    status: Literal["created", "launch_requested"]
+    project_fingerprint: str
+    intent: ControlPlaneIntentResponse
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    launched_by: Optional[str]
+    launched_at: Optional[datetime]
+    launch_request_fingerprint: Optional[str]
+    launch_command_id: Optional[str]
+    revision: int
+
+
+class ControlPlaneProjectCommandResponse(BaseModel):
+    contract_version: Literal["1.0"] = "1.0"
+    command_id: str
+    replayed: bool
+    execution_started: Literal[False] = False
+    project: ControlPlaneProjectResponse
+
+
+class ControlPlaneProjectEventResponse(BaseModel):
+    contract_version: Literal["1.0"] = "1.0"
+    event_id: str
+    event_type: str
+    aggregate_id: str
+    organization_id: str
+    actor_id: Optional[str]
+    occurred_at: datetime
+    correlation_id: Optional[str]
+    causation_id: Optional[str]
+    sequence: int
+    metadata: Dict[str, Any]
+    event_fingerprint: str
+
+
+class ControlPlaneProjectEventsResponse(BaseModel):
+    contract_version: Literal["1.0"] = "1.0"
+    project_id: str
+    events: List[ControlPlaneProjectEventResponse]
+    next_after_sequence: int

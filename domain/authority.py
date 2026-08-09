@@ -105,8 +105,14 @@ class AuthorizationDecision:
             raise ValueError("AuthorizationDecision requires actor, principal and organization")
         if not self.capability_id:
             raise ValueError("AuthorizationDecision requires capability_id")
-        if self.resource_id is not None and self.resource_organization_id is None:
-            raise ValueError("Resource decisions require resource_organization_id")
+        if (
+            self.resource_id is not None
+            and self.resource_organization_id is None
+            and self.reason_code != "resource_not_accessible"
+        ):
+            raise ValueError(
+                "Only inaccessible-resource denials may omit the resource organization"
+            )
 
     @property
     def fingerprint(self) -> str:

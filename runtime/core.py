@@ -26,6 +26,7 @@ from services.authorization_service import AuthorizationService
 from .authority import AuthorityRuntime
 from .commands import AdvanceWorkflowCommand, CommandConflictError, CommandResult
 from .context import ContextError, OrganizationContext, establish_context
+from .project_runtime import ProjectRuntime
 
 
 class RuntimeNotReadyError(RuntimeError):
@@ -57,6 +58,7 @@ class DORRuntime:
         self.database = Database(database_url)
         self.ready = False
         self.authority = AuthorityRuntime(self)
+        self.projects = ProjectRuntime(self)
 
     def boot(self) -> None:
         """Run the canonical database migration and mark the runtime ready."""
