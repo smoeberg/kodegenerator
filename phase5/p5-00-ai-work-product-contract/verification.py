@@ -53,26 +53,43 @@ class VerificationEngine:
         if not submission.repository_state.tree_fingerprint:
             raise VerificationError("repository tree fingerprint missing")
 
-        required = {a.artifact_id: a for a in contract.required_artifacts if a.required}
+        declared = {a.artifact_id: a for a in contract.required_artifacts}
+        submitted_ids = [a.artifact_id for a in submission.artifacts]
+        if len(submitted_ids) != len(set(submitted_ids)):
+            raise VerificationError("submission artifact IDs must be unique")
         submitted = {a.artifact_id: a for a in submission.artifacts}
-        unknown = set(submitted) - {a.artifact_id for a in contract.required_artifacts}
+        unknown = set(submitted) - set(declared)
         if unknown:
             raise VerificationError(f"submission contains undeclared artifacts: {sorted(unknown)}")
 
-        results = []
-        for artifact_id in required:
+        results: list[CriterionResult] = []
+        for artifact_id, requirement in declared.items():
             candidate = submitted.get(artifact_id)
             actual = repository_artifact_fingerprints.get(artifact_id) if candidate else None
             if candidate is None:
+                if requirement.required:
+                    results.append(CriterionResult(
+                        criterion_id=f"artifact:{artifact_id}", passed=False, evidence_ids=(),
+                        verifier=self.verifier_id, reason="required artifact missing from submission",
+                    ))
+                continue
+            if candidate.artifact_type != requirement.artifact_type or candidate.location != requirement.location:
                 results.append(CriterionResult(
                     criterion_id=f"artifact:{artifact_id}", passed=False, evidence_ids=(),
-                    verifier=self.verifier_id, reason="required artifact missing from submission",
+                    verifier=self.verifier_id, reason="submitted artifact metadata does not match contract",
                 ))
-            elif actual is None or actual != candidate.content_fingerprint:
+                continue
+            if actual is None or actual != candidate.content_fingerprint:
                 results.append(CriterionResult(
                     criterion_id=f"artifact:{artifact_id}", passed=False, evidence_ids=(),
                     verifier=self.verifier_id, reason="artifact fingerprint missing or does not match repository state",
                 ))
+
+        evidence_ids = [f.evidence_id for f in governed_facts]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise VerificationError("governed evidence IDs must be unique")
+        if any(not f.evidence_id or not f.payload_fingerprint or not f.source for f in governed_facts):
+            raise VerificationError("governed evidence must have identity, source and fingerprint")
 
         facts_by_criterion: dict[str, list[GovernedFact]] = {}
         for fact in governed_facts:
@@ -114,7 +131,14 @@ class VerificationEngine:
         if returned_ids != criterion_ids:
             raise VerificationError("criterion evaluation is incomplete or duplicated")
 
-        passed = bool(results) and all(r.passed for r in results)
+        mandatory_results = [
+            r for r in results
+            if not r.criterion_id.startswith("artifact:")
+            and next(c for c in contract.acceptance_criteria if c.criterion_id == r.criterion_id).mandatory
+        ]
+        passed = bool(results) and all(r.passed for r in results if r.criterion_id.startswith("artifact:")) and all(
+            r.passed for r in mandatory_results
+        )
         timestamp = now or datetime.now(timezone.utc)
         return VerificationDecision(
             decision_id=decision_id,
