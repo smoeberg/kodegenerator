@@ -238,23 +238,39 @@ class DORBaselineProjectAuditProvider:
                 )
             )
 
-        if _all_hold(
+        implementation_integration_gaps: list[EvidenceAssertion] = []
+        if bundle.artifact("phase4/implementation_agent/runtime.py") is None:
+            implementation_integration_gaps.append(
+                _path_absent("phase4/implementation_agent/runtime.py")
+            )
+        if bundle.artifact("api/endpoints/implementation_agent.py") is None:
+            implementation_integration_gaps.append(
+                _path_absent("api/endpoints/implementation_agent.py")
+            )
+        api_main = bundle.artifact("api/main.py")
+        if api_main is None:
+            implementation_integration_gaps.append(_path_absent("api/main.py"))
+        elif "implementation_agent" not in api_main.content:
+            implementation_integration_gaps.append(
+                _absent("api/main.py", "implementation_agent")
+            )
+
+        if _paths_exist(
             request,
-            _exists("phase4/implementation_agent/models.py"),
-            _exists("tests/phase4/test_implementation_agent.py"),
-            _absent("api/main.py", "implementation_agent"),
-        ):
+            "phase4/implementation_agent/models.py",
+            "tests/phase4/test_implementation_agent.py",
+        ) and implementation_integration_gaps:
             findings.append(
                 _finding(
                     "implementation-agent-not-runtime-integrated",
                     "Implementation Agent remains contract-only",
                     FindingClassification.INFERENCE,
                     FindingSeverity.MEDIUM,
-                    "The package and tests exist without canonical API wiring.",
-                    "Contract evidence is present while the canonical API contains no implementation-agent reference.",
+                    "The package and tests exist without a complete operational runtime and canonical API boundary.",
+                    "Contract evidence is present while one or more required runtime integration paths are absent.",
                     _exists("phase4/implementation_agent/models.py"),
                     _exists("tests/phase4/test_implementation_agent.py"),
-                    _absent("api/main.py", "implementation_agent"),
+                    *implementation_integration_gaps,
                 )
             )
 

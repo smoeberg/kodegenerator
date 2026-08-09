@@ -26,13 +26,78 @@ class AuthorityRuntime:
             uow = UnitOfWork(session)
             return AuthorizationService(uow).authorize(principal=context.principal, actor_id=context.actor_id, organization_id=context.organization_id, capability_id=capability_id, resource_id=resource_id, resource_organization_id=resource_organization_id)
 
-    def _deny(self, decision: AuthorizationDecision, command_id: str, action: str) -> None:
+    def _deny(
+        self,
+        decision: AuthorizationDecision,
+        command_id: str,
+        action: str,
+        *,
+        aggregate_type: str = "workflow",
+    ) -> None:
         from runtime.core import CommandAuthorizationError
-        event = create_authorization_audit_event(decision, command_id=command_id, command_type=action, allowed=False)
+        event = create_authorization_audit_event(
+            decision,
+            command_id=command_id,
+            command_type=action,
+            allowed=False,
+            aggregate_type=aggregate_type,
+        )
         with self.runtime.database.session() as session:
             with UnitOfWork(session) as uow:
                 uow.events.append(event)
         raise CommandAuthorizationError(decision)
+
+    def require_capability(
+        self,
+        context: "OrganizationContext",
+        *,
+        capability_id: str,
+        command_id: str,
+        command_type: str,
+        resource_id: str,
+        resource_organization_id: str,
+        aggregate_type: str,
+    ) -> AuthorizationDecision:
+        """Require and audit one organization-scoped command capability.
+
+        This boundary authorizes the human or service actor that invokes a
+        command. It does not replace the independent Phase 4 AI-3 decision for
+        the downstream agent action.
+        """
+        self.runtime._require_ready()
+        for name, value in (
+            ("command_id", command_id),
+            ("command_type", command_type),
+            ("resource_id", resource_id),
+            ("resource_organization_id", resource_organization_id),
+            ("aggregate_type", aggregate_type),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        decision = self._authorize(
+            context,
+            capability_id,
+            resource_id,
+            resource_organization_id,
+        )
+        if not decision.allowed:
+            self._deny(
+                decision,
+                command_id,
+                command_type,
+                aggregate_type=aggregate_type,
+            )
+        event = create_authorization_audit_event(
+            decision,
+            command_id=command_id,
+            command_type=command_type,
+            allowed=True,
+            aggregate_type=aggregate_type,
+        )
+        with self.runtime.database.session() as session:
+            with UnitOfWork(session) as uow:
+                uow.events.append(event)
+        return decision
 
     def create_role_definition(self, context: "OrganizationContext", *, role: RoleDefinition, command_id: str | None = None) -> RoleDefinition:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())

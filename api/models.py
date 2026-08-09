@@ -1,7 +1,7 @@
 # api/models.py
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -290,3 +290,53 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
+
+
+class ImplementationContextItemInput(BaseModel):
+    """One explicitly supplied item for a bounded Context Packet."""
+
+    source: str = Field(min_length=1)
+    key: str = Field(min_length=1)
+    value: Any
+    relevance: float = Field(default=1.0, ge=0.0, le=1.0)
+    provenance: str = ""
+    sensitivity: Literal["public", "normal", "sensitive"] = "normal"
+
+
+class ImplementationProposalRequest(BaseModel):
+    """Authenticated command for one governed patch proposal."""
+
+    organization_id: str = Field(min_length=1)
+    command_id: str = Field(min_length=1)
+    resource: str = Field(min_length=1)
+    instruction: str = Field(min_length=1)
+    allowed_paths: List[str] = Field(min_length=1)
+    max_files: int = Field(default=1, ge=1)
+    max_changed_lines: int = Field(default=100, ge=1)
+    context_items: List[ImplementationContextItemInput] = Field(min_length=1)
+
+
+class ImplementationProposalArtifactResponse(BaseModel):
+    proposal_id: str
+    provider_id: str
+    diff_sha256: str
+    touched_paths: List[str]
+    changed_lines: int
+    unified_diff: str
+
+
+class ImplementationProposalResponse(BaseModel):
+    command_id: str
+    agent_identity: str
+    context_packet_id: str
+    request_fingerprint: str
+    authority_decision: str
+    authority_policy_id: str
+    authority_policy_version: str
+    execution_id: str
+    execution_status: str
+    outcome_id: str
+    outcome_status: str
+    provenance_id: str
+    replayed: bool
+    proposal: ImplementationProposalArtifactResponse
