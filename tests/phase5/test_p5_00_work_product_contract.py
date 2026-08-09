@@ -27,6 +27,7 @@ VP = module.VerificationProcedure
 GF = module.GovernedFact
 VE = module.VerificationEngine
 VErr = module.VerificationError
+AR = module.ActorRole
 
 
 def contract(*, mandatory=True):
@@ -57,9 +58,10 @@ def fact():
     return GF("gov-1", "AC-1", {"passed": True}, "pytest", "governed-hash")
 
 
-def verify(c, s, *, passed=True):
+def verify(c, s, *, passed=True, actual_repo=None):
     return VE().verify(
         c, s, (fact(),), {"impl": "artifact-hash"}, decision_id="DEC-1",
+        actual_repository_state=actual_repo or s.repository_state,
         predicates={"AC-1": lambda facts: passed},
         governed_evidence_fingerprints={"gov-1": "governed-hash"},
         now=datetime(2026, 8, 9, tzinfo=timezone.utc),
@@ -67,10 +69,10 @@ def verify(c, s, *, passed=True):
 
 
 def test_positive_path_ends_in_p3_20_decision():
-    c = contract(); d = verify(c, submission(c))
+    c = contract(); s = submission(c); d = verify(c, s)
     assert d.passed is True
     assert d.verifier == "p3-20"
-    assert d.submission_fingerprint == submission(c).submission_fingerprint
+    assert d.submission_fingerprint == s.submission_fingerprint
 
 
 def test_completion_claim_is_not_authoritative():
@@ -87,7 +89,7 @@ def test_contract_fingerprint_mismatch_fails_closed():
 
 def test_required_artifact_missing_fails():
     c = contract()
-    s = WP("SUB-2", c.contract_fingerprint, "agent-1", RS("repo", "rev", "tree", True), (), (), datetime.now(timezone.utc))
+    s = WP("SUB-2", c.contract_fingerprint, "agent-1", RS("smoeberg/kodegenerator", "abc123", "tree123", True), (), (), datetime.now(timezone.utc))
     assert verify(c, s).passed is False
 
 
@@ -97,7 +99,7 @@ def test_artifact_fingerprint_mismatch_fails():
 
 def test_artifact_metadata_mismatch_fails():
     c = contract()
-    s = WP("SUB-3", c.contract_fingerprint, "agent-1", RS("repo", "rev", "tree", True),
+    s = WP("SUB-3", c.contract_fingerprint, "agent-1", RS("smoeberg/kodegenerator", "abc123", "tree123", True),
            (SA("impl", AT.FILE, "wrong.py", "artifact-hash"),), (), datetime.now(timezone.utc))
     assert verify(c, s).passed is False
 
@@ -109,24 +111,36 @@ def test_candidate_evidence_cannot_become_authoritative():
 
 
 def test_missing_governed_evidence_fails():
-    c = contract()
-    d = VE().verify(c, submission(c), (), {"impl": "artifact-hash"}, decision_id="DEC-2")
+    c = contract(); s = submission(c)
+    d = VE().verify(c, s, (), {"impl": "artifact-hash"}, decision_id="DEC-2", actual_repository_state=s.repository_state)
     assert d.passed is False
 
 
 def test_missing_predicate_fails_closed():
-    c = contract()
-    d = VE().verify(c, submission(c), (fact(),), {"impl": "artifact-hash"},
-                    decision_id="DEC-3", governed_evidence_fingerprints={"gov-1": "governed-hash"})
+    c = contract(); s = submission(c)
+    d = VE().verify(c, s, (fact(),), {"impl": "artifact-hash"}, decision_id="DEC-3",
+                    actual_repository_state=s.repository_state,
+                    governed_evidence_fingerprints={"gov-1": "governed-hash"})
     assert d.passed is False
 
 
 def test_changed_governed_evidence_fails_closed():
-    c = contract()
+    c = contract(); s = submission(c)
     try:
-        VE().verify(c, submission(c), (fact(),), {"impl": "artifact-hash"}, decision_id="DEC-4",
+        VE().verify(c, s, (fact(),), {"impl": "artifact-hash"}, decision_id="DEC-4",
+                    actual_repository_state=s.repository_state,
                     predicates={"AC-1": lambda facts: True},
                     governed_evidence_fingerprints={"gov-1": "changed-hash"})
+        assert False
+    except VErr:
+        pass
+
+
+def test_changed_repository_state_fails_closed():
+    c = contract(); s = submission(c)
+    changed = RS(s.repository_state.repository, "new-revision", "new-tree", True)
+    try:
+        verify(c, s, actual_repo=changed)
         assert False
     except VErr:
         pass
@@ -139,26 +153,37 @@ def test_only_p3_20_can_verify():
         pass
 
 
-def test_lifecycle_is_append_only_and_p3_20_gated():
-    e = module.LifecycleEvent; events = ()
-    for i, event_type in enumerate((module.DeliveryState.DISPATCHED, module.DeliveryState.IN_PROGRESS, module.DeliveryState.SUBMITTED)):
-        events = module.append_event(events, e(str(i), "SUB-1", event_type, "agent-1", datetime.now(timezone.utc)))
-    assert module.derive_delivery_state(events) is module.DeliveryState.SUBMITTED
+def test_lifecycle_binds_contract_and_verification_runtime_starts_verifying():
+    e = module.LifecycleEvent; events = (); fp = "contract-fp"
+    events = module.append_event(events, e("0", "SUB-1", module.DeliveryState.DISPATCHED, "dor-runtime", datetime.now(timezone.utc), fp, AR.RUNTIME))
+    events = module.append_event(events, e("1", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT))
+    events = module.append_event(events, e("2", "SUB-1", module.DeliveryState.SUBMITTED, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT))
     try:
-        module.append_event(events, e("4", "SUB-1", module.DeliveryState.VERIFYING, "agent-1", datetime.now(timezone.utc))); assert False
+        module.append_event(events, e("3", "SUB-1", module.DeliveryState.VERIFYING, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT)); assert False
     except PermissionError:
         pass
-    events = module.append_event(events, e("4", "SUB-1", module.DeliveryState.VERIFYING, "p3-20", datetime.now(timezone.utc)))
-    events = module.append_event(events, e("5", "SUB-1", module.DeliveryState.PASSED, "p3-20", datetime.now(timezone.utc)))
+    events = module.append_event(events, e("3", "SUB-1", module.DeliveryState.VERIFYING, "verification-runtime", datetime.now(timezone.utc), fp, AR.VERIFICATION_RUNTIME))
+    events = module.append_event(events, e("4", "SUB-1", module.DeliveryState.PASSED, "p3-20", datetime.now(timezone.utc), fp, AR.P3_20))
     assert module.derive_delivery_state(events) is module.DeliveryState.PASSED
 
 
-def test_failed_submission_is_terminal():
+def test_lifecycle_rejects_contract_fingerprint_change():
     e = module.LifecycleEvent; events = ()
-    for i, event_type in enumerate((module.DeliveryState.DISPATCHED, module.DeliveryState.IN_PROGRESS, module.DeliveryState.SUBMITTED, module.DeliveryState.VERIFYING, module.DeliveryState.FAILED)):
-        actor = "p3-20" if event_type in {module.DeliveryState.VERIFYING, module.DeliveryState.FAILED} else "agent-1"
-        events = module.append_event(events, e(str(i), "SUB-1", event_type, actor, datetime.now(timezone.utc)))
+    events = module.append_event(events, e("0", "SUB-1", module.DeliveryState.DISPATCHED, "dor-runtime", datetime.now(timezone.utc), "fp-a", AR.RUNTIME))
     try:
-        module.append_event(events, e("6", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc))); assert False
+        module.append_event(events, e("1", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc), "fp-b", AR.AGENT)); assert False
+    except VErr:
+        pass
+
+
+def test_failed_submission_is_terminal():
+    e = module.LifecycleEvent; events = (); fp = "contract-fp"
+    events = module.append_event(events, e("0", "SUB-1", module.DeliveryState.DISPATCHED, "dor-runtime", datetime.now(timezone.utc), fp, AR.RUNTIME))
+    events = module.append_event(events, e("1", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT))
+    events = module.append_event(events, e("2", "SUB-1", module.DeliveryState.SUBMITTED, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT))
+    events = module.append_event(events, e("3", "SUB-1", module.DeliveryState.VERIFYING, "verification-runtime", datetime.now(timezone.utc), fp, AR.VERIFICATION_RUNTIME))
+    events = module.append_event(events, e("4", "SUB-1", module.DeliveryState.FAILED, "p3-20", datetime.now(timezone.utc), fp, AR.P3_20))
+    try:
+        module.append_event(events, e("5", "SUB-1", module.DeliveryState.IN_PROGRESS, "agent-1", datetime.now(timezone.utc), fp, AR.AGENT)); assert False
     except ValueError:
         pass
