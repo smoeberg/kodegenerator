@@ -1,14 +1,56 @@
 from datetime import datetime, timezone
+import importlib.util
+from pathlib import Path
+import sys
 
 import pytest
 
-from phase5.p5_00_ai_work_product_contract import (
-    ActorRole, ArtifactRequirement, ArtifactType, CandidateEvidence, DeliveryState,
-    LifecycleEvent, RepositoryState, SubmittedArtifact, WorkProductSubmission,
-    append_event, derive_delivery_state, EvidenceAuthority, VerificationEngine,
-    VerificationError, fingerprint,
+PACKAGE_DIR = Path(__file__).parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "p5_00_contract", PACKAGE_DIR / "__init__.py", submodule_search_locations=[str(PACKAGE_DIR)]
 )
-from phase5.p5_00_ai_work_product_contract.tests.test_contract import make_contract
+assert SPEC and SPEC.loader
+module = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = module
+SPEC.loader.exec_module(module)
+
+ActorRole = module.ActorRole
+ArtifactRequirement = module.ArtifactRequirement
+ArtifactType = module.ArtifactType
+CandidateEvidence = module.CandidateEvidence
+DeliveryState = module.DeliveryState
+LifecycleEvent = module.LifecycleEvent
+RepositoryState = module.RepositoryState
+SubmittedArtifact = module.SubmittedArtifact
+WorkProductSubmission = module.WorkProductSubmission
+append_event = module.append_event
+derive_delivery_state = module.derive_delivery_state
+EvidenceAuthority = module.EvidenceAuthority
+VerificationEngine = module.VerificationEngine
+VerificationError = module.VerificationError
+fingerprint = module.fingerprint
+
+
+def make_contract():
+    return module.AIWorkProductContract(
+        contract_id="P5-00",
+        contract_version="1.0.0",
+        product_type="ai-work-product",
+        product_location="phase5/p5-00-ai-work-product-contract",
+        intent="Define and verify DOR work products",
+        inputs=("architecture",),
+        required_artifacts=(ArtifactRequirement("domain", ArtifactType.FILE, "models.py"),),
+        outputs=("verified-work-product",),
+        acceptance_criteria=(module.AcceptanceCriterion(
+            "P5-00-AC-001", "contract immutable", "contract_immutable", "p3-20", "governed_test_execution"
+        ),),
+        verification_procedure=module.VerificationProcedure("P3-20", "p3-20", "criterion-by-criterion", "1"),
+        regression_requirements=("full-suite",),
+        required_capabilities=("repository-write",),
+        authority_boundaries=("agent-cannot-verify",),
+        forbidden_actions=("self-approve",),
+        forbidden_outputs=("agent-pass",),
+    )
 
 
 def event(event_id, submission, kind, actor, contract_fp="contract-fp", role=ActorRole.AGENT):
