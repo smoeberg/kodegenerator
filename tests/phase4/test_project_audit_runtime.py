@@ -6,6 +6,7 @@ import io
 import json
 import os
 import subprocess
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,9 @@ from phase4.project_audit.openai_provider import (
     OPENAI_RESPONSES_URL,
     OpenAIProjectAuditInputLimitError,
     OpenAIProjectAuditProvider,
+    OpenAIProjectAuditProviderError,
     OpenAIProjectAuditResponseError,
+    _http_transport,
 )
 from phase4.project_audit.repository import (
     GitRepositoryDriftError,
@@ -220,6 +223,32 @@ def test_openai_provider_uses_strict_responses_schema_without_leaking_key(tmp_pa
     assert request_body["text"]["format"]["type"] == "json_schema"
     assert request_body["text"]["format"]["strict"] is True
     assert provider.provider_id == "openai.responses:audit-model"
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://api.openai.com/v1/responses",
+        "https://attacker.example/v1/responses",
+        "file:///tmp/responses.json",
+    ),
+)
+def test_http_transport_rejects_non_allowlisted_endpoints_without_network(
+    monkeypatch,
+    url,
+):
+    called = False
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("network transport must not be called")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(OpenAIProjectAuditProviderError, match="not allowed"):
+        _http_transport(url, {}, b"{}", 1.0)
+    assert called is False
 
 
 def test_openai_provider_refuses_to_silently_truncate_complete_evidence(tmp_path):

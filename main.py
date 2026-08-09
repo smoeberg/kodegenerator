@@ -1,70 +1,23 @@
-# main.py (Udvidet)
-from domain.task import Task, TaskStatus, TaskPriority
-from domain.artifact import Artifact, ArtifactType, ArtifactState
-import asyncio
+"""Compatibility entrypoint for the canonical DOR API application.
 
-async def main():
-    # ... (Forrige kode for at oprette organisation, actors, etc.)
+The application object lives in :mod:`api.main`.  Re-exporting it here keeps
+``uvicorn main:app`` and ``python main.py`` operational without maintaining a
+second, partially initialized runtime.
+"""
 
-    # Opret en Intent
-    intent = Intent(
-        id="intent_oauth2",
-        goal="Implement OAuth2 Authentication",
-        priority=IntentPriority.HIGH,
-        required_capabilities=["python", "fastapi", "security"],
-        constraints={"security_level": "high"},
-        creator=gpt5_actor,
-        organization=organization
-    )
+from __future__ import annotations
 
-    # Indsend Intent med Feature Development Template
-    workflow = dor.submit_intent_with_template(
-        intent=intent,
-        actor=gpt5_actor,
-        template_id="feature_development"
-    )
+from api.main import app
 
-    if workflow:
-        print(f"Workflow started: {workflow.id}")
+__all__ = ["app", "run"]
 
-        # Hent den første Task
-        pending_tasks = dor.workflow_engine.task_scheduler.get_pending_tasks()
-        if pending_tasks:
-            first_task = pending_tasks[0]
-            print(f"First task: {first_task.name} (Status: {first_task.status.name})")
 
-            # Tildel Tasken til GPT-5
-            dor.workflow_engine.task_scheduler.assign_task(first_task, gpt5_actor)
-            first_task.start()
+def run() -> None:
+    """Run the canonical API with development-safe defaults."""
+    import uvicorn
 
-            # Udfør Tasken med AI Executor
-            result = await dor.execute_task(first_task.id)
-            print(f"Task execution result: {result}")
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000)
 
-            if result.get("status") == "success":
-                print(f"Task completed successfully! Output: {result.get('output', '')[:100]}...")
 
-                # Hent det genererede Artefakt
-                artifact_id = result.get("artifact_id")
-                if artifact_id:
-                    artifact = dor.get_artifact(artifact_id)
-                    print(f"Generated artifact: {artifact.id} (Type: {artifact.artifact_type.value})")
-
-                    # Indsend Artefaktet til review
-                    dor.workflow_engine.artifact_manager.submit_artifact(artifact_id, gpt5_actor)
-
-                    # Skift Workflow-tilstand til REVIEW
-                    dor.workflow_engine.transition_workflow(
-                        workflow.id,
-                        WorkflowState.REVIEW,
-                        gpt5_actor
-                    )
-                    print(f"Workflow transitioned to: {workflow.current_state.name.value}")
-            else:
-                print(f"Task failed: {result.get('error', 'Unknown error')}")
-
-    # Luk database-session
-    db.close()
-
-# Kør main()
-asyncio.run(main())
+if __name__ == "__main__":
+    run()
