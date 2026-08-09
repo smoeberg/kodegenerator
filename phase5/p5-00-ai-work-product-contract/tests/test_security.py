@@ -7,7 +7,7 @@ import pytest
 
 PACKAGE_DIR = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "p5_00_contract", PACKAGE_DIR / "__init__.py", submodule_search_locations=[str(PACKAGE_DIR)]
+    "p5_00_contract", PACKAGE_DIR / "contract.py", submodule_search_locations=[str(PACKAGE_DIR)]
 )
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
