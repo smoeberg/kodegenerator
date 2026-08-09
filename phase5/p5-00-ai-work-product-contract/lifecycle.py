@@ -27,6 +27,8 @@ class LifecycleEvent:
     occurred_at: datetime
 
     def __post_init__(self) -> None:
+        if not self.event_id or not self.submission_id or not self.actor_id:
+            raise ValueError("event identity is required")
         if self.occurred_at.tzinfo is None:
             object.__setattr__(self, "occurred_at", self.occurred_at.replace(tzinfo=timezone.utc))
 
@@ -40,6 +42,8 @@ _ALLOWED = {
     DeliveryState.PASSED: set(),
     DeliveryState.FAILED: set(),
 }
+
+_P3_20_ONLY = {DeliveryState.VERIFYING, DeliveryState.PASSED, DeliveryState.FAILED}
 
 
 def derive_delivery_state(events: Tuple[LifecycleEvent, ...]) -> DeliveryState:
@@ -58,6 +62,8 @@ def append_event(events: Tuple[LifecycleEvent, ...], event: LifecycleEvent) -> T
     """Validate and append one lifecycle event without mutating prior history."""
     if events and events[-1].submission_id != event.submission_id:
         raise ValueError("lifecycle event submission mismatch")
+    if event.event_type in _P3_20_ONLY and event.actor_id != "p3-20":
+        raise PermissionError("only p3-20 may enter or resolve verification")
     if not events and event.event_type is not DeliveryState.DISPATCHED:
         raise ValueError("first persisted transition must be DISPATCHED")
     derive_delivery_state(events + (event,))
