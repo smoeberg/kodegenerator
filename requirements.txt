@@ -16,5 +16,6 @@ pytest>=7.0.0
 streamlit>=1.25.0
 pandas>=2.0.0
 cryptography>=41.0.0
+ruff>=0.5.0
 
 pytest-asyncio>=0.21.0

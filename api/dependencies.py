@@ -2,10 +2,14 @@
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from phase4.implementation_agent import (
+    GovernedPatchExecutionRuntime,
     ImplementationAgentRuntime,
     OpenAIImplementationProvider,
+    PatchWorkspaceError,
+    canonical_python_tools,
 )
 from runtime.core import DORRuntime
 
@@ -90,4 +94,72 @@ def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
     except (TypeError, ValueError) as exc:
         raise ImplementationAgentConfigurationError(
             "Implementation Agent configuration is invalid"
+        ) from exc
+
+
+@lru_cache(maxsize=1)
+def get_governed_patch_runtime() -> GovernedPatchExecutionRuntime:
+    """Build the fail-closed patch/apply runtime with fixed trusted tools."""
+    workspace_value = os.getenv("DOR_PATCH_WORKSPACE_ROOT")
+    configured_tool_ids = os.getenv("DOR_PATCH_ALLOWED_TOOLS")
+    if not workspace_value:
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_WORKSPACE_ROOT is required for governed patch execution"
+        )
+    workspace = Path(workspace_value)
+    if not workspace.is_absolute():
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_WORKSPACE_ROOT must be an absolute path"
+        )
+    if not configured_tool_ids:
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_ALLOWED_TOOLS is required for governed patch execution"
+        )
+    requested_ids = tuple(item.strip() for item in configured_tool_ids.split(","))
+    if any(not item for item in requested_ids) or len(requested_ids) != len(
+        set(requested_ids)
+    ):
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_ALLOWED_TOOLS must contain unique non-empty tool IDs"
+        )
+
+    timeout_seconds = _positive_int_environment("DOR_PATCH_TOOL_TIMEOUT_SECONDS", 300)
+    max_output_bytes = _positive_int_environment(
+        "DOR_PATCH_MAX_TOOL_OUTPUT_BYTES", 256 * 1024
+    )
+    available = {
+        tool.tool_id: tool
+        for tool in canonical_python_tools(
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+        )
+    }
+    unknown = tuple(item for item in requested_ids if item not in available)
+    if unknown:
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_ALLOWED_TOOLS contains an unknown tool ID: "
+            + ", ".join(unknown)
+        )
+    tools = tuple(available[item] for item in requested_ids)
+    try:
+        return GovernedPatchExecutionRuntime(
+            proposal_runtime=get_implementation_agent_runtime(),
+            workspace_root=workspace,
+            tools=tools,
+            max_file_bytes=_positive_int_environment(
+                "DOR_PATCH_MAX_FILE_BYTES", 16 * 1024 * 1024
+            ),
+            max_workspace_files=_positive_int_environment(
+                "DOR_PATCH_MAX_WORKSPACE_FILES", 20_000
+            ),
+            max_workspace_bytes=_positive_int_environment(
+                "DOR_PATCH_MAX_WORKSPACE_BYTES", 256 * 1024 * 1024
+            ),
+            patch_timeout_seconds=_positive_int_environment(
+                "DOR_PATCH_APPLY_TIMEOUT_SECONDS", 30
+            ),
+        )
+    except (PatchWorkspaceError, TypeError, ValueError) as exc:
+        raise ImplementationAgentConfigurationError(
+            "Governed patch-execution configuration is invalid"
         ) from exc

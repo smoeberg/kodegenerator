@@ -340,3 +340,77 @@ class ImplementationProposalResponse(BaseModel):
     provenance_id: str
     replayed: bool
     proposal: ImplementationProposalArtifactResponse
+
+
+class ImplementationPatchExecutionRequest(BaseModel):
+    """Authenticated command for one stored proposal; argv is never caller input."""
+
+    organization_id: str = Field(min_length=1, max_length=256)
+    command_id: str = Field(min_length=1, max_length=256)
+    proposal_id: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+
+class ImplementationPatchFileResponse(BaseModel):
+    path: str
+    exists: bool
+    sha256: Optional[str]
+    byte_count: int
+    mode: Optional[int]
+
+
+class ImplementationToolLogResponse(BaseModel):
+    artifact_id: str
+    sha256: str
+    byte_count: int
+    content: str
+    truncated: bool
+
+
+class ImplementationToolEvidenceResponse(BaseModel):
+    evidence_id: str
+    tool_id: str
+    kind: str
+    tool_fingerprint: str
+    artifact_id: str
+    status: str
+    passed: bool
+    exit_code: Optional[int]
+    stdout: ImplementationToolLogResponse
+    stderr: ImplementationToolLogResponse
+
+
+class ImplementationPatchArtifactResponse(BaseModel):
+    artifact_id: str
+    proposal_id: str
+    diff_sha256: str
+    baseline_fingerprint: str
+    files: List[ImplementationPatchFileResponse]
+
+
+class ImplementationPatchExecutionResponse(BaseModel):
+    command_id: str
+    agent_identity: str
+    request_fingerprint: str
+    proposal_id: str
+    baseline_fingerprint: str
+    toolchain_fingerprint: str
+    authority_decision: str
+    authority_policy_id: str
+    authority_policy_version: str
+    execution_id: str
+    execution_status: str
+    outcome_id: str
+    outcome_status: str
+    provenance_id: str
+    replayed: bool
+    record_id: str
+    record_status: str
+    committed: bool
+    rolled_back: bool
+    error: Optional[str]
+    artifact: Optional[ImplementationPatchArtifactResponse]
+    evidence: List[ImplementationToolEvidenceResponse]
