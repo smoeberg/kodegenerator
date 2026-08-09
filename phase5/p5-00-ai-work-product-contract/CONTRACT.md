@@ -12,7 +12,7 @@
 
 The agent may inspect, implement, test, and submit. It may provide candidate evidence, but it cannot create authoritative verification evidence or issue PASS/FAIL.
 
-Only P3-20 may issue `VerificationDecision.passed` and the corresponding terminal lifecycle event.
+The verification runtime may enter `VERIFYING`. Only P3-20 may issue `VerificationDecision.passed` and the corresponding terminal lifecycle event.
 
 ## Contract
 
@@ -31,7 +31,7 @@ Only P3-20 may issue `VerificationDecision.passed` and the corresponding termina
 
 A contract must declare at least one required artifact and one acceptance criterion. Every acceptance criterion names a stable ID, machine-verifiable predicate, evidence source and `p3-20` verifier.
 
-The canonical contract is fingerprinted before dispatch. The fingerprint is immutable for the dispatched work.
+The canonical contract is fingerprinted before dispatch. The fingerprint is immutable for the dispatched work. Every lifecycle event carries that fingerprint, so a later event cannot silently switch contracts.
 
 ## Submission
 
@@ -50,9 +50,13 @@ A submission does not contain an authoritative delivery state. Its fingerprint c
 
 Delivery state is derived exclusively from append-only `LifecycleEvent` records:
 
-`DRAFT -> DISPATCHED -> IN_PROGRESS -> SUBMITTED -> VERIFYING -> PASSED | FAILED`
+`DRAFT → DISPATCHED → IN_PROGRESS → SUBMITTED → VERIFYING → PASSED | FAILED`
 
-The agent/runtime may drive operational transitions through submission. Only P3-20 may enter `VERIFYING` and resolve `PASSED` or `FAILED`.
+- DOR runtime dispatches the immutable contract binding.
+- Agent/runtime may advance operational work through `IN_PROGRESS` and `SUBMITTED`.
+- Verification runtime may start `VERIFYING`.
+- Only P3-20 may resolve `PASSED` or `FAILED`.
+- Terminal states cannot transition further.
 
 A failed submission is terminal. A retry requires a new submission identity and new artifact/evidence fingerprints. Previous decisions are never rewritten.
 
@@ -62,22 +66,26 @@ Verification is fail-closed:
 
 1. Contract fingerprint must match exactly.
 2. Repository identity, revision and tree fingerprint must be present.
-3. Every required artifact must be submitted.
-4. Submitted artifact type and location must match the contract.
-5. Submitted artifact fingerprints must match governed repository fingerprints.
-6. Candidate evidence is never authoritative evidence.
-7. Governed evidence IDs and payload fingerprints must be unique and must match the verifier's materialized evidence fingerprints.
-8. Every acceptance criterion is evaluated independently.
-9. Missing governed evidence fails the criterion.
-10. Missing predicate or non-P3-20 authority is rejected/fails closed.
-11. Every failed required artifact yields overall FAIL.
-12. Every failed mandatory acceptance criterion yields overall FAIL; optional criteria may fail without failing the whole product.
-13. Only P3-20 can issue the final decision.
+3. If a governed repository snapshot is supplied, it must exactly equal the submitted snapshot.
+4. Every required artifact must be submitted.
+5. Submitted artifact type and location must match the contract.
+6. Submitted artifact fingerprints must match governed repository fingerprints.
+7. Candidate evidence is never authoritative evidence.
+8. Governed evidence IDs and payload fingerprints must be unique and must match the verifier's materialized evidence fingerprints.
+9. Governed evidence may reference only declared acceptance criteria.
+10. Every acceptance criterion is evaluated independently.
+11. Missing governed evidence fails the criterion.
+12. Missing predicate or non-P3-20 authority is rejected/fails closed.
+13. Every failed required artifact yields overall FAIL.
+14. Every failed mandatory acceptance criterion yields overall FAIL; optional criteria may fail without failing the whole product.
+15. Only P3-20 can issue the final decision.
 
 ## Security invariants
 
 - Contract mutation after dispatch is invalid.
+- Every lifecycle event remains bound to the original contract fingerprint.
 - Artifact mutation after submission is detectable by fingerprint mismatch.
+- Repository revision/tree changes after submission are detectable by governed repository-state comparison.
 - Evidence mutation after materialization is detectable by evidence fingerprint mismatch.
 - Agent-generated PASS is not accepted as a verification decision.
 - Completion summaries cannot substitute for required artifacts.
@@ -97,7 +105,9 @@ The P5-00 test suite covers the positive path and adversarial cases for:
 - missing governed evidence
 - missing predicates
 - changed governed evidence
+- changed repository state
 - non-P3-20 verification authority
-- append-only lifecycle transitions
-- verification-only P3-20 transitions
+- contract-bound append-only lifecycle transitions
+- verification-runtime entry into `VERIFYING`
+- P3-20-only terminal resolution
 - terminal failed submissions
