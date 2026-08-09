@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Mapping, Optional, Tuple
+from typing import Optional, Tuple
 
 from .fingerprinting import fingerprint
 
@@ -59,6 +59,8 @@ class AcceptanceCriterion:
         for name, value in (("criterion_id", self.criterion_id), ("requirement", self.requirement), ("predicate", self.predicate), ("verifier", self.verifier), ("evidence_source", self.evidence_source)):
             if not value:
                 raise ValueError(f"{name} is required")
+        if self.verifier != "p3-20":
+            raise ValueError("acceptance criteria must designate p3-20 as verifier")
 
 
 @dataclass(frozen=True)
@@ -111,21 +113,15 @@ class AIWorkProductContract:
         object.__setattr__(self, "forbidden_actions", tuple(self.forbidden_actions))
         object.__setattr__(self, "forbidden_outputs", tuple(self.forbidden_outputs))
         payload = {
-            "contract_id": self.contract_id,
-            "contract_version": self.contract_version,
-            "product_type": self.product_type,
-            "product_location": self.product_location,
-            "intent": self.intent,
-            "inputs": self.inputs,
-            "required_artifacts": self.required_artifacts,
-            "outputs": self.outputs,
-            "acceptance_criteria": self.acceptance_criteria,
+            "contract_id": self.contract_id, "contract_version": self.contract_version,
+            "product_type": self.product_type, "product_location": self.product_location,
+            "intent": self.intent, "inputs": self.inputs, "required_artifacts": self.required_artifacts,
+            "outputs": self.outputs, "acceptance_criteria": self.acceptance_criteria,
             "verification_procedure": self.verification_procedure,
             "regression_requirements": self.regression_requirements,
             "required_capabilities": self.required_capabilities,
             "authority_boundaries": self.authority_boundaries,
-            "forbidden_actions": self.forbidden_actions,
-            "forbidden_outputs": self.forbidden_outputs,
+            "forbidden_actions": self.forbidden_actions, "forbidden_outputs": self.forbidden_outputs,
         }
         object.__setattr__(self, "contract_fingerprint", fingerprint(payload))
 
@@ -169,6 +165,7 @@ class WorkProductSubmission:
     artifacts: Tuple[SubmittedArtifact, ...]
     candidate_evidence: Tuple[CandidateEvidence, ...]
     submitted_at: datetime
+    submission_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.submission_id or not self.contract_fingerprint or not self.agent_id:
@@ -177,6 +174,15 @@ class WorkProductSubmission:
         object.__setattr__(self, "candidate_evidence", tuple(self.candidate_evidence))
         if self.submitted_at.tzinfo is None:
             object.__setattr__(self, "submitted_at", self.submitted_at.replace(tzinfo=timezone.utc))
+        object.__setattr__(self, "submission_fingerprint", fingerprint({
+            "submission_id": self.submission_id,
+            "contract_fingerprint": self.contract_fingerprint,
+            "agent_id": self.agent_id,
+            "repository_state": self.repository_state,
+            "artifacts": self.artifacts,
+            "candidate_evidence": self.candidate_evidence,
+            "submitted_at": self.submitted_at,
+        }))
 
 
 @dataclass(frozen=True)
@@ -192,6 +198,7 @@ class CriterionResult:
 class VerificationDecision:
     decision_id: str
     submission_id: str
+    submission_fingerprint: str
     contract_fingerprint: str
     verifier: str
     passed: bool
