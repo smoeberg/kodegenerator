@@ -176,6 +176,33 @@ def test_runtime_rejects_glob_authority_resources(tmp_path):
         )
 
 
+def test_baseline_closes_implementation_gap_only_for_complete_runtime_wiring(
+    tmp_path,
+):
+    files = _dor_files()
+    files.update(
+        {
+            "api/main.py": (
+                "from api.endpoints import implementation_agent\n"
+                "app.include_router(implementation_agent.router)\n"
+            ),
+            "api/endpoints/implementation_agent.py": "router = object()\n",
+            "phase4/implementation_agent/runtime.py": (
+                "class ImplementationAgentRuntime: pass\n"
+            ),
+        }
+    )
+    _init_repository(tmp_path, files)
+
+    run = ProjectAuditRuntime(tmp_path).run(
+        repository="repository:smoeberg/kodegenerator",
+        provider=DORBaselineProjectAuditProvider(),
+    )
+
+    keys = {finding.key for finding in run.report.findings}
+    assert "implementation-agent-not-runtime-integrated" not in keys
+
+
 def test_openai_provider_uses_strict_responses_schema_without_leaking_key(tmp_path):
     _init_repository(tmp_path, _dor_files())
     baseline_run = ProjectAuditRuntime(tmp_path).run(
