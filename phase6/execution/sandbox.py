@@ -1,15 +1,11 @@
-"""Security-first execution sandbox abstraction for Phase 6.
-
-This module defines the trusted boundary between the DOR runtime and an
-isolated executor. It intentionally contains no host-process/container
-implementation details. Concrete isolation backends consume this bounded
-contract.
-"""
+"""Security-first execution sandbox abstraction for Phase 6."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping, Protocol, Tuple
+
+from phase6.execution.audit import AuditSink, ExecutionAuditEvent, utc_timestamp
 
 
 class SandboxError(RuntimeError):
@@ -49,11 +45,7 @@ class ExecutionLimits:
         if self.cpu_time_seconds <= 0:
             raise ValueError("cpu_time_seconds must be positive")
         for name in (
-            "memory_bytes",
-            "process_count",
-            "output_bytes",
-            "file_size_bytes",
-            "open_file_count",
+            "memory_bytes", "process_count", "output_bytes", "file_size_bytes", "open_file_count"
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -148,8 +140,6 @@ class ExecutionResult:
 
 
 class SandboxAdapter(Protocol):
-    """Implementation boundary for a concrete isolated executor."""
-
     adapter_id: str
 
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
@@ -157,17 +147,16 @@ class SandboxAdapter(Protocol):
 
 
 class Sandbox(Protocol):
-    """Trusted runtime-facing sandbox interface."""
-
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         """Resolve an allowlisted adapter and execute the specification."""
 
 
 class SandboxRegistry:
-    """Allowlist of concrete sandbox adapters."""
+    """Allowlist of concrete sandbox adapters with audit lifecycle events."""
 
-    def __init__(self, adapters: Mapping[str, SandboxAdapter] | None = None) -> None:
+    def __init__(self, adapters: Mapping[str, SandboxAdapter] | None = None, audit_sink: AuditSink | None = None) -> None:
         self._adapters: dict[str, SandboxAdapter] = {}
+        self._audit = audit_sink
         for adapter_id, adapter in (adapters or {}).items():
             self.register(adapter_id, adapter)
 
@@ -187,18 +176,37 @@ class SandboxRegistry:
             raise UnknownSandboxAdapter(adapter_id) from exc
 
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+        self._emit(spec, "execution.started", "started")
         adapter = self.resolve(spec.adapter_id)
         try:
             result = adapter.execute(spec)
         except ValueError as exc:
+            self._emit(spec, "execution.rejected", "rejected", error_code="invalid_execution_spec")
             raise InvalidExecutionSpec(str(exc)) from exc
         if result.execution_id != spec.execution_id:
+            self._emit(spec, "execution.rejected", "rejected", error_code="execution_id_mismatch")
             raise InvalidExecutionSpec("adapter returned a different execution_id")
         if result.adapter_id != spec.adapter_id:
+            self._emit(spec, "execution.rejected", "rejected", error_code="adapter_id_mismatch")
             raise InvalidExecutionSpec("adapter returned a different adapter_id")
         if len(result.output.encode("utf-8")) > spec.limits.output_bytes:
+            self._emit(spec, "execution.rejected", "rejected", error_code="output_limit")
             raise InvalidExecutionSpec("adapter returned output above configured limit")
+        self._emit(spec, "execution.finished", result.outcome.value, exit_code=result.exit_code)
         return result
+
+    def _emit(self, spec: ExecutionSpec, event_type: str, outcome: str, *, error_code: str | None = None, exit_code: int | None = None) -> None:
+        if self._audit is None:
+            return
+        self._audit.emit(ExecutionAuditEvent(
+            event_type=event_type,
+            execution_id=spec.execution_id,
+            adapter_id=spec.adapter_id,
+            outcome=outcome,
+            timestamp=utc_timestamp(),
+            error_code=error_code,
+            exit_code=exit_code,
+        ))
 
     @property
     def adapter_ids(self) -> Tuple[str, ...]:
