@@ -7,7 +7,7 @@ from threading import RLock
 from typing import Protocol
 
 from phase4.execution.adapters import AdapterResult
-from phase4.execution.models import ExecutionRequest
+from phase4.execution.models import ExecutionRequest, GovernedDispatch
 
 from .models import (
     PROJECT_AUDIT_ACTION,
@@ -90,7 +90,17 @@ class ProjectAuditExecutionAdapter:
                 raise DuplicateProjectAuditRequestError(fingerprint)
             self._requests[fingerprint] = request
 
-    def execute(self, request: ExecutionRequest) -> AdapterResult:
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        dispatch: GovernedDispatch | None = None,
+    ) -> AdapterResult | None:
+        """Execute only through the verified AI-3 -> AI-4 dispatch boundary."""
+        if not isinstance(dispatch, GovernedDispatch):
+            return None
+        if not dispatch.is_verified or dispatch.request is not request:
+            return None
         if not isinstance(request, ExecutionRequest):
             raise TypeError("request must be an ExecutionRequest")
         fingerprint = dict(request.parameters).get("audit_request_fingerprint")
