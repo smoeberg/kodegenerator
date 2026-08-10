@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Callable
 from uuid import uuid4
 
-from outcome_models import ReleaseOutcomeError, ReleaseOutcomeRecord, ReleaseOutcomeStatus
+from p5_06_release_outcome_models import ReleaseOutcomeError, ReleaseOutcomeRecord, ReleaseOutcomeStatus
 
 
 class ReleaseOutcomeRecorder:
@@ -17,30 +17,18 @@ class ReleaseOutcomeRecorder:
         self.runtime_id = runtime_id
         self._records: dict[tuple[str, str], ReleaseOutcomeRecord] = {}
 
-    def record(
-        self,
-        dispatch,
-        *,
-        status: ReleaseOutcomeStatus,
-        external_reference: str,
-        release_reference: str,
-        outcome_id: str | None = None,
-        observed_at: datetime | None = None,
-        sink: Callable[[ReleaseOutcomeRecord], None] | None = None,
-    ) -> ReleaseOutcomeRecord:
+    def record(self, dispatch, *, status: ReleaseOutcomeStatus, external_reference: str, release_reference: str, outcome_id: str | None = None, observed_at: datetime | None = None, sink: Callable[[ReleaseOutcomeRecord], None] | None = None) -> ReleaseOutcomeRecord:
         self._validate_dispatch(dispatch)
         if not isinstance(status, ReleaseOutcomeStatus):
             raise ReleaseOutcomeError("unsupported release outcome status")
         if not external_reference or not release_reference:
             raise ReleaseOutcomeError("external_reference and release_reference are required")
-
         key = (dispatch.dispatch_id, external_reference)
         existing = self._records.get(key)
         if existing is not None:
             if existing.status != status or existing.release_reference != release_reference:
                 raise ReleaseOutcomeError("conflicting outcome for dispatch and external reference")
             return existing
-
         record = ReleaseOutcomeRecord(
             outcome_id=outcome_id or str(uuid4()),
             dispatch_id=dispatch.dispatch_id,
