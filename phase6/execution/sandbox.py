@@ -20,8 +20,8 @@ class UnknownSandboxAdapter(SandboxError):
     """Raised when an execution adapter is not explicitly registered."""
 
 
-class InvalidExecutionSpec(SandboxError):
-    """Raised when an execution request violates the security contract."""
+class InvalidExecutionSpec(ValueError, SandboxError):
+    """Raised for invalid execution specs while preserving legacy ValueError compatibility."""
 
 
 class ExecutionOutcome(str, Enum):
@@ -65,13 +65,7 @@ class ExecutionLimits:
 
 @dataclass(frozen=True)
 class ExecutionSecurityContext:
-    """Immutable authority context passed into an isolated executor.
-
-    Capabilities are already authorized by the upstream authority layer. This
-    object is descriptive: changing it inside an executor cannot grant new
-    authority because it is frozen and adapters are expected to treat it as
-    untrusted metadata rather than an authorization source.
-    """
+    """Immutable authority context passed into an isolated executor."""
 
     organization_id: str
     principal_id: str
@@ -130,7 +124,7 @@ class ExecutionSpec:
         if "*" in self.network_allowlist:
             raise ValueError("network_allowlist cannot use wildcard access")
         if set(self.writable_paths) & set(self.read_only_paths):
-            raise ValueError("a path cannot be both writable and read-only")
+            raise InvalidExecutionSpec("a path cannot be both writable and read-only")
 
 
 @dataclass(frozen=True)
@@ -194,7 +188,10 @@ class SandboxRegistry:
 
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         adapter = self.resolve(spec.adapter_id)
-        result = adapter.execute(spec)
+        try:
+            result = adapter.execute(spec)
+        except ValueError as exc:
+            raise InvalidExecutionSpec(str(exc)) from exc
         if result.execution_id != spec.execution_id:
             raise InvalidExecutionSpec("adapter returned a different execution_id")
         if result.adapter_id != spec.adapter_id:
