@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           heads="$(alembic heads)"
           printf '%s\n' "$heads"
-          printf '%s\n' "$heads" | grep -Eq '^007_control_plane_projects[[:space:]]+\(head\)$'
+          printf '%s\n' "$heads" | grep -Eq '^008_phase7_runtime_queue[[:space:]]+\(head\)$'
           test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
 
       - name: Verify clean database migration
