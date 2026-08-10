@@ -9,7 +9,7 @@ sys.path.insert(0, str(SLICE))
 
 from handoff import VerificationHandoffEngine  # noqa: E402
 from models import HandoffError  # noqa: E402
-from p5_00_loader import load_p5_00  # noqa: E402
+from p5_02_loader import load_p5_00  # noqa: E402
 from test_handoff import fixture, decision  # noqa: E402
 
 p5 = load_p5_00()
