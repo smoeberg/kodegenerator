@@ -1,25 +1,27 @@
-"""Adapter that connects Phase 7 workers to the existing governed execution service."""
+"""Phase 7 adapter from durable worker messages to the governed P3-14 service."""
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
-from domain.task_execution import TaskExecutionRequest
-from infrastructure.runtime.execution import ExecutionResult
+from domain.principal import Principal
+from domain.task_execution import ExecutionResult, TaskExecutionRequest
 
 
-class GovernedExecutor(Protocol):
-    def execute(self, request: TaskExecutionRequest) -> Any: ...
+class GovernedExecutionService(Protocol):
+    def execute(self, principal: Principal, request: TaskExecutionRequest) -> ExecutionResult: ...
 
 
 class GovernedExecutionHandler:
-    """Translate queue payloads into the canonical P3-14 request boundary.
+    """Execute one queue payload through the canonical authorization boundary.
 
-    Authorization, verification and application-specific execution remain in
-    the existing service; this adapter deliberately does not duplicate them.
+    A worker never executes provider logic directly. It reconstructs the
+    canonical request, creates a principal bound to the requested actor, and
+    delegates to TaskExecutionService, which re-checks persisted membership,
+    actor status and capability authority.
     """
 
-    def __init__(self, executor: GovernedExecutor):
-        self.executor = executor
+    def __init__(self, service_factory: Callable[[], GovernedExecutionService]):
+        self.service_factory = service_factory
 
     def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = TaskExecutionRequest(
@@ -32,7 +34,17 @@ class GovernedExecutionHandler:
             resource_id=payload.get("resource_id"),
             resource_organization_id=payload.get("resource_organization_id"),
         )
-        result = self.executor.execute(request)
-        if isinstance(result, dict):
-            return result
-        return {"result": result}
+
+        # The actor identity is intentionally bound to the canonical request.
+        # AuthorizationService still verifies the actor against persisted
+        # organization membership, active status, and effective capabilities.
+        principal = Principal(id=request.actor_id, type="service")
+        result = self.service_factory().execute(principal, request)
+
+        return {
+            "execution_id": result.execution_id,
+            "status": result.status.value,
+            "result": result.result,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+        }
