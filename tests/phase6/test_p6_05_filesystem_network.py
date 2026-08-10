@@ -5,13 +5,24 @@ from pathlib import Path
 import pytest
 
 from phase6.execution.process import BubblewrapProcessAdapter
-from phase6.execution.sandbox import ExecutionLimits, ExecutionSpec, InvalidExecutionSpec
+from phase6.execution.sandbox import (
+    ExecutionLimits,
+    ExecutionSecurityContext,
+    ExecutionSpec,
+    InvalidExecutionSpec,
+)
 
 
 def _spec(executable: str, **kwargs) -> ExecutionSpec:
     return ExecutionSpec(
         execution_id="p6-05-test",
+        adapter_id="bubblewrap-process",
         argv=(executable,),
+        security=ExecutionSecurityContext(
+            organization_id="org-test",
+            principal_id="principal-test",
+            actor_id="actor-test",
+        ),
         limits=ExecutionLimits(
             wall_time_seconds=5,
             cpu_time_seconds=2,
@@ -23,7 +34,7 @@ def _spec(executable: str, **kwargs) -> ExecutionSpec:
     )
 
 
-def test_network_allowlist_is_rejected_by_current_backend(tmp_path: Path):
+def test_network_allowlist_is_rejected_by_current_backend():
     adapter = BubblewrapProcessAdapter(allowed_executables=["/usr/bin/true"])
     with pytest.raises(InvalidExecutionSpec, match="network allowlists"):
         adapter.execute(_spec("/usr/bin/true", network_allowlist=("example.com",)))
