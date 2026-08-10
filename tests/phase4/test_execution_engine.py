@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from phase4.authority.engine import AuthorityEngine
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import (
     AuthorityPolicy,
     AuthorityRequest,
@@ -33,6 +34,7 @@ def decision_for(
         resource=request.resource,
         context_packet_id=request.context_packet_id,
         requested_at="2026-08-08T12:00:00+00:00",
+        parameters=request.parameters,
     )
     policy = AuthorityPolicy(
         policy_id="policy.demo",
@@ -47,6 +49,15 @@ def decision_for(
         ),
     )
     return AuthorityEngine(policy).evaluate(authority_request)
+
+
+def grant_for(
+    request: ExecutionRequest,
+    *,
+    policy_version: str = "1",
+) -> VerifiedAuthorityGrant:
+    decision = decision_for(request, policy_version=policy_version)
+    return VerifiedAuthorityGrant.from_decision(decision)
 
 
 def request(**overrides) -> ExecutionRequest:
@@ -77,7 +88,7 @@ def test_explicit_allow_reaches_registered_adapter():
     counter = {"calls": 0}
     engine = make_engine(counter)
     req = request()
-    result = engine.execute(req, decision_for(req))
+    result = engine.execute(req, grant_for(req))
     assert result.status is ExecutionStatus.SUCCEEDED
     assert result.succeeded
     assert result.adapter_id == "adapter.demo.read"
@@ -98,9 +109,9 @@ def test_deny_never_reaches_adapter():
     counter = {"calls": 0}
     engine = make_engine(counter)
     req = request()
-    result = engine.execute(req, decision_for(req, Decision.DENY))
+    result = engine.execute(req, None)
     assert result.status is ExecutionStatus.REJECTED
-    assert "not ALLOW" in result.error
+    assert "missing authority" in result.error
     assert counter["calls"] == 0
 
 
@@ -108,8 +119,8 @@ def test_deny_cannot_replay_a_previous_allow():
     counter = {"calls": 0}
     engine = make_engine(counter)
     req = request()
-    allowed = engine.execute(req, decision_for(req, Decision.ALLOW))
-    denied = engine.execute(req, decision_for(req, Decision.DENY))
+    allowed = engine.execute(req, grant_for(req))
+    denied = engine.execute(req, None)
     assert allowed.status is ExecutionStatus.SUCCEEDED
     assert denied.status is ExecutionStatus.REJECTED
     assert counter["calls"] == 1
@@ -128,14 +139,14 @@ def test_security_binding_mismatch_is_rejected(field):
         "context_packet_id": "ctx-other",
     }
     tampered = request(**{field: values[field]})
-    result = engine.execute(tampered, decision_for(req))
+    result = engine.execute(tampered, grant_for(req))
     assert result.status is ExecutionStatus.REJECTED
     assert counter["calls"] == 0
 
 
 def test_no_adapter_is_rejected_without_inventing_execution():
     req = request()
-    result = ExecutionEngine().execute(req, decision_for(req))
+    result = ExecutionEngine().execute(req, grant_for(req))
     assert result.status is ExecutionStatus.REJECTED
     assert "no execution adapter" in result.error
 
@@ -145,8 +156,9 @@ def test_same_authorized_request_is_idempotent():
     engine = make_engine(counter)
     req = request()
     decision = decision_for(req)
-    first = engine.execute(req, decision)
-    second = engine.execute(req, decision)
+    grant = VerifiedAuthorityGrant.from_decision(decision)
+    first = engine.execute(req, grant)
+    second = engine.execute(req, grant)
     assert first.status is ExecutionStatus.SUCCEEDED
     assert second.status is ExecutionStatus.REPLAYED
     assert second.execution_id == first.execution_id
@@ -158,7 +170,7 @@ def test_adapter_exception_is_audited_as_failure():
         raise RuntimeError("backend unavailable")
     engine = ExecutionEngine((StaticExecutionAdapter("adapter.fail", "demo.read", failing),))
     req = request()
-    result = engine.execute(req, decision_for(req))
+    result = engine.execute(req, grant_for(req))
     assert result.status is ExecutionStatus.FAILED
     assert result.error == "RuntimeError: backend unavailable"
     assert engine.audit_trail()[-1] == result
@@ -171,9 +183,9 @@ def test_failed_execution_is_not_silently_retried():
         raise RuntimeError("temporary failure")
     engine = ExecutionEngine((StaticExecutionAdapter("adapter.fail", "demo.read", failing),))
     req = request()
-    decision = decision_for(req)
-    first = engine.execute(req, decision)
-    second = engine.execute(req, decision)
+    grant = grant_for(req)
+    first = engine.execute(req, grant)
+    second = engine.execute(req, grant)
     assert first.status is ExecutionStatus.FAILED
     assert second.status is ExecutionStatus.REPLAYED
     assert counter["calls"] == 1
@@ -181,7 +193,7 @@ def test_failed_execution_is_not_silently_retried():
 
 def test_execution_result_is_immutable():
     req = request()
-    result = make_engine().execute(req, decision_for(req))
+    result = make_engine().execute(req, grant_for(req))
     with pytest.raises(FrozenInstanceError):
         result.status = ExecutionStatus.FAILED
 
@@ -214,8 +226,8 @@ def test_policy_version_is_bound_into_execution_identity():
 def test_audit_trail_contains_rejected_and_successful_attempts():
     engine = make_engine()
     req = request()
-    denied = engine.execute(req, decision_for(req, Decision.DENY))
-    allowed = engine.execute(req, decision_for(req))
+    denied = engine.execute(req, None)
+    allowed = engine.execute(req, grant_for(req))
     assert tuple(record.status for record in engine.audit_trail()) == (
         ExecutionStatus.REJECTED,
         ExecutionStatus.SUCCEEDED,
@@ -240,7 +252,7 @@ def test_adapter_receives_bounded_execution_request():
         return {}
     engine = ExecutionEngine((StaticExecutionAdapter("adapter.demo", "demo.read", handler),))
     req = request()
-    result = engine.execute(req, decision_for(req))
+    result = engine.execute(req, grant_for(req))
     assert result.succeeded
     assert observed == {"type": ExecutionRequest, "action": "demo.read"}
 
@@ -248,7 +260,7 @@ def test_adapter_receives_bounded_execution_request():
 def test_audit_snapshot_is_immutable_tuple():
     engine = make_engine()
     req = request()
-    engine.execute(req, decision_for(req))
+    engine.execute(req, grant_for(req))
     snapshot = engine.audit_trail()
     assert isinstance(snapshot, tuple)
     with pytest.raises(AttributeError):
