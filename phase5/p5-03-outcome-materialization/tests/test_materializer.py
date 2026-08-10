@@ -11,8 +11,7 @@ SLICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SLICE))
 
 from materializer import OutcomeMaterializer  # noqa: E402
-from models import OutcomeError, OutcomeValue  # noqa: E402
-
+from outcome_models import OutcomeError, OutcomeValue  # noqa: E402
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
