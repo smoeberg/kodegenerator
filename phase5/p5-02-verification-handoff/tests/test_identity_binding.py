@@ -8,7 +8,7 @@ SLICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SLICE))
 
 from handoff import VerificationHandoffEngine  # noqa: E402
-from models import HandoffError  # noqa: E402
+from models import HandoffError, VerificationResponse  # noqa: E402
 from p5_02_loader import load_p5_00  # noqa: E402
 from test_handoff import fixture, decision  # noqa: E402
 
@@ -17,7 +17,7 @@ p5 = load_p5_00()
 
 def test_contract_fingerprint_mismatch_is_rejected():
     contract, submission, events = fixture()
-    other, _, _ = fixture()
+    other, _, _ = fixture(contract_id="different-contract")
     engine = VerificationHandoffEngine()
     try:
         engine.prepare(other, submission, lifecycle_events=events)
@@ -34,7 +34,7 @@ def test_decision_contract_fingerprint_mismatch_is_rejected():
     bad = decision(contract, submission)
     object.__setattr__(bad, "contract_fingerprint", "wrong-contract")
     try:
-        engine.bind_response(request, p5.VerificationResponse(bad, datetime.now(timezone.utc)))
+        engine.bind_response(request, VerificationResponse(bad, datetime.now(timezone.utc)))
     except HandoffError as exc:
         assert "contract fingerprint mismatch" in str(exc)
     else:
