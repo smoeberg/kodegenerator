@@ -20,8 +20,8 @@ class UnknownSandboxAdapter(SandboxError):
     """Raised when an execution adapter is not explicitly registered."""
 
 
-class InvalidExecutionSpec(SandboxError):
-    """Raised when an execution request violates the security contract."""
+class InvalidExecutionSpec(ValueError, SandboxError):
+    """Raised for invalid execution specs while preserving legacy ValueError compatibility."""
 
 
 class ExecutionOutcome(str, Enum):
@@ -124,7 +124,7 @@ class ExecutionSpec:
         if "*" in self.network_allowlist:
             raise ValueError("network_allowlist cannot use wildcard access")
         if set(self.writable_paths) & set(self.read_only_paths):
-            raise ValueError("a path cannot be both writable and read-only")
+            raise InvalidExecutionSpec("a path cannot be both writable and read-only")
 
 
 @dataclass(frozen=True)
@@ -191,9 +191,6 @@ class SandboxRegistry:
         try:
             result = adapter.execute(spec)
         except ValueError as exc:
-            # Adapter/policy validation is the dispatch boundary. Normalize
-            # policy violations here without changing ExecutionSpec's legacy
-            # construction-time ValueError contract.
             raise InvalidExecutionSpec(str(exc)) from exc
         if result.execution_id != spec.execution_id:
             raise InvalidExecutionSpec("adapter returned a different execution_id")
