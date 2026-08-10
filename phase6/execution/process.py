@@ -53,11 +53,12 @@ class BubblewrapProcessAdapter:
         bubblewrap_path: str | None = None,
         runner: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
     ) -> None:
-        self._bubblewrap = bubblewrap_path or shutil.which("bwrap")
-        if not self._bubblewrap:
+        candidate = bubblewrap_path or shutil.which("bwrap")
+        if not candidate or not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
             raise ProcessSandboxUnavailable("bubblewrap (bwrap) is required for process isolation")
         if not allowed_executables:
             raise ValueError("at least one executable must be allowlisted")
+        self._bubblewrap = str(Path(candidate).resolve())
         self._allowed = frozenset(str(Path(value).resolve()) for value in allowed_executables)
         self._runner = runner
 
@@ -67,7 +68,7 @@ class BubblewrapProcessAdapter:
         limits = _ProcessLimits(
             cpu_seconds=max(1, int(spec.limits.cpu_time_seconds)),
             memory_bytes=spec.limits.memory_bytes,
-            process_count=spec.limits.process_count,
+            process_count=max(2, spec.limits.process_count),
         )
 
         try:
