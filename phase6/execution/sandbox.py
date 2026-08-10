@@ -65,13 +65,7 @@ class ExecutionLimits:
 
 @dataclass(frozen=True)
 class ExecutionSecurityContext:
-    """Immutable authority context passed into an isolated executor.
-
-    Capabilities are already authorized by the upstream authority layer. This
-    object is descriptive: changing it inside an executor cannot grant new
-    authority because it is frozen and adapters are expected to treat it as
-    untrusted metadata rather than an authorization source.
-    """
+    """Immutable authority context passed into an isolated executor."""
 
     organization_id: str
     principal_id: str
@@ -129,8 +123,16 @@ class ExecutionSpec:
             raise ValueError("argv entries must be arguments, not environment assignments")
         if "*" in self.network_allowlist:
             raise ValueError("network_allowlist cannot use wildcard access")
-        if set(self.writable_paths) & set(self.read_only_paths):
-            raise ValueError("a path cannot be both writable and read-only")
+        try:
+            if set(self.writable_paths) & set(self.read_only_paths):
+                raise ValueError("a path cannot be both writable and read-only")
+        except ValueError as exc:
+            # The overlap check is a security-policy violation, not malformed
+            # caller data. Normalize the internal validation error to the
+            # formal sandbox contract so adapters can fail closed uniformly.
+            if str(exc) == "a path cannot be both writable and read-only":
+                raise InvalidExecutionSpec(str(exc)) from exc
+            raise
 
 
 @dataclass(frozen=True)
