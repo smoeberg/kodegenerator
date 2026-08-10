@@ -8,15 +8,15 @@ SLICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SLICE))
 
 from handoff import HandoffTransportError, VerificationHandoffEngine  # noqa: E402
-from models import HandoffError, HandoffState  # noqa: E402
+from models import HandoffError, HandoffState, VerificationResponse  # noqa: E402
 from p5_02_loader import load_p5_00  # noqa: E402
 
 p5 = load_p5_00()
 
 
-def fixture():
+def fixture(contract_id="p5-02-test"):
     contract = p5.AIWorkProductContract(
-        contract_id="p5-02-test",
+        contract_id=contract_id,
         contract_version="1",
         product_type="test",
         product_location="tests/output",
@@ -110,7 +110,7 @@ def test_wrong_verifier_is_rejected():
     bad = decision(contract, submission)
     object.__setattr__(bad, "verifier", "other-verifier")
     try:
-        engine.bind_response(request, p5.VerificationResponse(bad, datetime.now(timezone.utc)))
+        engine.bind_response(request, VerificationResponse(bad, datetime.now(timezone.utc)))
     except HandoffError as exc:
         assert "p3-20" in str(exc)
     else:
@@ -124,7 +124,7 @@ def test_mismatched_submission_is_rejected():
     bad = decision(contract, submission)
     object.__setattr__(bad, "submission_id", "different-submission")
     try:
-        engine.bind_response(request, p5.VerificationResponse(bad, datetime.now(timezone.utc)))
+        engine.bind_response(request, VerificationResponse(bad, datetime.now(timezone.utc)))
     except HandoffError as exc:
         assert "submission mismatch" in str(exc)
     else:
