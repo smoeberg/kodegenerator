@@ -5,10 +5,17 @@ from datetime import datetime, timezone
 from threading import RLock
 from typing import Dict, Tuple
 
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision, Decision
 
 from .adapters import ExecutionAdapter
-from .models import ExecutionRequest, ExecutionResult, ExecutionStatus, execution_id_for
+from .models import (
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStatus,
+    GovernedDispatch,
+    execution_id_for,
+)
 
 
 class ExecutionError(Exception):
@@ -20,10 +27,12 @@ class ExecutionRejected(ExecutionError):
 
 
 class ExecutionEngine:
-    """Execute only work covered by an explicit AI-3 ALLOW decision.
+    """Execute only work covered by a verified AI-3 authority grant.
 
-    AI-4 never evaluates policy and never turns a capability claim into
-    authority. Only an explicit AI-3 ALLOW can reach an adapter.
+    Compatibility is retained at the public input boundary: callers may provide
+    an AuthorityDecision, but only a decision carrying genuine AI-3 provenance
+    can be promoted into a VerifiedAuthorityGrant. Execution itself crosses the
+    adapter seam only through GovernedDispatch.
     """
 
     def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = ()) -> None:
@@ -48,26 +57,56 @@ class ExecutionEngine:
     def execute(
         self,
         request: ExecutionRequest,
-        authority_decision: AuthorityDecision | None,
+        authority: AuthorityDecision | VerifiedAuthorityGrant | None,
     ) -> ExecutionResult:
-        """Execute a request only when AI-3 has explicitly allowed that request."""
-        if authority_decision is None:
+        """Execute only work covered by a verified AI-3 grant."""
+        if authority is None:
             return self._rejected(request, "missing authority decision")
 
-        mismatch = self._binding_error(request, authority_decision)
-        if mismatch is not None:
-            return self._rejected(request, mismatch, decision=authority_decision)
+        if isinstance(authority, VerifiedAuthorityGrant):
+            grant = authority
+        elif isinstance(authority, AuthorityDecision):
+            try:
+                grant = VerifiedAuthorityGrant.from_decision(authority)
+            except ValueError:
+                return self._rejected(
+                    request,
+                    "authority decision provenance is invalid or untrusted",
+                    decision=authority,
+                )
+        else:
+            return self._rejected(request, "unsupported authority credential")
 
-        # DENY is checked before idempotency lookup: a later denial must never
-        # replay an earlier success for the same request.
-        if authority_decision.decision is not Decision.ALLOW:
+        if not grant.binds(request):
+            return self._rejected(
+                request,
+                "authority grant is not bound to the execution request",
+                decision=authority if isinstance(authority, AuthorityDecision) else None,
+            )
+
+        if grant.decision != Decision.ALLOW.value:
             return self._rejected(
                 request,
                 "authority decision is not ALLOW; execution denied",
-                decision=authority_decision,
+                decision=authority if isinstance(authority, AuthorityDecision) else None,
             )
 
-        execution_id = execution_id_for(request, authority_decision)
+        decision = authority if isinstance(authority, AuthorityDecision) else AuthorityDecision(
+            request_id=grant.request_id,
+            decision=Decision.ALLOW,
+            agent_identity=grant.agent_identity,
+            action=grant.action,
+            resource=grant.resource,
+            context_packet_id=grant.context_packet_id,
+            policy_id=grant.policy_id,
+            policy_version=grant.policy_version,
+            matched_rule_ids=grant.matched_rule_ids,
+            reason="verified AI-3 authority grant",
+            evaluated_at="verified-grant",
+        )
+        dispatch = GovernedDispatch.issue(request, grant)
+        execution_id = execution_id_for(request, decision)
+
         with self._lock:
             previous = self._results.get(execution_id)
             if previous is not None:
@@ -94,16 +133,22 @@ class ExecutionEngine:
                 return self._rejected(
                     request,
                     f"no execution adapter registered for action {request.action!r}",
-                    decision=authority_decision,
+                    decision=decision,
                 )
 
             try:
-                adapter_result = adapter.execute(request)
+                adapter_result = adapter.execute(request, dispatch=dispatch)
+                if adapter_result is None:
+                    return self._rejected(
+                        request,
+                        "adapter rejected execution without a verified governed dispatch",
+                        decision=decision,
+                    )
                 result = ExecutionResult(
                     execution_id=execution_id,
                     request_id=request.request_id,
-                    authority_policy_id=authority_decision.policy_id,
-                    authority_policy_version=authority_decision.policy_version,
+                    authority_policy_id=decision.policy_id,
+                    authority_policy_version=decision.policy_version,
                     agent_identity=request.agent_identity,
                     action=request.action,
                     resource=request.resource,
@@ -118,8 +163,8 @@ class ExecutionEngine:
                 result = ExecutionResult(
                     execution_id=execution_id,
                     request_id=request.request_id,
-                    authority_policy_id=authority_decision.policy_id,
-                    authority_policy_version=authority_decision.policy_version,
+                    authority_policy_id=decision.policy_id,
+                    authority_policy_version=decision.policy_version,
                     agent_identity=request.agent_identity,
                     action=request.action,
                     resource=request.resource,
@@ -172,19 +217,3 @@ class ExecutionEngine:
         with self._lock:
             self._audit.append(result)
         return result
-
-    @staticmethod
-    def _binding_error(
-        request: ExecutionRequest, decision: AuthorityDecision
-    ) -> str | None:
-        if decision.request_id != request.request_id:
-            return "request ID does not match the authority decision"
-        if decision.agent_identity != request.agent_identity:
-            return "agent identity does not match the authority decision"
-        if decision.action != request.action:
-            return "action does not match the authority decision"
-        if decision.resource != request.resource:
-            return "resource does not match the authority decision"
-        if decision.context_packet_id != request.context_packet_id:
-            return "context packet does not match the authority decision"
-        return None
