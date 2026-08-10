@@ -7,7 +7,7 @@ from threading import RLock
 from typing import Protocol
 
 from phase4.execution.adapters import AdapterResult
-from phase4.execution.models import ExecutionRequest
+from phase4.execution.models import ExecutionRequest, GovernedDispatch
 
 from .models import (
     IMPLEMENTATION_ACTION,
@@ -47,10 +47,11 @@ class ImplementationProvider(Protocol):
 
 
 class ImplementationExecutionAdapter:
-    """Trusted AI-4 adapter that produces, validates, and stores proposals.
+    """Trusted AI-4 adapter gated exclusively by GovernedDispatch.
 
     Registration is application-owned. An agent cannot add or widen a request
-    through the execution payload.
+    through the execution payload, and direct calls with a raw ExecutionRequest
+    cannot reach the provider.
     """
 
     def __init__(
@@ -96,9 +97,20 @@ class ImplementationExecutionAdapter:
                 raise DuplicateImplementationRequestError(fingerprint)
             self._requests[fingerprint] = request
 
-    def execute(self, request: ExecutionRequest) -> AdapterResult:
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        dispatch: GovernedDispatch | None = None,
+    ) -> AdapterResult | None:
+        """Execute only when the exact request carries a verified dispatch."""
+        if dispatch is None or not dispatch.is_verified:
+            return None
+        if dispatch.request is not request:
+            return None
         if not isinstance(request, ExecutionRequest):
             raise TypeError("request must be an ExecutionRequest")
+
         parameters = dict(request.parameters)
         fingerprint = parameters.get("implementation_request_fingerprint")
         if fingerprint is None:
