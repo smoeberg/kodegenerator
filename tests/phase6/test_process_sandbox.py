@@ -7,14 +7,17 @@ import pytest
 from phase6.execution.process import BubblewrapProcessAdapter, ProcessSandboxUnavailable
 from phase6.execution.sandbox import (
     ExecutionLimits,
-    ExecutionOutcome,
     ExecutionSecurityContext,
     ExecutionSpec,
     InvalidExecutionSpec,
 )
 
 
-def _spec(*, executable: str = "/usr/bin/python3", network: tuple[str, ...] = ()) -> ExecutionSpec:
+BWRAP = "/usr/bin/bwrap"
+PYTHON = "/usr/bin/python3"
+
+
+def _spec(*, executable: str = PYTHON, network: tuple[str, ...] = ()) -> ExecutionSpec:
     return ExecutionSpec(
         execution_id="exec-1",
         adapter_id="bubblewrap-process",
@@ -29,15 +32,18 @@ def _spec(*, executable: str = "/usr/bin/python3", network: tuple[str, ...] = ()
     )
 
 
-def test_adapter_fails_closed_without_bubblewrap() -> None:
+def test_adapter_fails_closed_for_missing_bubblewrap() -> None:
     with pytest.raises(ProcessSandboxUnavailable):
-        BubblewrapProcessAdapter(allowed_executables=("/usr/bin/python3",), bubblewrap_path=None)
+        BubblewrapProcessAdapter(
+            allowed_executables=(PYTHON,),
+            bubblewrap_path="/definitely/missing/bwrap",
+        )
 
 
 def test_adapter_rejects_non_allowlisted_executable() -> None:
     adapter = BubblewrapProcessAdapter(
-        allowed_executables=("/usr/bin/python3",),
-        bubblewrap_path="/usr/bin/bwrap",
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
     )
 
     with pytest.raises(InvalidExecutionSpec, match="not allowlisted"):
@@ -46,8 +52,8 @@ def test_adapter_rejects_non_allowlisted_executable() -> None:
 
 def test_adapter_rejects_network_allowlist_until_backend_supports_it() -> None:
     adapter = BubblewrapProcessAdapter(
-        allowed_executables=("/usr/bin/python3",),
-        bubblewrap_path="/usr/bin/bwrap",
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
     )
 
     with pytest.raises(InvalidExecutionSpec, match="network allowlists"):
@@ -56,8 +62,8 @@ def test_adapter_rejects_network_allowlist_until_backend_supports_it() -> None:
 
 def test_bubblewrap_command_unshares_network_and_pid() -> None:
     adapter = BubblewrapProcessAdapter(
-        allowed_executables=("/usr/bin/python3",),
-        bubblewrap_path="/usr/bin/bwrap",
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
     )
 
     command = adapter._build_command(_spec())
@@ -65,19 +71,19 @@ def test_bubblewrap_command_unshares_network_and_pid() -> None:
     assert "--unshare-net" in command
     assert "--unshare-pid" in command
     assert "--ro-bind" in command
-    assert command[-3:] == ["/", "--", "/usr/bin/python3"] or command[-2:] != ["--", "/bin/sh"]
+    assert command[command.index("--") + 1] == PYTHON
 
 
 def test_writable_path_must_exist(tmp_path) -> None:
     adapter = BubblewrapProcessAdapter(
-        allowed_executables=("/usr/bin/python3",),
-        bubblewrap_path="/usr/bin/bwrap",
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
     )
     missing = os.path.join(str(tmp_path), "missing")
     spec = ExecutionSpec(
         execution_id="exec-1",
         adapter_id="bubblewrap-process",
-        argv=("/usr/bin/python3", "-c", "print('ok')"),
+        argv=(PYTHON, "-c", "print('ok')"),
         security=ExecutionSecurityContext("org-1", "principal-1", "actor-1"),
         writable_paths=(missing,),
     )
