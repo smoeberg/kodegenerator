@@ -8,7 +8,7 @@ from typing import Callable, Dict, Tuple
 from uuid import uuid4
 
 from models import HandoffError, HandoffState, VerificationHandoff, VerificationRequest, VerificationResponse
-from p5_00_loader import load_p5_00
+from p5_02_loader import load_p5_00
 
 p5 = load_p5_00()
 
