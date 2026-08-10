@@ -18,6 +18,7 @@ from phase4.authority import (
     AuthorityRule,
     Decision,
 )
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import (
     ContextItem,
     ContextPacketEngine,
@@ -202,6 +203,10 @@ class ProjectAuditRuntime:
                 "AI-3 denied the exact project-audit request"
             )
 
+        # AI-3's decision becomes an execution capability only through the
+        # verified grant; raw decisions never cross into AI-4.
+        grant = VerifiedAuthorityGrant.from_decision(authority)
+
         adapter = ProjectAuditExecutionAdapter(
             adapter_id=f"adapter.project-audit.runtime:{provider_id}",
             provider=provider,
@@ -211,7 +216,7 @@ class ProjectAuditRuntime:
             request.execution_request(
                 idempotency_key=f"project-audit:{request.request_fingerprint}"
             ),
-            authority,
+            grant,
         )
         outcome = OutcomeEngine().process(execution)
         if execution.status is not ExecutionStatus.SUCCEEDED:
