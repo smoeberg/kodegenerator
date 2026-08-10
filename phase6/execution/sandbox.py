@@ -123,16 +123,8 @@ class ExecutionSpec:
             raise ValueError("argv entries must be arguments, not environment assignments")
         if "*" in self.network_allowlist:
             raise ValueError("network_allowlist cannot use wildcard access")
-        try:
-            if set(self.writable_paths) & set(self.read_only_paths):
-                raise ValueError("a path cannot be both writable and read-only")
-        except ValueError as exc:
-            # The overlap check is a security-policy violation, not malformed
-            # caller data. Normalize the internal validation error to the
-            # formal sandbox contract so adapters can fail closed uniformly.
-            if str(exc) == "a path cannot be both writable and read-only":
-                raise InvalidExecutionSpec(str(exc)) from exc
-            raise
+        if set(self.writable_paths) & set(self.read_only_paths):
+            raise ValueError("a path cannot be both writable and read-only")
 
 
 @dataclass(frozen=True)
@@ -196,7 +188,13 @@ class SandboxRegistry:
 
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         adapter = self.resolve(spec.adapter_id)
-        result = adapter.execute(spec)
+        try:
+            result = adapter.execute(spec)
+        except ValueError as exc:
+            # Adapter/policy validation is the dispatch boundary. Normalize
+            # policy violations here without changing ExecutionSpec's legacy
+            # construction-time ValueError contract.
+            raise InvalidExecutionSpec(str(exc)) from exc
         if result.execution_id != spec.execution_id:
             raise InvalidExecutionSpec("adapter returned a different execution_id")
         if result.adapter_id != spec.adapter_id:
