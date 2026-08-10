@@ -6,6 +6,7 @@ from phase6.execution.sandbox import (
     ExecutionResult,
     ExecutionSecurityContext,
     ExecutionSpec,
+    InvalidExecutionSpec,
     SandboxRegistry,
     UnknownSandboxAdapter,
 )
@@ -114,5 +115,5 @@ def test_registry_rejects_oversized_adapter_output():
 
     registry = SandboxRegistry({"oversized": OversizedAdapter()})
     spec = make_spec(adapter_id="oversized", limits=ExecutionLimits(output_bytes=5))
-    with pytest.raises(ValueError, match="output above configured limit"):
+    with pytest.raises(InvalidExecutionSpec, match="output above configured limit"):
         registry.execute(spec)
