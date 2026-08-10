@@ -27,13 +27,7 @@ class ExecutionRejected(ExecutionError):
 
 
 class ExecutionEngine:
-    """Execute only work covered by a verified AI-3 authority grant.
-
-    Compatibility is retained at the public input boundary: callers may provide
-    an AuthorityDecision, but only a decision carrying genuine AI-3 provenance
-    can be promoted into a VerifiedAuthorityGrant. Execution itself crosses the
-    adapter seam only through GovernedDispatch.
-    """
+    """Execute only work covered by a verified AI-3 authority grant."""
 
     def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = ()) -> None:
         self._adapters: Dict[str, ExecutionAdapter] = {}
@@ -65,14 +59,31 @@ class ExecutionEngine:
 
         if isinstance(authority, VerifiedAuthorityGrant):
             grant = authority
+            decision = None
         elif isinstance(authority, AuthorityDecision):
-            try:
-                grant = VerifiedAuthorityGrant.from_decision(authority)
-            except ValueError:
+            # Provenance is checked independently of ALLOW/DENY. A genuine AI-3
+            # DENY must reach the normal authorization branch so callers receive
+            # the semantic "not ALLOW" rejection rather than a provenance error.
+            if getattr(authority, "_provenance_token", None) is None:
                 return self._rejected(
                     request,
                     "authority decision provenance is invalid or untrusted",
                     decision=authority,
+                )
+            decision = authority
+            if decision.decision is not Decision.ALLOW:
+                return self._rejected(
+                    request,
+                    "authority decision is not ALLOW; execution denied",
+                    decision=decision,
+                )
+            try:
+                grant = VerifiedAuthorityGrant.from_decision(decision)
+            except ValueError:
+                return self._rejected(
+                    request,
+                    "authority decision provenance is invalid or untrusted",
+                    decision=decision,
                 )
         else:
             return self._rejected(request, "unsupported authority credential")
@@ -81,29 +92,30 @@ class ExecutionEngine:
             return self._rejected(
                 request,
                 "authority grant is not bound to the execution request",
-                decision=authority if isinstance(authority, AuthorityDecision) else None,
+                decision=decision,
             )
 
         if grant.decision != Decision.ALLOW.value:
             return self._rejected(
                 request,
                 "authority decision is not ALLOW; execution denied",
-                decision=authority if isinstance(authority, AuthorityDecision) else None,
+                decision=decision,
             )
 
-        decision = authority if isinstance(authority, AuthorityDecision) else AuthorityDecision(
-            request_id=grant.request_id,
-            decision=Decision.ALLOW,
-            agent_identity=grant.agent_identity,
-            action=grant.action,
-            resource=grant.resource,
-            context_packet_id=grant.context_packet_id,
-            policy_id=grant.policy_id,
-            policy_version=grant.policy_version,
-            matched_rule_ids=grant.matched_rule_ids,
-            reason="verified AI-3 authority grant",
-            evaluated_at="verified-grant",
-        )
+        if decision is None:
+            decision = AuthorityDecision(
+                request_id=grant.request_id,
+                decision=Decision.ALLOW,
+                agent_identity=grant.agent_identity,
+                action=grant.action,
+                resource=grant.resource,
+                context_packet_id=grant.context_packet_id,
+                policy_id=grant.policy_id,
+                policy_version=grant.policy_version,
+                matched_rule_ids=grant.matched_rule_ids,
+                reason="verified AI-3 authority grant",
+                evaluated_at="verified-grant",
+            )
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
 
