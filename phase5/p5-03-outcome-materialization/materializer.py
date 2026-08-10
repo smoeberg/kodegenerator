@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict
 from uuid import uuid4
 
-from models import OutcomeError, OutcomeRecord, OutcomeValue
+from outcome_models import OutcomeError, OutcomeRecord, OutcomeValue
 
 
 class OutcomeMaterializer:
