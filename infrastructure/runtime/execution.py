@@ -1,11 +1,10 @@
-"""Durable execution dispatcher and worker primitives for Phase 7."""
+"""Phase 7 durable execution dispatch over the database queue."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
-from infrastructure.runtime.queue import DurableQueue, QueueMessage
+from infrastructure.runtime.queue import DatabaseQueue, QueueMessage
 
 
 class ExecutionHandler(Protocol):
@@ -21,32 +20,29 @@ class ExecutionResult:
 
 
 class ExecutionDispatcher:
-    """Enqueue executions without executing work in the API process."""
+    """Enqueue executions; never execute application work in the API process."""
 
-    def __init__(self, queue: DurableQueue):
+    def __init__(self, queue: DatabaseQueue):
         self.queue = queue
 
     def dispatch(self, execution_id: str, payload: dict[str, Any]) -> QueueMessage:
-        return self.queue.enqueue(
-            kind="execution",
+        message_id = self.queue.publish(
+            topic="execution",
             payload={"execution_id": execution_id, "payload": payload},
-            dedupe_key=f"execution:{execution_id}",
+            message_id=f"execution:{execution_id}",
         )
+        return QueueMessage(message_id, "execution", {"execution_id": execution_id, "payload": payload}, 0)
 
 
 class ExecutionWorker:
-    """Claim and execute one durable execution at a time.
+    """Claim durable executions and delegate them to the governed handler."""
 
-    The handler must be idempotent. Queue acknowledgement happens only after
-    the handler returns successfully, so a crash before ack causes redelivery.
-    """
-
-    def __init__(self, queue: DurableQueue, handler: ExecutionHandler):
+    def __init__(self, queue: DatabaseQueue, handler: ExecutionHandler):
         self.queue = queue
         self.handler = handler
 
-    def run_once(self, worker_id: str, lease_seconds: int = 60) -> ExecutionResult | None:
-        message = self.queue.claim(worker_id=worker_id, lease_seconds=lease_seconds)
+    def run_once(self, worker_id: str) -> ExecutionResult | None:
+        message = self.queue.claim(topic="execution", worker_id=worker_id)
         if message is None:
             return None
 
@@ -54,7 +50,7 @@ class ExecutionWorker:
         try:
             result = self.handler(dict(message.payload["payload"]))
             self.queue.ack(message.id, worker_id)
-            return ExecutionResult(execution_id=execution_id, status="succeeded", result=result)
-        except Exception as exc:  # noqa: BLE001 - failure becomes durable retry
+            return ExecutionResult(execution_id, "succeeded", result=result)
+        except Exception as exc:  # noqa: BLE001 - durable retry is intentional
             self.queue.fail(message.id, worker_id, str(exc))
-            return ExecutionResult(execution_id=execution_id, status="failed", error=str(exc))
+            return ExecutionResult(execution_id, "failed", error=str(exc))
