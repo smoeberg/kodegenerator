@@ -4,9 +4,10 @@ The adapter uses bubblewrap (``bwrap``) to create Linux namespaces and a
 read-only host filesystem view. It fails closed when the isolation primitive
 is unavailable instead of silently falling back to an ordinary subprocess.
 
-Resource limits are applied to the sandbox launcher and inherited by the
-sandboxed process. Network access is denied by the isolated network namespace;
-this backend intentionally does not support network allowlists yet.
+P6-04 makes resource limits hard limits: CPU, address space, process count,
+file size, open descriptors, core dumps, wall-clock time, and captured output
+are bounded. Output is captured to a file descriptor instead of an unbounded
+PIPE buffer in the trusted parent process.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import os
 import resource
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -35,14 +37,12 @@ class _ProcessLimits:
     cpu_seconds: int
     memory_bytes: int
     process_count: int
+    file_size_bytes: int
+    open_file_count: int
 
 
 class BubblewrapProcessAdapter:
-    """Run an allowlisted executable inside a bubblewrap process sandbox.
-
-    The adapter is deliberately narrow: network access is always disabled and
-    the executable must be explicitly allowlisted when the adapter is created.
-    """
+    """Run an allowlisted executable inside a bubblewrap process sandbox."""
 
     adapter_id = "bubblewrap-process"
 
@@ -68,65 +68,70 @@ class BubblewrapProcessAdapter:
         limits = _ProcessLimits(
             cpu_seconds=max(1, int(spec.limits.cpu_time_seconds)),
             memory_bytes=spec.limits.memory_bytes,
-            process_count=max(2, spec.limits.process_count),
+            process_count=spec.limits.process_count,
+            file_size_bytes=spec.limits.file_size_bytes,
+            open_file_count=spec.limits.open_file_count,
         )
 
-        try:
-            process = self._runner(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=self._safe_environment(spec),
-                start_new_session=True,
-                preexec_fn=lambda: _apply_limits(limits),
-            )
+        with tempfile.TemporaryFile(mode="w+b") as output_file:
             try:
-                output, _ = process.communicate(timeout=spec.limits.wall_time_seconds)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                output, _ = process.communicate()
+                process = self._runner(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output_file,
+                    stderr=subprocess.STDOUT,
+                    text=False,
+                    env=self._safe_environment(spec),
+                    start_new_session=True,
+                    preexec_fn=lambda: _apply_limits(limits),
+                )
+                try:
+                    process.communicate(timeout=spec.limits.wall_time_seconds)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                    return ExecutionResult(
+                        execution_id=spec.execution_id,
+                        adapter_id=self.adapter_id,
+                        outcome=ExecutionOutcome.TIMED_OUT,
+                        output=_read_bounded_output(output_file, spec.limits.output_bytes),
+                        error="execution exceeded wall-time limit",
+                        exit_code=process.returncode,
+                    )
+            except OSError as exc:
                 return ExecutionResult(
                     execution_id=spec.execution_id,
                     adapter_id=self.adapter_id,
-                    outcome=ExecutionOutcome.TIMED_OUT,
-                    output=_bound_output(output, spec.limits.output_bytes),
-                    error="execution exceeded wall-time limit",
+                    outcome=ExecutionOutcome.FAILED,
+                    error=f"sandbox launch failed: {exc}",
+                )
+
+            output = _read_bounded_output(output_file, spec.limits.output_bytes)
+            output_file.seek(0, os.SEEK_END)
+            output_size = output_file.tell()
+            if output_size > spec.limits.output_bytes:
+                return ExecutionResult(
+                    execution_id=spec.execution_id,
+                    adapter_id=self.adapter_id,
+                    outcome=ExecutionOutcome.FAILED,
+                    output=output,
+                    error="execution output exceeded configured limit",
                     exit_code=process.returncode,
                 )
-        except OSError as exc:
-            return ExecutionResult(
-                execution_id=spec.execution_id,
-                adapter_id=self.adapter_id,
-                outcome=ExecutionOutcome.FAILED,
-                error=f"sandbox launch failed: {exc}",
-            )
-
-        bounded = _bound_output(output, spec.limits.output_bytes)
-        if len(output.encode("utf-8")) > spec.limits.output_bytes:
-            return ExecutionResult(
-                execution_id=spec.execution_id,
-                adapter_id=self.adapter_id,
-                outcome=ExecutionOutcome.FAILED,
-                output=bounded,
-                error="execution output exceeded configured limit",
-                exit_code=process.returncode,
-            )
 
         if process.returncode == 0:
             return ExecutionResult(
                 execution_id=spec.execution_id,
                 adapter_id=self.adapter_id,
                 outcome=ExecutionOutcome.SUCCEEDED,
-                output=bounded,
+                output=output,
                 exit_code=0,
             )
         return ExecutionResult(
             execution_id=spec.execution_id,
             adapter_id=self.adapter_id,
             outcome=ExecutionOutcome.FAILED,
-            output=bounded,
+            output=output,
             error=f"sandbox exited with code {process.returncode}",
             exit_code=process.returncode,
         )
@@ -185,10 +190,12 @@ def _apply_limits(limits: _ProcessLimits) -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
     resource.setrlimit(resource.RLIMIT_NPROC, (limits.process_count, limits.process_count))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_size_bytes, limits.file_size_bytes))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_file_count, limits.open_file_count))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
-def _bound_output(output: str, limit: int) -> str:
-    encoded = output.encode("utf-8")
-    if len(encoded) <= limit:
-        return output
-    return encoded[:limit].decode("utf-8", errors="ignore")
+def _read_bounded_output(output_file, limit: int) -> str:
+    output_file.seek(0)
+    data = output_file.read(limit + 1)
+    return data[:limit].decode("utf-8", errors="replace")
