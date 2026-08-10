@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dor}
+      POSTGRES_USER: ${POSTGRES_USER:-dor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dor} -d ${POSTGRES_DB:-dor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    volumes:
+      - object-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dor-api:
+    build: .
+    environment:
+      DOR_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dor}
+      ARTIFACT_STORE_URL: http://minio:9000
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
+      DOR_QUEUE_BACKEND: database
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  dor-worker:
+    build: .
+    command: ["python", "-m", "workers.runtime_worker"]
+    environment:
+      DOR_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dor}
+      ARTIFACT_STORE_URL: http://minio:9000
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
+      DOR_QUEUE_BACKEND: database
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./monitoring/otel-collector-config.yml:/etc/otel-collector-config.yml
+
+volumes:
+  postgres-data:
+  object-data:
