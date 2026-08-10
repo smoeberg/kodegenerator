@@ -2,11 +2,8 @@
 
 This module defines the trusted boundary between the DOR runtime and an
 isolated executor. It intentionally contains no host-process/container
-implementation yet. P6-03 will provide the first concrete isolation backend.
-
-The important rule is that an executor receives an immutable security context
-and a bounded execution specification. It cannot request broader authority,
-limits, filesystem access, or network access from inside the sandbox.
+implementation details. Concrete isolation backends consume this bounded
+contract.
 """
 from __future__ import annotations
 
@@ -36,24 +33,34 @@ class ExecutionOutcome(str, Enum):
 
 @dataclass(frozen=True)
 class ExecutionLimits:
-    """Hard limits supplied by the trusted runtime."""
+    """Hard resource limits supplied by trusted runtime code."""
 
     wall_time_seconds: float = 30.0
     cpu_time_seconds: float = 10.0
     memory_bytes: int = 256 * 1024 * 1024
     process_count: int = 1
     output_bytes: int = 1024 * 1024
+    file_size_bytes: int = 16 * 1024 * 1024
+    open_file_count: int = 64
 
     def __post_init__(self) -> None:
         if self.wall_time_seconds <= 0:
             raise ValueError("wall_time_seconds must be positive")
         if self.cpu_time_seconds <= 0:
             raise ValueError("cpu_time_seconds must be positive")
-        for name in ("memory_bytes", "process_count", "output_bytes"):
+        for name in (
+            "memory_bytes",
+            "process_count",
+            "output_bytes",
+            "file_size_bytes",
+            "open_file_count",
+        ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.cpu_time_seconds > self.wall_time_seconds:
             raise ValueError("cpu_time_seconds cannot exceed wall_time_seconds")
+        if self.output_bytes > self.file_size_bytes:
+            raise ValueError("output_bytes cannot exceed file_size_bytes")
 
 
 @dataclass(frozen=True)
@@ -163,12 +170,7 @@ class Sandbox(Protocol):
 
 
 class SandboxRegistry:
-    """Allowlist of concrete sandbox adapters.
-
-    Registration is explicit and duplicate adapter IDs are rejected. The
-    registry never accepts an adapter selected by the untrusted execution
-    payload unless it was previously registered by trusted runtime code.
-    """
+    """Allowlist of concrete sandbox adapters."""
 
     def __init__(self, adapters: Mapping[str, SandboxAdapter] | None = None) -> None:
         self._adapters: dict[str, SandboxAdapter] = {}
