@@ -2,7 +2,13 @@
 
 from .adapters import AdapterResult, ExecutionAdapter, StaticExecutionAdapter
 from .engine import ExecutionEngine, ExecutionError, ExecutionRejected
-from .models import ExecutionRequest, ExecutionResult, ExecutionStatus, execution_id_for
+from .models import (
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStatus,
+    GovernedDispatch,
+    execution_id_for,
+)
 
 __all__ = [
     "AdapterResult",
@@ -14,6 +20,7 @@ __all__ = [
     "ExecutionRequest",
     "ExecutionResult",
     "ExecutionStatus",
+    "GovernedDispatch",
     "execution_id_for",
 ]
 

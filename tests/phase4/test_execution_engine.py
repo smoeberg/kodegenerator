@@ -3,7 +3,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from phase4.authority.models import AuthorityDecision, Decision
+from phase4.authority.engine import AuthorityEngine
+from phase4.authority.models import (
+    AuthorityPolicy,
+    AuthorityRequest,
+    AuthorityRule,
+    Decision,
+)
 from phase4.execution import (
     AdapterResult,
     ExecutionEngine,
@@ -14,20 +20,33 @@ from phase4.execution import (
 )
 
 
-def decision_for(request: ExecutionRequest, decision: Decision = Decision.ALLOW) -> AuthorityDecision:
-    return AuthorityDecision(
+def decision_for(
+    request: ExecutionRequest,
+    decision: Decision = Decision.ALLOW,
+    *,
+    policy_version: str = "1",
+):
+    authority_request = AuthorityRequest(
         request_id=request.request_id,
-        decision=decision,
         agent_identity=request.agent_identity,
         action=request.action,
         resource=request.resource,
         context_packet_id=request.context_packet_id,
-        policy_id="policy.demo",
-        policy_version="1",
-        matched_rule_ids=("rule.allow",),
-        reason="explicit test decision",
-        evaluated_at="2026-08-08T12:00:00+00:00",
+        requested_at="2026-08-08T12:00:00+00:00",
     )
+    policy = AuthorityPolicy(
+        policy_id="policy.demo",
+        version=policy_version,
+        rules=(
+            AuthorityRule(
+                rule_id="rule.allow",
+                action=request.action,
+                resource_pattern=request.resource,
+                effect=decision,
+            ),
+        ),
+    )
+    return AuthorityEngine(policy).evaluate(authority_request)
 
 
 def request(**overrides) -> ExecutionRequest:
@@ -187,20 +206,8 @@ def test_parameter_order_does_not_change_execution_identity():
 
 def test_policy_version_is_bound_into_execution_identity():
     req = request()
-    decision1 = decision_for(req)
-    decision2 = AuthorityDecision(
-        request_id=req.request_id,
-        decision=Decision.ALLOW,
-        agent_identity=req.agent_identity,
-        action=req.action,
-        resource=req.resource,
-        context_packet_id=req.context_packet_id,
-        policy_id="policy.demo",
-        policy_version="2",
-        matched_rule_ids=("rule.allow",),
-        reason="explicit test decision",
-        evaluated_at="2026-08-08T12:00:00+00:00",
-    )
+    decision1 = decision_for(req, policy_version="1")
+    decision2 = decision_for(req, policy_version="2")
     assert execution_id_for(req, decision1) != execution_id_for(req, decision2)
 
 

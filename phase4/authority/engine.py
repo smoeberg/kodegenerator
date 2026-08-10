@@ -6,6 +6,7 @@ from fnmatch import fnmatchcase
 from typing import Dict, List, Mapping, Tuple
 
 from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
+from .grants import VerifiedAuthorityGrant
 
 
 class AuthorityError(Exception):
@@ -24,7 +25,8 @@ class AuthorityEngine:
     - no matching rule means DENY;
     - any matching DENY wins over ALLOW;
     - the engine never executes commands or mutates agent identity/context;
-    - every evaluation produces an immutable decision suitable for audit.
+    - every evaluation produces an immutable decision suitable for audit;
+    - only decisions issued here carry provenance that can become an execution grant.
     """
 
     def __init__(self, policy: AuthorityPolicy) -> None:
@@ -70,8 +72,19 @@ class AuthorityEngine:
             reason=reason,
             evaluated_at=evaluated_at,
         )
+        # The token is an object-identity capability owned by this authority
+        # engine. It is intentionally not representable in AuthorityDecision's
+        # public constructor and cannot be recreated from copied fields.
+        object.__setattr__(result, "_provenance_token", object())
         self._audit.append(result)
         return result
+
+    def issue_grant(self, request: AuthorityRequest) -> VerifiedAuthorityGrant:
+        """Evaluate and issue a verified execution grant for an ALLOW decision."""
+        decision = self.evaluate(request)
+        if decision.decision is not Decision.ALLOW:
+            raise AuthorityError("cannot issue execution grant for denied authority")
+        return VerifiedAuthorityGrant.from_decision(decision)
 
     def audit_trail(self) -> Tuple[AuthorityDecision, ...]:
         """Return an immutable snapshot of all authority decisions."""
