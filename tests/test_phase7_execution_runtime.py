@@ -7,12 +7,11 @@ class FakeQueue:
         self.acked = []
         self.failed = []
 
-    def enqueue(self, kind, payload, dedupe_key=None):
-        item = type("Message", (), {"id": "m1", "kind": kind, "payload": payload})()
-        self.items.append(item)
-        return item
+    def publish(self, topic, payload, message_id=None):
+        self.items.append(type("Message", (), {"id": message_id, "topic": topic, "payload": payload})())
+        return message_id
 
-    def claim(self, worker_id, lease_seconds):
+    def claim(self, topic, worker_id):
         return self.items.pop(0) if self.items else None
 
     def ack(self, message_id, worker_id):
@@ -24,15 +23,13 @@ class FakeQueue:
 
 def test_dispatch_and_successful_worker_ack():
     queue = FakeQueue()
-    dispatcher = ExecutionDispatcher(queue)
-    dispatcher.dispatch("exec-1", {"task": "compile"})
+    ExecutionDispatcher(queue).dispatch("exec-1", {"task": "compile"})
 
-    worker = ExecutionWorker(queue, lambda payload: {"ok": payload["task"]})
-    result = worker.run_once("worker-1")
+    result = ExecutionWorker(queue, lambda payload: {"ok": payload["task"]}).run_once("worker-1")
 
     assert result.status == "succeeded"
     assert result.result == {"ok": "compile"}
-    assert queue.acked == [("m1", "worker-1")]
+    assert queue.acked == [("execution:exec-1", "worker-1")]
 
 
 def test_worker_failure_is_not_acknowledged():
