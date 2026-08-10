@@ -161,7 +161,9 @@ class BubblewrapProcessAdapter:
             "/dev",
             "--proc",
             "/proc",
-            "--tmpfs",
+            # Intentional private tmpfs: /tmp is the sandbox's ephemeral filesystem,
+            # not a host temp directory. The suppression is scoped to this primitive.
+            "--tmpfs",  # nosec B108 - bubblewrap creates an isolated in-sandbox tmpfs
             "/tmp",
         ]
         for path in spec.writable_paths:
