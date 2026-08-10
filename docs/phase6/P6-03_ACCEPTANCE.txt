@@ -1,0 +1,1 @@
+P6-03 acceptance requires CI to pass. The backend must fail closed without bwrap, reject non-allowlisted executables, deny network by namespace, validate writable paths, and generate the expected isolation command.
