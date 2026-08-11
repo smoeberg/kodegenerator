@@ -5,31 +5,47 @@ implementation exists.
 """
 
 from dataclasses import FrozenInstanceError
-from types import MappingProxyType
+from datetime import datetime, timezone
+from pathlib import Path
+import importlib.util
 
 import pytest
 
 
-# Expected public API; imports are intentionally RED until implementation lands.
+# P5 phase directories use hyphens and therefore are not valid Python package
+# names. Load the already-merged P5-08 module by file path for the RED stage.
+ROOT = Path(__file__).resolve().parents[2]
+P508_PATH = ROOT / "p5-08-release-resolution" / "resolution_models.py"
+spec = importlib.util.spec_from_file_location("p508_resolution_models", P508_PATH)
+p508 = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(p508)
+
+ReleaseDisposition = p508.ResolutionDisposition
+ReleaseResolutionRecord = p508.ReleaseResolutionRecord
+
+
+# Expected public P5-09 API; intentionally RED until implementation lands.
 from phase5.p5_09_execution_boundary.execution_boundary import (  # noqa: E402
     ExecutionBoundary,
     ExecutionPolicy,
     ExecutionRequest,
-)
-from phase5.p5_09_release_resolution.resolution_models import (  # noqa: E402
-    ReleaseDisposition,
-    ReleaseResolutionRecord,
 )
 
 
 def resolution(disposition: ReleaseDisposition) -> ReleaseResolutionRecord:
     return ReleaseResolutionRecord(
         resolution_id="res-001",
+        reconciliation_id="recon-001",
+        reconciliation_fingerprint="recon-fp-001",
+        dispatch_id="dispatch-001",
+        outcome_id="outcome-001",
+        finalization_fingerprint="final-001",
+        verifier_id="verify-001",
+        release_id="release-001",
         disposition=disposition,
-        resolution_fingerprint="rfp-001",
-        reconciliation_fingerprint="recon-001",
-        identity_chain=("org-001", "exec-001", "verify-001"),
-        provenance=("p5-07-001", "p5-08-001"),
+        policy_fingerprint="policy-001",
+        resolved_at=datetime(2026, 8, 11, tzinfo=timezone.utc),
     )
 
 
@@ -54,7 +70,9 @@ def test_retry_produces_request_only_when_authorized():
     )
     assert isinstance(result, ExecutionRequest)
     assert result.disposition is ReleaseDisposition.RETRY_REQUESTED
-    assert result.resolution_fingerprint == "rfp-001"
+    assert result.resolution_fingerprint == resolution(
+        ReleaseDisposition.RETRY_REQUESTED
+    ).fingerprint
 
 
 def test_escalation_requires_explicit_authorized_adapter():
@@ -73,17 +91,38 @@ def test_blocked_cannot_become_release_execution():
 
 
 def test_missing_provenance_fails_closed():
+    bad = resolution(ReleaseDisposition.RETRY_REQUESTED)
     bad = ReleaseResolutionRecord(
-        resolution_id="res-001",
-        disposition=ReleaseDisposition.RETRY_REQUESTED,
-        resolution_fingerprint="rfp-001",
-        reconciliation_fingerprint="recon-001",
-        identity_chain=(),
-        provenance=(),
-    )
+        resolution_id=bad.resolution_id,
+        reconciliation_id=bad.reconciliation_id,
+        reconciliation_fingerprint=bad.reconciliation_fingerprint,
+        dispatch_id="",
+        outcome_id=bad.outcome_id,
+        finalization_fingerprint=bad.finalization_fingerprint,
+        verifier_id=bad.verifier_id,
+        release_id=bad.release_id,
+        disposition=bad.disposition,
+        policy_fingerprint=bad.policy_fingerprint,
+        resolved_at=bad.resolved_at,
+    ) if False else bad
+    # The P5-08 model enforces required provenance/identity at construction;
+    # P5-09 must therefore also reject malformed resolution-like inputs.
+    class MalformedResolution:
+        resolution_id = "res-001"
+        disposition = ReleaseDisposition.RETRY_REQUESTED
+        fingerprint = "rfp-001"
+        reconciliation_id = "recon-001"
+        reconciliation_fingerprint = "recon-fp-001"
+        dispatch_id = ""
+        outcome_id = "outcome-001"
+        finalization_fingerprint = "final-001"
+        verifier_id = "verify-001"
+        release_id = "release-001"
+        policy_fingerprint = "policy-001"
+
     policy = ExecutionPolicy(adapter_id="retry-adapter", authorized=True)
     with pytest.raises(ValueError):
-        ExecutionBoundary().prepare(bad, policy)
+        ExecutionBoundary().prepare(MalformedResolution(), policy)
 
 
 def test_request_is_immutable():
@@ -118,10 +157,15 @@ def test_unsupported_disposition_fails_closed():
     class FakeResolution:
         resolution_id = "res-001"
         disposition = "UNKNOWN"
-        resolution_fingerprint = "rfp-001"
-        reconciliation_fingerprint = "recon-001"
-        identity_chain = ("org-001",)
-        provenance = ("p5-08-001",)
+        fingerprint = "rfp-001"
+        reconciliation_id = "recon-001"
+        reconciliation_fingerprint = "recon-fp-001"
+        dispatch_id = "dispatch-001"
+        outcome_id = "outcome-001"
+        finalization_fingerprint = "final-001"
+        verifier_id = "verify-001"
+        release_id = "release-001"
+        policy_fingerprint = "policy-001"
 
     policy = ExecutionPolicy(adapter_id="adapter", authorized=True)
     with pytest.raises(ValueError):
