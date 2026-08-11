@@ -3,16 +3,13 @@
 These tests intentionally target the public P5-10 API before implementation.
 """
 
-from dataclasses import FrozenInstanceError, dataclass
-from enum import Enum
+from dataclasses import FrozenInstanceError
 import importlib.util
 from pathlib import Path
 import sys
 
 import pytest
 
-
-# P5 directories use hyphens, so load P5-09 by file path.
 ROOT = Path(__file__).resolve().parents[2]
 P509_PATH = ROOT / "p5-09-execution-boundary" / "execution_boundary.py"
 spec = importlib.util.spec_from_file_location("p509_execution_boundary", P509_PATH)
@@ -24,12 +21,17 @@ spec.loader.exec_module(p509)
 ExecutionRequest = p509.ExecutionRequest
 ExecutionKind = p509.ExecutionKind
 
-# Expected public P5-10 API; intentionally RED until implementation exists.
-from phase5.p5_10_execution_adapter.execution_adapter import (  # noqa: E402
-    ExecutionAdapter,
-    AdapterPolicy,
-    ExecutionResult,
-)
+# P5 directories use hyphens; load the not-yet-existing P5-10 module by path.
+P510_PATH = ROOT / "p5-10-execution-adapter" / "execution_adapter.py"
+p510_spec = importlib.util.spec_from_file_location("p510_execution_adapter", P510_PATH)
+p510 = importlib.util.module_from_spec(p510_spec)
+sys.modules[p510_spec.name] = p510
+assert p510_spec.loader is not None
+p510_spec.loader.exec_module(p510)
+
+ExecutionAdapter = p510.ExecutionAdapter
+AdapterPolicy = p510.AdapterPolicy
+ExecutionResult = p510.ExecutionResult
 
 
 class FakeAdapter:
@@ -90,11 +92,10 @@ def test_adapter_identity_must_match_request():
 
 def test_unsupported_execution_kind_fails_closed():
     adapter = FakeAdapter()
-    unsupported = request(ExecutionKind.RETRY)
     adapter.supported_kinds = set()
     policy = AdapterPolicy(adapter_id="adapter-001", authorized=True)
     with pytest.raises(ValueError):
-        ExecutionAdapter().execute(unsupported, policy, adapter)
+        ExecutionAdapter().execute(request(), policy, adapter)
     assert adapter.calls == []
 
 
