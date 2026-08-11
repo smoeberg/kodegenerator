@@ -14,25 +14,33 @@ import pytest
 
 
 # P5 phase directories use hyphens and therefore are not valid Python package
-# names. Load the already-merged P5-08 module by file path for the RED stage.
+# names. Load the merged P5-08 model by file path.
 ROOT = Path(__file__).resolve().parents[2]
 P508_PATH = ROOT / "p5-08-release-resolution" / "resolution_models.py"
-spec = importlib.util.spec_from_file_location("p508_resolution_models", P508_PATH)
-p508 = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = p508
-assert spec.loader is not None
-spec.loader.exec_module(p508)
+p508_spec = importlib.util.spec_from_file_location("p508_resolution_models", P508_PATH)
+p508 = importlib.util.module_from_spec(p508_spec)
+sys.modules[p508_spec.name] = p508
+assert p508_spec.loader is not None
+p508_spec.loader.exec_module(p508)
 
 ReleaseDisposition = p508.ResolutionDisposition
 ReleaseResolutionRecord = p508.ReleaseResolutionRecord
 
 
-# Expected public P5-09 API; intentionally RED until implementation lands.
-from phase5.p5_09_execution_boundary.execution_boundary import (  # noqa: E402
-    ExecutionBoundary,
-    ExecutionPolicy,
-    ExecutionRequest,
-)
+# P5-09 implementation is intentionally absent in the RED stage. Load the
+# expected public module by its filesystem path rather than inventing an
+# underscore package name that cannot correspond to the repository layout.
+P509_PATH = ROOT / "p5-09-execution-boundary" / "execution_boundary.py"
+p509_spec = importlib.util.spec_from_file_location("p509_execution_boundary", P509_PATH)
+if p509_spec is None or p509_spec.loader is None:
+    raise ImportError("P5-09 execution_boundary implementation is not available")
+p509 = importlib.util.module_from_spec(p509_spec)
+sys.modules[p509_spec.name] = p509
+p509_spec.loader.exec_module(p509)
+
+ExecutionBoundary = p509.ExecutionBoundary
+ExecutionPolicy = p509.ExecutionPolicy
+ExecutionRequest = p509.ExecutionRequest
 
 
 def resolution(disposition: ReleaseDisposition) -> ReleaseResolutionRecord:
