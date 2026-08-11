@@ -7,6 +7,7 @@ from .models import (
     AuthorityRule,
     Decision,
 )
+from .grants import VerifiedAuthorityGrant
 from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "AuthorityRequest",
     "AuthorityRule",
     "Decision",
+    "VerifiedAuthorityGrant",
     "AuthorityEngine",
     "AuthorityError",
     "PolicyValidationError",

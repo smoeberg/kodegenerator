@@ -15,6 +15,7 @@ from phase4.authority import (
     Decision,
 )
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.execution.models import ExecutionRequest, GovernedDispatch
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
@@ -79,6 +80,44 @@ class GovernedPatchRun:
         return self.execution.status is ExecutionStatus.REPLAYED
 
 
+class _GovernedPatchAdapter:
+    """Execution seam that makes the patch adapter dispatch-bound.
+
+    The legacy PatchExecutionAdapter remains responsible for the immutable
+    request/record/workspace contract. This proxy owns the AI-4 governed-dispatch
+    boundary so ExecutionEngine can never reach it with an ungoverned call.
+    """
+
+    def __init__(self, adapter: PatchExecutionAdapter) -> None:
+        self._adapter = adapter
+
+    @property
+    def adapter_id(self) -> str:
+        return self._adapter.adapter_id
+
+    @property
+    def action(self) -> str:
+        return self._adapter.action
+
+    def register_request(self, request: PatchExecutionRequest) -> None:
+        self._adapter.register_request(request)
+
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        dispatch: GovernedDispatch | None = None,
+    ):
+        if not isinstance(dispatch, GovernedDispatch):
+            return None
+        if not dispatch.is_verified or dispatch.request is not request:
+            return None
+        return self._adapter.execute(request)
+
+    def get_record(self, request_fingerprint: str) -> PatchExecutionRecord:
+        return self._adapter.get_record(request_fingerprint)
+
+
 class GovernedPatchExecutionRuntime:
     """Apply only stored proposals through operator-fixed tools and AI-3 authority."""
 
@@ -100,8 +139,6 @@ class GovernedPatchExecutionRuntime:
             not isinstance(tool, TrustedToolSpec) for tool in tools
         ):
             raise TypeError("tools must be a tuple of TrustedToolSpec values")
-        # Constructing a request validates that all three non-authoritative
-        # evidence classes exist. The runtime also prevents API-selected tools.
         if not tools:
             raise ValueError("governed patch execution requires trusted tools")
 
@@ -120,7 +157,8 @@ class GovernedPatchExecutionRuntime:
             adapter_id="adapter.implementation.governed-patch",
             workspace=self._workspace,
         )
-        self._execution = ExecutionEngine((self._adapter,))
+        self._governed_adapter = _GovernedPatchAdapter(self._adapter)
+        self._execution = ExecutionEngine((self._governed_adapter,))
         self._outcomes = OutcomeEngine()
         self._commands: dict[str, tuple[str, PatchExecutionRequest]] = {}
         self._lock = RLock()

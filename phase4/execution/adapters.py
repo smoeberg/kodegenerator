@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Protocol, Tuple
 
-from .models import ExecutionRequest
+from .models import ExecutionRequest, GovernedDispatch
 
 
 @dataclass(frozen=True)
@@ -31,12 +31,17 @@ class ExecutionAdapter(Protocol):
     def action(self) -> str:
         ...
 
-    def execute(self, request: ExecutionRequest) -> AdapterResult:
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        dispatch: GovernedDispatch,
+    ) -> AdapterResult | None:
         ...
 
 
 class StaticExecutionAdapter:
-    """Reference adapter useful for deterministic integration tests."""
+    """Reference adapter that requires the governed AI-3 -> AI-4 dispatch."""
 
     def __init__(self, adapter_id: str, action: str, handler) -> None:
         if not adapter_id.strip() or not action.strip():
@@ -55,7 +60,16 @@ class StaticExecutionAdapter:
     def action(self) -> str:
         return self._action
 
-    def execute(self, request: ExecutionRequest) -> AdapterResult:
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        dispatch: GovernedDispatch | None = None,
+    ) -> AdapterResult | None:
+        if not isinstance(dispatch, GovernedDispatch):
+            return None
+        if not dispatch.is_verified or dispatch.request is not request:
+            return None
         result = self._handler(request)
         if isinstance(result, AdapterResult):
             return result
