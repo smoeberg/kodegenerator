@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
 import importlib.util
+import sys
 
 import pytest
 
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 P508_PATH = ROOT / "p5-08-release-resolution" / "resolution_models.py"
 spec = importlib.util.spec_from_file_location("p508_resolution_models", P508_PATH)
 p508 = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = p508
 assert spec.loader is not None
 spec.loader.exec_module(p508)
 
@@ -91,22 +93,6 @@ def test_blocked_cannot_become_release_execution():
 
 
 def test_missing_provenance_fails_closed():
-    bad = resolution(ReleaseDisposition.RETRY_REQUESTED)
-    bad = ReleaseResolutionRecord(
-        resolution_id=bad.resolution_id,
-        reconciliation_id=bad.reconciliation_id,
-        reconciliation_fingerprint=bad.reconciliation_fingerprint,
-        dispatch_id="",
-        outcome_id=bad.outcome_id,
-        finalization_fingerprint=bad.finalization_fingerprint,
-        verifier_id=bad.verifier_id,
-        release_id=bad.release_id,
-        disposition=bad.disposition,
-        policy_fingerprint=bad.policy_fingerprint,
-        resolved_at=bad.resolved_at,
-    ) if False else bad
-    # The P5-08 model enforces required provenance/identity at construction;
-    # P5-09 must therefore also reject malformed resolution-like inputs.
     class MalformedResolution:
         resolution_id = "res-001"
         disposition = ReleaseDisposition.RETRY_REQUESTED
