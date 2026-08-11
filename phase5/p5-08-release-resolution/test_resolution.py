@@ -64,23 +64,18 @@ def test_reconciled_accepted_outcome_resolves_to_no_action():
         policy=ResolutionPolicy(),
         now=NOW,
     )
-
     assert record.disposition is ResolutionDisposition.NO_ACTION
 
 
 def test_outcome_missing_without_explicit_retry_policy_fails_closed():
     with pytest.raises(ResolutionError):
         ReleaseResolver().resolve(
-            reconciliation("OUTCOME_MISSING"),
-            dispatch(),
-            outcome=None,
-            now=NOW,
+            reconciliation("OUTCOME_MISSING"), dispatch(), outcome=None, now=NOW
         )
 
 
 def test_outcome_missing_with_explicit_retry_policy_requests_retry():
     policy = ResolutionPolicy(outcome_missing=ResolutionDisposition.RETRY_REQUESTED)
-
     record = ReleaseResolver().resolve(
         reconciliation("OUTCOME_MISSING"),
         dispatch(),
@@ -88,18 +83,16 @@ def test_outcome_missing_with_explicit_retry_policy_requests_retry():
         policy=policy,
         now=NOW,
     )
-
     assert record.disposition is ResolutionDisposition.RETRY_REQUESTED
 
 
 def test_mismatch_without_policy_fails_closed_to_safe_supervisory_boundary():
     record = ReleaseResolver().resolve(
-        reconciliation("MISMATCH", reason="identity/provenance mismatch: dispatch_id"),
+        reconciliation("MISMATCH", reason="observed release mismatch"),
         dispatch(),
-        outcome(dispatch_id="other"),
+        outcome(accepted=False),
         now=NOW,
     )
-
     assert record.disposition in {
         ResolutionDisposition.ESCALATION_REQUIRED,
         ResolutionDisposition.RELEASE_BLOCKED,
@@ -109,37 +102,27 @@ def test_mismatch_without_policy_fails_closed_to_safe_supervisory_boundary():
 
 def test_mismatch_policy_can_explicitly_block_release():
     policy = ResolutionPolicy(mismatch=ResolutionDisposition.RELEASE_BLOCKED)
-
     record = ReleaseResolver().resolve(
-        reconciliation("MISMATCH", reason="identity/provenance mismatch: dispatch_id"),
+        reconciliation("MISMATCH", reason="observed release mismatch"),
         dispatch(),
-        outcome(dispatch_id="other"),
+        outcome(accepted=False),
         policy=policy,
         now=NOW,
     )
-
     assert record.disposition is ResolutionDisposition.RELEASE_BLOCKED
 
 
 def test_unknown_reconciliation_status_fails_closed():
     with pytest.raises(ResolutionError):
         ReleaseResolver().resolve(
-            reconciliation("UNKNOWN"),
-            dispatch(),
-            outcome(),
-            policy=ResolutionPolicy(),
-            now=NOW,
+            reconciliation("UNKNOWN"), dispatch(), outcome(), policy=ResolutionPolicy(), now=NOW
         )
 
 
 def test_conflicting_dispatch_identity_fails_closed():
     with pytest.raises(ResolutionError):
         ReleaseResolver().resolve(
-            reconciliation(),
-            dispatch(dispatch_id="other"),
-            outcome(),
-            policy=ResolutionPolicy(),
-            now=NOW,
+            reconciliation(), dispatch(dispatch_id="other"), outcome(), policy=ResolutionPolicy(), now=NOW
         )
 
 
@@ -157,23 +140,21 @@ def test_conflicting_finalization_provenance_fails_closed():
 def test_missing_authoritative_verifier_provenance_fails_closed():
     with pytest.raises(ResolutionError):
         ReleaseResolver().resolve(
-            reconciliation(),
-            dispatch(verifier_id=""),
-            outcome(),
-            policy=ResolutionPolicy(),
-            now=NOW,
+            reconciliation(), dispatch(verifier_id=""), outcome(), policy=ResolutionPolicy(), now=NOW
+        )
+
+
+def test_conflicting_outcome_identity_fails_closed():
+    with pytest.raises(ResolutionError):
+        ReleaseResolver().resolve(
+            reconciliation(), dispatch(), outcome(dispatch_id="other"), policy=ResolutionPolicy(), now=NOW
         )
 
 
 def test_resolution_preserves_reconciliation_fingerprint_and_identity_chain():
     record = ReleaseResolver().resolve(
-        reconciliation(),
-        dispatch(),
-        outcome(),
-        policy=ResolutionPolicy(),
-        now=NOW,
+        reconciliation(), dispatch(), outcome(), policy=ResolutionPolicy(), now=NOW
     )
-
     assert record.reconciliation_fingerprint == "recon-fingerprint-1"
     assert record.dispatch_id == "dispatch-1"
     assert record.outcome_id == "outcome-1"
@@ -184,37 +165,23 @@ def test_resolution_preserves_reconciliation_fingerprint_and_identity_chain():
 
 def test_resolution_record_is_immutable():
     record = ReleaseResolver().resolve(
-        reconciliation(),
-        dispatch(),
-        outcome(),
-        policy=ResolutionPolicy(),
-        now=NOW,
+        reconciliation(), dispatch(), outcome(), policy=ResolutionPolicy(), now=NOW
     )
-
     with pytest.raises((FrozenInstanceError, AttributeError, TypeError)):
         record.disposition = ResolutionDisposition.RELEASE_BLOCKED
 
 
 def test_same_inputs_and_policy_are_deterministic():
     policy = ResolutionPolicy()
-    first = ReleaseResolver().resolve(
-        reconciliation(), dispatch(), outcome(), policy=policy, now=NOW
-    )
-    second = ReleaseResolver().resolve(
-        reconciliation(), dispatch(), outcome(), policy=policy, now=NOW
-    )
-
+    first = ReleaseResolver().resolve(reconciliation(), dispatch(), outcome(), policy=policy, now=NOW)
+    second = ReleaseResolver().resolve(reconciliation(), dispatch(), outcome(), policy=policy, now=NOW)
     assert first.fingerprint == second.fingerprint
     assert first == second
 
 
 def test_upstream_records_are_not_mutated():
-    d = dispatch()
-    o = outcome()
-    r = reconciliation()
-
+    d, o, r = dispatch(), outcome(), reconciliation()
     ReleaseResolver().resolve(r, d, o, policy=ResolutionPolicy(), now=NOW)
-
     assert d.dispatch_id == "dispatch-1"
     assert o.dispatch_id == "dispatch-1"
     assert r.status == "RECONCILED"
@@ -222,14 +189,7 @@ def test_upstream_records_are_not_mutated():
 
 def test_resolution_does_not_create_execution_side_effects():
     resolver = ReleaseResolver()
-    record = resolver.resolve(
-        reconciliation(),
-        dispatch(),
-        outcome(),
-        policy=ResolutionPolicy(),
-        now=NOW,
-    )
-
+    record = resolver.resolve(reconciliation(), dispatch(), outcome(), policy=ResolutionPolicy(), now=NOW)
     assert record.disposition is ResolutionDisposition.NO_ACTION
     assert not hasattr(resolver, "execute")
     assert not hasattr(resolver, "retry")
