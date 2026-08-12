@@ -60,6 +60,7 @@ def test_confirmed_claim_flows_through_selection_case_engine_and_store():
     assert outcome.record.state is KnowledgeState.CONFIRMED
     assert outcome.selected_agent_ids == selected
     assert outcome.materialized_version == 1
+    assert outcome.record.version == outcome.materialized_version
     assert store.records[0].state is KnowledgeState.CONFIRMED
 
 
