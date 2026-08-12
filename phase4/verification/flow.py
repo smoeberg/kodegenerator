@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from phase4.agent_registry import AgentRegistry, AgentRole
-from phase4.brain_persistence import KnowledgeStore
 from phase4.contracts import KnowledgeRecord, KnowledgeState, VerificationMode, VerificationPolicy
 
 from .case import VerificationCase
@@ -63,7 +62,7 @@ class BrainVerificationFlow:
             role=role,
             capability=capability,
         )
-        case = VerificationCase(record.subject, self._policy_id(policy), selection)
+        case = VerificationCase(record.record_id, self._policy_id(policy), selection)
         for agent_id, outcome in observations.items():
             case.record(agent_id, outcome)
 
