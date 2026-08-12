@@ -7,7 +7,7 @@ from typing import Callable
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from phase4.contracts import Evidence, KnowledgeRecord, KnowledgeState
+from phase4.contracts import Evidence, KnowledgeRecord, KnowledgeState, MaterializedKnowledgeState
 
 from .models import KnowledgeRecordModel, KnowledgeStateModel
 
@@ -91,6 +91,30 @@ class KnowledgeStore:
 
             session.commit()
             return next_version
+
+    def get_materialized_state(self, subject: str) -> MaterializedKnowledgeState | None:
+        """Return the current materialized knowledge as a domain contract."""
+        with self.session_factory() as session:
+            state = session.scalar(
+                select(KnowledgeStateModel).where(KnowledgeStateModel.subject == subject)
+            )
+            if state is None:
+                return None
+            return MaterializedKnowledgeState(
+                subject=state.subject,
+                claim=state.claim,
+                evidence=tuple(
+                    Evidence(
+                        evidence_id=item["evidence_id"],
+                        source=item["source"],
+                        content_digest=item["content_digest"],
+                        supports=item["supports"],
+                    )
+                    for item in state.evidence
+                ),
+                state=KnowledgeState(state.state),
+                version=state.version,
+            )
 
     def get_state(self, subject: str) -> KnowledgeStateModel | None:
         with self.session_factory() as session:

@@ -103,6 +103,25 @@ class KnowledgeRecord:
             raise ValueError("author_agent_id must be non-empty")
 
 
+@dataclass(frozen=True)
+class MaterializedKnowledgeState:
+    """Materialized aggregate knowledge state for a subject."""
+
+    subject: str
+    claim: str
+    evidence: tuple[Evidence, ...] = ()
+    state: KnowledgeState = KnowledgeState.PROPOSED
+    version: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.subject.strip():
+            raise ValueError("subject must be non-empty")
+        if not self.claim.strip():
+            raise ValueError("claim must be non-empty")
+        if self.version < 0:
+            raise ValueError("version must be non-negative")
+
+
 class VerificationMode(str, Enum):
     DETERMINISTIC = "deterministic"
     SINGLE_AGENT = "single_agent"
