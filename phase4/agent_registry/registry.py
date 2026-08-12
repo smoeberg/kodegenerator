@@ -104,7 +104,7 @@ class AgentRegistry:
             records = [r for r in records if r.role == role]
         if capability is not None:
             records = [r for r in records if r.has_capability(capability)]
-        return sorted(records, key=lambda r: str(r.identity))
+        return sorted(records, key=lambda r: (r.instance_id, str(r.identity)))
 
     def deactivate(self, identity: AgentIdentity, *, actor: str, reason: str = "") -> AgentRecord:
         if not actor or not isinstance(actor, str):
