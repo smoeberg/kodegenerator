@@ -1,26 +1,49 @@
 # 📚 Digital Organization Runtime (DOR) - Dokumentation
 
-**Version:** 1.0.0  
-**Senest opdateret:** 3. august 2026  
+**Version:** 1.1.0  
+**Senest opdateret:** 12. august 2026  
 
 ---
 
-## 📌 Indholdsfortegnelse
+## 📌 Canonical architecture
 
-1. [📖 Introduktion](#-introduktion)
-2. [🏗️ Arkitektur](#%EF%B8%8F-arkitektur)
-3. [📦 Domæneobjekter](#-dom%C3%A6neobjekter)
-4. [🔧 Implementering](#-implementering)
-5. [🌐 API (FastAPI)](#-api-fastapi)
-6. [🤖 AI Integration](#-ai-integration)
-7. [⚙️ Task Executors](#%EF%B8%8F-task-executors)
-8. [📊 Monitoring & Observability](#-monitoring--observability)
-9. [🚀 Deployment](#-deployment)
-10. [📝 Eksempler](#-eksempler)
-11. [🔍 Fejlfinding](#-fejlfinding)
-12. [📜 Changelog](#-changelog)
-13. [🤝 Bidrag](#-bidrag)
-14. [📄 Licens](#-licens)
+The current Phase 4 target is **EIRA Brain & Workforce Control Plane**. The canonical specification is:
+
+- [Phase 4 — EIRA Brain & Workforce Control Plane](docs/PHASE4_ARCHITECTURE.md)
+
+This specification supersedes earlier Phase 4 concepts based on a generic conversation engine. Those concepts are historical and are not the implementation target.
+
+### Phase 4 in one view
+
+```text
+LibreChat
+   │
+   │ Interactive
+   ▼
+EIRA Control Plane
+   ├── Agent Registry
+   ├── Assignment
+   ├── Brain
+   └── Verification Policy
+           │
+           ▼
+      Phase 7 Queue
+           │
+           ▼
+         Worker
+           │
+           ▼
+      Agent Runtime
+```
+
+The fundamental invariants are:
+
+- **Agent ≠ Assignment ≠ Worker**
+- **Context ≠ Knowledge**
+- **Knowledge confirmation ≠ execution authority**
+- **LibreChat ≠ autonomous worker runtime**
+- **Phase 7 owns durable work execution and worker leases**
+- **Phase 1–3 authority controls remain the execution authorization boundary**
 
 ---
 
@@ -30,150 +53,116 @@
 **Digital Organization Runtime (DOR)** er et operativsystem for digitale organisationer, der gør det muligt at:
 * Organisere AI-medarbejdere, roller og afdelinger som en traditionel virksomhed.
 * Styre workflows, tasks og artefakter med versionering, godkendelser og historik.
-* Integrere med LLM'er (GPT-5, Claude-3, Mistral, etc.) for at automatisere opgaver som kodegenerering, code review og dokumentation.
+* Integrere med LLM'er for at automatisere opgaver som kodegenerering, code review og dokumentation.
 * Overvåge og spore alle handlinger med logging, metrics og tracing.
 
 DOR er ikke et traditionelt multi-agent system. Det er en digital virksomhed, hvor:
-* **Roller** (f.eks. *Senior Python Developer*) er permanente.
-* **Medarbejdere** (f.eks. *GPT-5*) er udskiftelige.
-* **Artefakter** (f.eks. *Implementation Package*) er versionerede og sporbare.
+* **Roller** er permanente organisatoriske definitioner.
+* **Agenter** er persistente digitale medarbejderidentiteter.
+* **Workers** er ephemeral compute og må ikke forveksles med agenter.
+* **Artefakter** er versionerede og sporbare.
 * **Workflows** er deterministiske og auditerbare.
+* **Brain** vedligeholder organisationens epistemiske viden separat fra den kortvarige task context.
 
 ### 🎯 Formål
 DOR er designet til at:
 * ✅ Strukturere AI-arbejde som en traditionel organisation.
-* ✅ Automatisere softwareudvikling (og senere andre domæner som salg, marketing, etc.).
+* ✅ Automatisere softwareudvikling og senere andre domæner.
 * ✅ Sikre kvalitet via governance, reviews og policies.
 * ✅ Gøre systemet auditabelt med fuld historik og sporbarhed.
-* ✅ Skalere horisontalt med Kubernetes, load balancing og distributed tracing.
-
-### 🔗 Relaterede Projekter
-* **EIRA Engineering Office (EEO)** – Referenceimplementering af DOR for softwareudvikling.
-* **LangGraph** – Workflow-orchestration for LLM'er (bruges som inspiration).
-* **FastAPI** – API-framework brugt i DOR.
+* ✅ Skalere horisontalt med elastiske workers.
 
 ---
 
 ## 🏗️ Arkitektur
 
-### 📊 Overordnet Arkitektur
-DOR følger en lagdelt arkitektur med klare adskillelser mellem:
-1. **Domain Layer** (Kernedomæner: Organization, Actor, Workflow, etc.).
-2. **Application Layer** (Use Cases: IntentResolver, WorkflowEngine, etc.).
-3. **Infrastructure Layer** (Eksterne services: Database, LLM Providers, GitHub, etc.).
-4. **Interface Layer** (API, CLI, Webhooks).
+DOR følger en lagdelt arkitektur med klare adskillelser mellem domain, application, infrastructure og interface.
 
-### 🏢 Organisationsstruktur
-DOR organiserer digitale medarbejdere i en hierarkisk struktur med afdelinger, roller, capabilities og governance.
+Phase 4 er EIRA's **Brain & Workforce Control Plane**. LibreChat er et interaction surface for menneskelig interaktion; det er ikke systemets authoritative agent registry, Brain eller autonomous worker runtime.
 
-### 🔄 Workflow Lifecycle
-Hvert Workflow følger en tilstandsmaskine med klare overgange, gates og godkendelsestrin.
+Phase 7 leverer durable queueing, worker leases, retries og recovery. Phase 6 er den sikre execution boundary. Phase 5 håndterer work-product/release lifecycle. Phase 1–3 ejer governance og authority.
 
-### 📦 Artefakt Hierarki
-Alle Artefakter er versionerede med SHA-256 hash og kan referere til hinanden i forældre/barn-strukturer.
-
-### 🔒 Sikkerhedsarkitektur
-DOR bruger:
-* JWT-autentificering for API-adgang.
-* Role-Based Access Control (RBAC) for at styre tilladelser for hver rolle.
-* Policy Engine for at håndhæve regler (f.eks. "Ingen direkte commits til main").
-* Audit Logs for at spore alle handlinger.
+Se den [kanoniske Phase 4-specifikation](docs/PHASE4_ARCHITECTURE.md) for invariants, execution modes, Brain-model, verification, concurrency, failure recovery og LibreChat boundary.
 
 ---
 
 ## 📦 Domæneobjekter
 
-### 📌 Core Domain Objects (8 stk.)
-
-| Objekt | Beskrivelse | Eksempel |
-| :--- | :--- | :--- |
-| **Organization** | Juridisk/operationel identitet. | EIRA, Acme Corp |
-| **Actor** | Enhed (AI, menneske, service). | GPT-5, John Doe, GitHub Bot |
-| **RoleDefinition** | Stillingens definition. | Senior Python Developer |
-| **Capability** | Evne, som en Actor kan have. | `python.fastapi.expert` |
-| **Intent** | Mål/ønsket resultat. | Implement OAuth2 |
-| **Workflow** | Procesdefinition. | Feature Development Workflow |
-| **Task** | Opgave i et workflow. | Implementér OAuth2 endpoints |
-| **Artifact** | Verificerbart resultat. | ArchitectureDecision v1.0.0 |
-| **Event** | Hændelse (audit, læring). | `ARTIFACT_APPROVED` |
-
----
-
-## 🔧 Implementering
-
-### 🚀 Setup og Installation
-
-1. **Klon Repository:**
-   ```bash
-   git clone https://github.com/smoeberg/kodegenerator.git
-   cd kodegenerator
-   ```
-
-2. **Opret Virtual Environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # På Windows: venv\Scripts\activate
-   ```
-
-3. **Installér Afhængigheder:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Konfigurer Miljøvariabler:**
-   Opret en `.env`-fil i roden af projektet:
-   ```env
-   DATABASE_URL=sqlite:///./dor_runtime.db
-   DOR_JWT_SECRET_KEY=replace-with-a-long-random-secret
-   DOR_ADMIN_PASSWORD=replace-with-a-dashboard-password
-   DOR_ENCRYPTION_KEY=replace-with-a-generated-fernet-key
-   OPENAI_API_KEY=your-openai-key
-   ANTHROPIC_API_KEY=your-anthropic-key
-   ```
+| Objekt | Beskrivelse |
+| :--- | :--- |
+| **Organization** | Juridisk/operationel identitet. |
+| **Actor** | Enhed (AI, menneske, service). |
+| **RoleDefinition** | Stillingens definition. |
+| **Capability** | Evne, som en Actor/Agent kan have. |
+| **Agent** | Persistent digital medarbejderidentitet. |
+| **Assignment** | Binding af arbejde til en Agent. |
+| **ContextPacket** | Afgrænset task-context; ikke organisatorisk knowledge. |
+| **KnowledgeRecord** | Epistemisk record: observation, claim, evidence eller verification. |
+| **KnowledgeState** | Materialiseret aktuel knowledge state. |
+| **VerificationPolicy** | Regler for deterministisk verification, single-agent, quorum eller human escalation. |
+| **Task** | Opgave i et workflow. |
+| **Artifact** | Verificerbart, versioneret resultat. |
+| **Event** | Hændelse til audit, læring og sporbarhed. |
 
 ---
 
-## 🌐 API (FastAPI)
+## 🔒 Sikkerheds- og authority boundary
 
-DOR leverer et RESTful API bygget med FastAPI til administration af organisationer, actors, roller, intents, workflows, tasks og artefakter.
+Brain kan etablere eller bekræfte viden, men **CONFIRMED knowledge er aldrig i sig selv execution authority**.
+
+Execution følger fortsat:
+
+```text
+AuthorityDecision
+      ↓
+VerifiedAuthorityGrant
+      ↓
+Phase 6 execution boundary
+```
+
+Dette er en fast arkitekturinvariant.
 
 ---
 
-## 🤖 AI Integration
+## 🤖 AI og agent execution
 
-DOR understøtter integration med ledende LLM'er:
+Systemet har to execution modes:
 
-| Model | Udbyder | Capabilities | Max Tokens |
-| :--- | :--- | :--- | :--- |
-| **GPT-5** | OpenAI | Python, JavaScript, Code Review | 100,000 |
-| **Claude 3** | Anthropic | Python, Rust, Code Review | 100,000 |
-| **DeepSeek Coder** | DeepSeek | Python, C++, Java | 32,000 |
-| **Mistral Large** | Mistral | Python, JavaScript, French | 32,000 |
-| **Gemini 1.5 Pro** | Google | Python, Multi-Modal | 1,000,000 |
+### Interactive
+
+```text
+Human → LibreChat → Agent → EIRA Control Plane
+```
+
+### Autonomous
+
+```text
+Trigger → Assignment → Phase 7 Queue → Worker → Agent
+```
+
+Autonome workers kalder model providers og tools direkte via EIRA execution path. LibreChat bruges ikke som worker loop.
 
 ---
 
 ## ⚙️ Task Executors
 
-DOR benytter en `TaskExecutorFactory` til at dirigere tasks til den korrekte executor ud fra Actor-typen:
-
-* **DIGITAL_EMPLOYEE** $\rightarrow$ `AITaskExecutor` (LLM-kald til kodegenerering, reviews, m.m.)
-* **HUMAN** $\rightarrow$ `HumanTaskExecutor` (Notifikationer og godkendelsesflows)
-* **SERVICE** $\rightarrow$ `ServiceTaskExecutor` (Integration til GitHub, Jira, Slack osv.)
+DOR kan dirigere tasks til passende executors ud fra Actor-/agent-typen. Den konkrete execution skal fortsat passere de eksisterende governance, work-product og sandbox boundaries.
 
 ---
 
 ## 📊 Monitoring & Observability
 
-* **Logging:** Struktureret JSON-logging via `structlog`.
-* **Metrics:** Performance tracking og udnyttelse via `prometheus-client`.
-* **Tracing:** Distributed tracing på tværs af services via `OpenTelemetry`.
+* **Logging:** Struktureret logging.
+* **Metrics:** Performance og resource tracking.
+* **Tracing:** Distributed tracing på tværs af services.
+* **Audit:** Agent-, assignment-, epistemic- og execution-hændelser skal kunne spores.
 
 ---
 
 ## 📜 Changelog
 
-* **1.0.0** (2026-08-03) – Initial release af Digital Organization Runtime (DOR) specifikation og arkitektur.
+* **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface; Agent/Assignment/Worker, epistemic knowledge and verification boundaries documented.
+* **1.0.0** (2026-08-03) – Initial DOR specification and architecture.
 
 ---
 
