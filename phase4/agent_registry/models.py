@@ -1,6 +1,7 @@
 """Domain models for DOR AI-1 Agent Registry.
 
-The registry owns identity and declarations. It does not authorize actions.
+The registry owns stable agent-instance identity and declarations. It does not
+authorize actions or own worker execution state.
 """
 
 from __future__ import annotations
@@ -75,7 +76,7 @@ class Capability:
 
 @dataclass(frozen=True)
 class AgentIdentity:
-    """Stable content identity for an agent declaration."""
+    """Stable content identity for one agent instance declaration."""
 
     value: str
 
@@ -87,9 +88,13 @@ class AgentIdentity:
         role: AgentRole,
         capabilities: tuple[Capability, ...],
         trust_anchor: str | None = None,
+        instance_id: str = "default",
     ) -> AgentIdentity:
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-empty string")
         canonical = {
             "agent_type": agent_type,
+            "instance_id": instance_id,
             "version": str(version),
             "role": role.value,
             "capabilities": [
@@ -111,10 +116,15 @@ class AgentIdentity:
 
 @dataclass(frozen=True)
 class AgentRecord:
-    """Immutable registered declaration plus lifecycle metadata."""
+    """Immutable registered agent instance declaration plus metadata.
+
+    Worker/lease state intentionally does not belong here; it is assignment
+    and execution state owned by the runtime queue.
+    """
 
     identity: AgentIdentity
     agent_type: str
+    instance_id: str
     version: AgentVersion
     role: AgentRole
     capabilities: tuple[Capability, ...]
