@@ -1,7 +1,7 @@
 """First deterministic end-to-end Brain verification slice."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from phase4.agent_registry import AgentRegistry, AgentRole
@@ -93,6 +93,7 @@ class BrainVerificationFlow:
                 author_agent_id=record.author_agent_id,
             )
             materialized_version = self._store.append_and_materialize(materialized_record)
+            materialized_record = replace(materialized_record, version=materialized_version)
 
         return BrainVerificationOutcome(
             record=materialized_record,
