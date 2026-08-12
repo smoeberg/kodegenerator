@@ -46,6 +46,7 @@ class AgentRegistry:
         role: AgentRole,
         capabilities: Iterable[Capability] = (),
         trust_anchor: Optional[str] = None,
+        instance_id: str = "default",
         actor: str = "system",
     ) -> AgentRecord:
         if not isinstance(agent_type, str) or not agent_type.strip():
@@ -54,6 +55,8 @@ class AgentRegistry:
             raise RegistrationError("version must be AgentVersion")
         if not isinstance(role, AgentRole):
             raise RegistrationError("role must be AgentRole")
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise RegistrationError("instance_id must be a non-empty string")
         if not actor or not isinstance(actor, str):
             raise RegistrationError("actor must be a non-empty string")
 
@@ -67,6 +70,7 @@ class AgentRegistry:
             role=role,
             capabilities=caps,
             trust_anchor=trust_anchor,
+            instance_id=instance_id,
         )
         key = str(identity)
         if key in self._records:
@@ -75,6 +79,7 @@ class AgentRegistry:
         record = AgentRecord(
             identity=identity,
             agent_type=agent_type,
+            instance_id=instance_id,
             version=version,
             role=role,
             capabilities=caps,
