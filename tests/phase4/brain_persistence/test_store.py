@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from infrastructure.persistence.models import Base
 from phase4.brain_persistence import KnowledgeConflictError, KnowledgeStore
-from phase4.contracts import Evidence, KnowledgeRecord, KnowledgeState
+from phase4.contracts import Evidence, KnowledgeRecord, KnowledgeState, MaterializedKnowledgeState
 
 
 def make_store() -> KnowledgeStore:
@@ -79,3 +79,24 @@ def test_failed_transition_does_not_append_record() -> None:
 
         rows = session.query(KnowledgeRecordModel).all()
         assert [row.record_id for row in rows] == ["r-1"]
+
+
+def test_get_materialized_state_returns_domain_contract_with_current_version() -> None:
+    store = make_store()
+    store.append_and_materialize(record("r-1", state=KnowledgeState.CONFIRMED))
+
+    state = store.get_materialized_state("python")
+
+    assert state == MaterializedKnowledgeState(
+        subject="python",
+        claim="Python is dynamically typed.",
+        evidence=(Evidence("e-1", "language-spec", "digest-1"),),
+        state=KnowledgeState.CONFIRMED,
+        version=1,
+    )
+
+
+def test_get_materialized_state_returns_none_for_unknown_subject() -> None:
+    store = make_store()
+
+    assert store.get_materialized_state("unknown") is None

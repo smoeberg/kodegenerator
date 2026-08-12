@@ -6,6 +6,7 @@ from .models import (
     Evidence,
     KnowledgeRecord,
     KnowledgeState,
+    MaterializedKnowledgeState,
     VerificationMode,
     VerificationPolicy,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "Evidence",
     "KnowledgeRecord",
     "KnowledgeState",
+    "MaterializedKnowledgeState",
     "VerificationMode",
     "VerificationPolicy",
 ]
