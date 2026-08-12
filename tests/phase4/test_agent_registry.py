@@ -32,6 +32,43 @@ def test_identity_changes_when_declaration_changes():
     assert base != changed
 
 
+def test_identity_changes_when_instance_changes():
+    first = AgentIdentity.derive(
+        "verifier", AgentVersion(1, 0, 0), AgentRole.VERIFIER, (cap("verify"),), instance_id="sec-001"
+    )
+    second = AgentIdentity.derive(
+        "verifier", AgentVersion(1, 0, 0), AgentRole.VERIFIER, (cap("verify"),), instance_id="sec-002"
+    )
+    assert first != second
+
+
+def test_registry_supports_multiple_instances_of_same_role():
+    registry = AgentRegistry()
+    common = dict(
+        agent_type="security-auditor",
+        version=AgentVersion(1, 0, 0),
+        role=AgentRole.AUDITOR,
+        capabilities=(cap("verify"),),
+    )
+    first = registry.register(**common, instance_id="sec-001")
+    second = registry.register(**common, instance_id="sec-002")
+    assert first.identity != second.identity
+    assert first.instance_id == "sec-001"
+    assert second.instance_id == "sec-002"
+    assert [r.instance_id for r in registry.list(role=AgentRole.AUDITOR)] == ["sec-001", "sec-002"]
+
+
+def test_instance_id_must_be_non_empty():
+    registry = AgentRegistry()
+    with pytest.raises(RegistrationError):
+        registry.register(
+            agent_type="agent",
+            version=AgentVersion(1, 0, 0),
+            role=AgentRole.OTHER,
+            instance_id=" ",
+        )
+
+
 def test_capability_declaration_is_not_authorization():
     registry = AgentRegistry()
     record = registry.register(
