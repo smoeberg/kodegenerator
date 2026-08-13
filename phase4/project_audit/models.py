@@ -532,6 +532,7 @@ class ProjectAuditRequest:
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
+            parameters=self.execution_parameters(),  
         )
 
     def execution_parameters(self) -> Mapping[str, str]:
