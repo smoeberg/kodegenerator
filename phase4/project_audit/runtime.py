@@ -8,7 +8,6 @@ from pathlib import Path
 from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
 from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
-from phase4.authority.models import AuthorityRequest
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
 from phase4.execution.models import ExecutionRequest
@@ -132,32 +131,21 @@ class ProjectAuditRuntime:
             target_maturity=target_maturity,
         )
 
-        # One canonical request identity is shared by AI-3 and AI-4. The
-        # authority question and execution request must never be independently
-        # re-derived with different identities or parameter tuples.
-        request_id = request.request_fingerprint
+        # AI-3 evaluates this exact request. AI-4 receives an execution request
+        # carrying the same canonical identity and parameters.
+        authority_request = request.authority_request()
         execution_request = ExecutionRequest.create(
-            request_id=request_id,
-            agent_identity=request.agent_identity,
-            action=PROJECT_AUDIT_ACTION,
-            resource=request.resource,
-            context_packet_id=request.context_packet_id,
-            parameters=request.execution_parameters(),
+            request_id=authority_request.request_id,
+            agent_identity=authority_request.agent_identity,
+            action=authority_request.action,
+            resource=authority_request.resource,
+            context_packet_id=authority_request.context_packet_id,
+            parameters=authority_request.parameters,
             idempotency_key=f"project-audit:{request.request_fingerprint}",
         )
-        authority_request = AuthorityRequest.create(
-            request_id=execution_request.request_id,
-            agent_identity=execution_request.agent_identity,
-            agent_role=request.agent_role,
-            action=execution_request.action,
-            resource=execution_request.resource,
-            context_packet_id=execution_request.context_packet_id,
-            context=request.authority_context(),
-            parameters=dict(execution_request.parameters),
-        )
-        if authority_request.request_id != execution_request.request_id:
+        if execution_request.request_id != authority_request.request_id:
             raise ProjectAuditRuntimeError("AI-3 authority request identity differs from AI-4 execution request")
-        if authority_request.parameters != execution_request.parameters:
+        if execution_request.parameters != authority_request.parameters:
             raise ProjectAuditRuntimeError("AI-3 authority parameters differ from AI-4 execution parameters")
 
         authority = AuthorityEngine(
