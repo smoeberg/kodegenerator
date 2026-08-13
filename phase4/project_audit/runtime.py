@@ -5,38 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from phase4.agent_registry import (
-    AgentRegistry,
-    AgentRole,
-    AgentVersion,
-    Capability,
-)
-from phase4.authority import (
-    AuthorityDecision,
-    AuthorityEngine,
-    AuthorityPolicy,
-    AuthorityRule,
-    Decision,
-)
+from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
+from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityRequest
-from phase4.context_packet import (
-    ContextItem,
-    ContextPacketEngine,
-    ContextRequest,
-)
+from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.execution.models import ExecutionRequest
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import ProjectAuditExecutionAdapter, ProjectAuditProvider
 from .collector import ProjectEvidenceCollector
-from .models import (
-    PROJECT_AUDIT_ACTION,
-    MaturityLevel,
-    ProjectAuditReport,
-    ProjectAuditRequest,
-)
+from .models import PROJECT_AUDIT_ACTION, MaturityLevel, ProjectAuditReport, ProjectAuditRequest
 from .repository import GitRepositoryManifestBuilder
 
 DEFAULT_AUDIT_OBJECTIVES = (
@@ -65,13 +46,7 @@ class ProjectAuditRun:
 class ProjectAuditRuntime:
     """Collect, authorize, execute, and record one read-only project audit."""
 
-    def __init__(
-        self,
-        root: Path,
-        *,
-        max_files: int = 5_000,
-        max_bytes: int = 16 * 1024 * 1024,
-    ) -> None:
+    def __init__(self, root: Path, *, max_files: int = 5_000, max_bytes: int = 16 * 1024 * 1024) -> None:
         self._manifest_builder = GitRepositoryManifestBuilder(root)
         self._collector = ProjectEvidenceCollector(
             self._manifest_builder.root,
@@ -93,20 +68,13 @@ class ProjectAuditRuntime:
         target_maturity: MaturityLevel = MaturityLevel.PRODUCTION_READY,
     ) -> ProjectAuditRun:
         if any(character in repository for character in "*?["):
-            raise ValueError(
-                "repository authority resource must not contain glob characters"
-            )
-        manifest = self._manifest_builder.build(
-            repository=repository,
-            revision=revision,
-        )
+            raise ValueError("repository authority resource must not contain glob characters")
+        manifest = self._manifest_builder.build(repository=repository, revision=revision)
         evidence_bundle = self._collector.collect(manifest)
 
         provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip():
-            raise ProjectAuditRuntimeError(
-                "project-audit provider must declare a non-empty provider_id"
-            )
+            raise ProjectAuditRuntimeError("project-audit provider must declare a non-empty provider_id")
 
         registry = AgentRegistry()
         version = AgentVersion(1, 1, 0)
@@ -118,10 +86,7 @@ class ProjectAuditRuntime:
                 Capability.create(
                     PROJECT_AUDIT_ACTION,
                     version,
-                    parameters={
-                        "provider": provider_id,
-                        "specialization": "project_integrity",
-                    },
+                    parameters={"provider": provider_id, "specialization": "project_integrity"},
                 ),
             ),
             trust_anchor=manifest.manifest_id,
@@ -133,38 +98,25 @@ class ProjectAuditRuntime:
             ContextRequest(
                 agent_identity=agent_identity,
                 purpose=PROJECT_AUDIT_ACTION,
-                requested_keys=(
-                    "audit-boundary",
-                    "revision",
-                    "roadmap",
-                ),
+                requested_keys=("audit-boundary", "revision", "roadmap"),
             ),
             (
                 ContextItem(
                     source="architecture",
                     key="audit-boundary",
-                    value=(
-                        "Advisory read-only audit; P3-20 remains the authoritative "
-                        "PASS/FAIL gate."
-                    ),
+                    value="Advisory read-only audit; P3-20 remains the authoritative PASS/FAIL gate.",
                     provenance="phase4/project_audit/ARCHITECTURE.md",
                 ),
                 ContextItem(
                     source="repository-manifest",
                     key="revision",
-                    value={
-                        "commit_sha": manifest.commit_sha,
-                        "manifest_id": manifest.manifest_id,
-                    },
+                    value={"commit_sha": manifest.commit_sha, "manifest_id": manifest.manifest_id},
                     provenance=f"git:{manifest.commit_sha}",
                 ),
                 ContextItem(
                     source="roadmap",
                     key="roadmap",
-                    value=(
-                        "Choose the next slice from whole-project evidence, not "
-                        "package-local test success."
-                    ),
+                    value="Choose the next slice from whole-project evidence, not package-local test success.",
                     provenance="roadmap:phase4b-project-integrity",
                 ),
             ),
@@ -180,19 +132,34 @@ class ProjectAuditRuntime:
             target_maturity=target_maturity,
         )
 
-        # The exact AI-3 question must carry the same execution-bound
-        # parameters as the AI-4 request.  Do not rely on context metadata for
-        # parameter binding: VerifiedAuthorityGrant compares the parameter
-        # fingerprint explicitly at the AI-4 boundary.
-        authority_request = AuthorityRequest.create(
+        # One canonical request identity is shared by AI-3 and AI-4. The
+        # authority question and execution request must never be independently
+        # re-derived with different identities or parameter tuples.
+        request_id = request.request_fingerprint
+        execution_request = ExecutionRequest.create(
+            request_id=request_id,
             agent_identity=request.agent_identity,
-            agent_role=request.agent_role,
             action=PROJECT_AUDIT_ACTION,
             resource=request.resource,
             context_packet_id=request.context_packet_id,
-            context=request.authority_context(),
             parameters=request.execution_parameters(),
+            idempotency_key=f"project-audit:{request.request_fingerprint}",
         )
+        authority_request = AuthorityRequest.create(
+            request_id=execution_request.request_id,
+            agent_identity=execution_request.agent_identity,
+            agent_role=request.agent_role,
+            action=execution_request.action,
+            resource=execution_request.resource,
+            context_packet_id=execution_request.context_packet_id,
+            context=request.authority_context(),
+            parameters=dict(execution_request.parameters),
+        )
+        if authority_request.request_id != execution_request.request_id:
+            raise ProjectAuditRuntimeError("AI-3 authority request identity differs from AI-4 execution request")
+        if authority_request.parameters != execution_request.parameters:
+            raise ProjectAuditRuntimeError("AI-3 authority parameters differ from AI-4 execution parameters")
+
         authority = AuthorityEngine(
             AuthorityPolicy(
                 policy_id="policy.project-audit.runtime",
@@ -205,38 +172,27 @@ class ProjectAuditRuntime:
                         effect=Decision.ALLOW,
                         agent_identity=agent_identity,
                         agent_role=agent.role.value,
-                        required_context=tuple(
-                            sorted(request.authority_context().items())
-                        ),
+                        required_context=tuple(sorted(request.authority_context().items())),
                     ),
                 ),
             )
         ).evaluate(authority_request)
         if not authority.allowed:
-            raise ProjectAuditRuntimeError(
-                "AI-3 denied the exact project-audit request"
-            )
+            raise ProjectAuditRuntimeError("AI-3 denied the exact project-audit request")
 
-        # AI-3's decision becomes an execution capability only through the
-        # verified grant; raw decisions never cross into AI-4.
         grant = VerifiedAuthorityGrant.from_decision(authority)
+        if not grant.binds(execution_request):
+            raise ProjectAuditRuntimeError("AI-3 grant is not bound to the exact AI-4 execution request")
 
         adapter = ProjectAuditExecutionAdapter(
             adapter_id=f"adapter.project-audit.runtime:{provider_id}",
             provider=provider,
             requests=(request,),
         )
-        execution = ExecutionEngine((adapter,)).execute(
-            request.execution_request(
-                idempotency_key=f"project-audit:{request.request_fingerprint}"
-            ),
-            grant,
-        )
+        execution = ExecutionEngine((adapter,)).execute(execution_request, grant)
         outcome = OutcomeEngine().process(execution)
         if execution.status is not ExecutionStatus.SUCCEEDED:
-            raise ProjectAuditRuntimeError(
-                execution.error or "AI-4 project audit did not succeed"
-            )
+            raise ProjectAuditRuntimeError(execution.error or "AI-4 project audit did not succeed")
         if outcome.status is not OutcomeStatus.SUCCEEDED:
             raise ProjectAuditRuntimeError("AI-5 project-audit outcome did not succeed")
 
