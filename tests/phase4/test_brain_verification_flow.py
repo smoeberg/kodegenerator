@@ -163,7 +163,7 @@ def test_insufficient_result_expires_open_case_after_deadline(monkeypatch):
         captured["case"] = case
         return case
 
-    def insufficient(_policy, _observations):
+    def insufficient(self, _policy, _observations):
         captured["case"].deadline_at = datetime.now(timezone.utc) - timedelta(seconds=1)
         return VerificationResult.INSUFFICIENT
 
