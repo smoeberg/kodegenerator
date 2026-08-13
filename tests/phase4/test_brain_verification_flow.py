@@ -1,5 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
 from phase4.contracts import KnowledgeRecord, KnowledgeState, VerificationMode, VerificationPolicy
+from phase4.verification import flow as flow_module
+from phase4.verification.case import VerificationCase, VerificationCaseStatus
 from phase4.verification.flow import BrainVerificationFlow
 from phase4.verification.selector import VerifierSelector
 
@@ -93,3 +99,53 @@ def test_partial_quorum_does_not_materialize():
     assert outcome.result.value == "insufficient"
     assert outcome.materialized_version is None
     assert store.records == []
+
+
+def test_policy_timeout_is_propagated_to_verification_case(monkeypatch):
+    registry, flow, store = _flow()
+    selected = _selected(registry)
+    captured = {}
+    real_case = flow_module.VerificationCase
+
+    def capture_case(claim_id, policy_id, selection, *, deadline_at=None):
+        captured["deadline_at"] = deadline_at
+        return real_case(claim_id, policy_id, selection, deadline_at=deadline_at)
+
+    monkeypatch.setattr(flow_module, "VerificationCase", capture_case)
+    before = datetime.now(timezone.utc)
+    outcome = flow.verify_quorum(
+        _record(),
+        VerificationPolicy(
+            mode=VerificationMode.QUORUM,
+            quorum_size=3,
+            escalation_timeout_seconds=60,
+        ),
+        role=AgentRole.VERIFIER,
+        capability="claim.verify",
+        observations={agent_id: True for agent_id in selected},
+    )
+    after = datetime.now(timezone.utc)
+
+    assert outcome.result.value == "confirmed"
+    assert before + timedelta(seconds=60) <= captured["deadline_at"] <= after + timedelta(seconds=60)
+
+
+def test_expired_verification_case_is_rejected():
+    registry, _, _ = _flow()
+    selected = _selected(registry)
+    case = VerificationCase(
+        "claim-1",
+        "verification:quorum:3:0",
+        VerifierSelector(registry).select(
+            claim_id="claim-1",
+            policy_id="verification:quorum:3:0",
+            quorum_size=3,
+            role=AgentRole.VERIFIER,
+            capability="claim.verify",
+        ),
+        deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+
+    with pytest.raises(ValueError, match="deadline has expired"):
+        case.record(selected[0], True)
+    assert case.status is VerificationCaseStatus.EXPIRED

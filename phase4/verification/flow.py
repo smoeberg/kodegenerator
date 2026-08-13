@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from phase4.agent_registry import AgentRegistry, AgentRole
@@ -62,7 +63,17 @@ class BrainVerificationFlow:
             role=role,
             capability=capability,
         )
-        case = VerificationCase(record.record_id, self._policy_id(policy), selection)
+        deadline_at = None
+        if policy.escalation_timeout_seconds is not None:
+            deadline_at = datetime.now(timezone.utc) + timedelta(
+                seconds=policy.escalation_timeout_seconds
+            )
+        case = VerificationCase(
+            record.record_id,
+            self._policy_id(policy),
+            selection,
+            deadline_at=deadline_at,
+        )
         for agent_id, outcome in observations.items():
             case.record(agent_id, outcome)
 
