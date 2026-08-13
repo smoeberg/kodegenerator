@@ -10,6 +10,7 @@ from phase4.authority import (
     AuthorityRule,
     Decision,
 )
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionStatus
 from phase4.implementation_agent import (
@@ -87,7 +88,9 @@ def allow_decision(request: ImplementationRequest):
             ),
         ),
     )
-    return AuthorityEngine(policy).evaluate(authority_request)
+    decision = AuthorityEngine(policy).evaluate(authority_request)
+    assert decision.allowed
+    return VerifiedAuthorityGrant.from_decision(decision)
 
 
 def execute(
@@ -288,7 +291,7 @@ class TestImplementationAdapter:
         assert result.status is ExecutionStatus.REJECTED
         assert provider.calls == ()
 
-    def test_tampered_parameters_fail_at_adapter_boundary(self):
+    def test_tampered_parameters_fail_at_grant_boundary(self):
         request = make_request()
         provider = DeterministicFakeImplementationProvider(
             {request.request_fingerprint: VALID_DIFF}
@@ -310,8 +313,8 @@ class TestImplementationAdapter:
             execution_request, allow_decision(request)
         )
 
-        assert result.status is ExecutionStatus.FAILED
-        assert "parameters does not match" in result.error
+        assert result.status is ExecutionStatus.REJECTED
+        assert "authority grant is not bound" in result.error
         assert provider.calls == ()
 
     def test_unregistered_request_fails_without_provider_call(self):
