@@ -541,7 +541,7 @@ class ProjectAuditRequest:
     def execution_request(
         self, *, idempotency_key: str | None = None
     ) -> ExecutionRequest:
-        = self.authority_request()
+        authority_request = self.authority_request()
         return ExecutionRequest.create(
             request_id=authority_request.request_id,
             agent_identity=self.agent_identity,
