@@ -156,16 +156,15 @@ class ImplementationRequest:
         )
 
     def authority_context(self) -> Mapping[str, str]:
-        """Return the immutable request facts that AI-3 must authorize."""
+        """Return immutable request facts for AI-3 policy matching."""
         return {
-            "implementation_request_fingerprint": self.request_fingerprint,
             "scope_fingerprint": self.scope_fingerprint,
             "max_files": str(self.budget.max_files),
             "max_changed_lines": str(self.budget.max_changed_lines),
         }
 
     def authority_request(self) -> AuthorityRequest:
-        """Build an AI-3 request without making an authority decision."""
+        """Build the exact AI-3 question, including execution-bound parameters."""
         return AuthorityRequest.create(
             agent_identity=self.agent_identity,
             agent_role=self.agent_role,
@@ -173,6 +172,7 @@ class ImplementationRequest:
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
+            parameters=self.execution_parameters(),
         )
 
     def execution_parameters(self) -> Mapping[str, str]:
