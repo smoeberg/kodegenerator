@@ -8,7 +8,7 @@ from typing import Protocol
 from phase4.agent_registry import AgentRegistry, AgentRole
 from phase4.contracts import KnowledgeRecord, KnowledgeState, VerificationMode, VerificationPolicy
 
-from .case import VerificationCase
+from .case import VerificationCase, VerificationCaseStatus
 from .engine import VerificationEngine, VerificationResult
 from .selector import VerifierSelector
 
@@ -79,6 +79,12 @@ class BrainVerificationFlow:
 
         result = self._engine.evaluate(policy, case.observations.values())
         if result is VerificationResult.INSUFFICIENT:
+            if (
+                case.status is VerificationCaseStatus.OPEN
+                and case.deadline_at is not None
+                and datetime.now(timezone.utc) >= case.deadline_at
+            ):
+                case.expire()
             return BrainVerificationOutcome(
                 record=record,
                 result=result,

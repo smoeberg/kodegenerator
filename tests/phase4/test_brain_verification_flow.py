@@ -6,6 +6,7 @@ from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capabi
 from phase4.contracts import KnowledgeRecord, KnowledgeState, VerificationMode, VerificationPolicy
 from phase4.verification import flow as flow_module
 from phase4.verification.case import VerificationCase, VerificationCaseStatus
+from phase4.verification.engine import VerificationResult
 from phase4.verification.flow import BrainVerificationFlow
 from phase4.verification.selector import VerifierSelector
 
@@ -149,3 +150,33 @@ def test_expired_verification_case_is_rejected():
     with pytest.raises(ValueError, match="deadline has expired"):
         case.record(selected[0], True)
     assert case.status is VerificationCaseStatus.EXPIRED
+
+
+def test_insufficient_result_expires_open_case_after_deadline(monkeypatch):
+    registry, flow, _ = _flow()
+    selected = _selected(registry)
+    captured = {}
+    real_case = flow_module.VerificationCase
+
+    def capture_case(claim_id, policy_id, selection, *, deadline_at=None):
+        case = real_case(claim_id, policy_id, selection, deadline_at=deadline_at)
+        captured["case"] = case
+        return case
+
+    def insufficient(_policy, _observations):
+        captured["case"].deadline_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        return VerificationResult.INSUFFICIENT
+
+    monkeypatch.setattr(flow_module, "VerificationCase", capture_case)
+    monkeypatch.setattr(flow_module.VerificationEngine, "evaluate", insufficient)
+
+    outcome = flow.verify_quorum(
+        _record(),
+        VerificationPolicy(mode=VerificationMode.QUORUM, quorum_size=3),
+        role=AgentRole.VERIFIER,
+        capability="claim.verify",
+        observations={selected[0]: True, selected[1]: True},
+    )
+
+    assert outcome.result is VerificationResult.INSUFFICIENT
+    assert captured["case"].status is VerificationCaseStatus.EXPIRED
