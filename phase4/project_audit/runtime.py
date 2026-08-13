@@ -19,6 +19,7 @@ from phase4.authority import (
     Decision,
 )
 from phase4.authority.grants import VerifiedAuthorityGrant
+from phase4.authority.models import AuthorityRequest
 from phase4.context_packet import (
     ContextItem,
     ContextPacketEngine,
@@ -179,6 +180,19 @@ class ProjectAuditRuntime:
             target_maturity=target_maturity,
         )
 
+        # The exact AI-3 question must carry the same execution-bound
+        # parameters as the AI-4 request.  Do not rely on context metadata for
+        # parameter binding: VerifiedAuthorityGrant compares the parameter
+        # fingerprint explicitly at the AI-4 boundary.
+        authority_request = AuthorityRequest.create(
+            agent_identity=request.agent_identity,
+            agent_role=request.agent_role,
+            action=PROJECT_AUDIT_ACTION,
+            resource=request.resource,
+            context_packet_id=request.context_packet_id,
+            context=request.authority_context(),
+            parameters=request.execution_parameters(),
+        )
         authority = AuthorityEngine(
             AuthorityPolicy(
                 policy_id="policy.project-audit.runtime",
@@ -197,7 +211,7 @@ class ProjectAuditRuntime:
                     ),
                 ),
             )
-        ).evaluate(request.authority_request())
+        ).evaluate(authority_request)
         if not authority.allowed:
             raise ProjectAuditRuntimeError(
                 "AI-3 denied the exact project-audit request"
