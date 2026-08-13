@@ -234,12 +234,9 @@ class ImplementationAgentRuntime:
             raise ImplementationAgentAuthorityError(authority)
         authority_grant = VerifiedAuthorityGrant.from_decision(authority)
 
-        grant = VerifiedAuthorityGrant.from_decision(authority)
-
         self._register_request_once(request)
         execution = self._execution.execute(
             request.execution_request(idempotency_key=idempotency_key),
-            grant,
             authority_grant,
         )
         outcome = self._outcomes.process(execution)
