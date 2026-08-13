@@ -532,6 +532,7 @@ class ProjectAuditRequest:
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
+            parameters=self.execution_parameters(),
         )
 
     def execution_parameters(self) -> Mapping[str, str]:
@@ -540,7 +541,7 @@ class ProjectAuditRequest:
     def execution_request(
         self, *, idempotency_key: str | None = None
     ) -> ExecutionRequest:
-        authority_request = self.authority_request()
+        = self.authority_request()
         return ExecutionRequest.create(
             request_id=authority_request.request_id,
             agent_identity=self.agent_identity,
