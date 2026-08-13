@@ -20,6 +20,7 @@ from phase4.authority import (
     AuthorityPolicy,
     AuthorityRule,
     Decision,
+    VerifiedAuthorityGrant,
 )
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import (
@@ -57,11 +58,7 @@ class ImplementationAgentAuthorityError(ImplementationAgentRuntimeError):
 class ImplementationAgentExecutionError(ImplementationAgentRuntimeError):
     """AI-4 or AI-5 did not produce a usable patch proposal."""
 
-    def __init__(
-        self,
-        execution: ExecutionResult,
-        outcome: OutcomeRecord,
-    ) -> None:
+    def __init__(self, execution: ExecutionResult, outcome: OutcomeRecord) -> None:
         self.execution = execution
         self.outcome = outcome
         super().__init__("implementation-agent execution did not succeed")
@@ -83,6 +80,7 @@ class ImplementationAgentRun:
     context_packet: ContextPacket
     request: ImplementationRequest
     authority: AuthorityDecision
+    authority_grant: VerifiedAuthorityGrant
     execution: ExecutionResult
     outcome: OutcomeRecord
     proposal: PatchProposal
@@ -234,6 +232,7 @@ class ImplementationAgentRuntime:
         authority = self._authority.evaluate(request.authority_request())
         if not authority.allowed:
             raise ImplementationAgentAuthorityError(authority)
+        authority_grant = VerifiedAuthorityGrant.from_decision(authority)
 
         grant = VerifiedAuthorityGrant.from_decision(authority)
 
@@ -241,6 +240,7 @@ class ImplementationAgentRuntime:
         execution = self._execution.execute(
             request.execution_request(idempotency_key=idempotency_key),
             grant,
+            authority_grant,
         )
         outcome = self._outcomes.process(execution)
         if execution.status not in {
@@ -263,6 +263,7 @@ class ImplementationAgentRuntime:
             context_packet=packet,
             request=request,
             authority=authority,
+            authority_grant=authority_grant,
             execution=execution,
             outcome=outcome,
             proposal=proposal,
