@@ -51,6 +51,7 @@ class AuthorityRequest:
         agent_role: Optional[str] = None,
         context: Mapping[str, str] | None = None,
         parameters: Mapping[str, str] | None = None,
+        request_id: str | None = None,
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
         canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
@@ -65,9 +66,9 @@ class AuthorityRequest:
             "parameters": canonical_parameters,
         }
         encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
-        request_id = hashlib.sha256(encoded).hexdigest()
+        canonical_request_id = hashlib.sha256(encoded).hexdigest()
         return AuthorityRequest(
-            request_id=request_id,
+            request_id=request_id or canonical_request_id,
             agent_identity=agent_identity,
             action=action,
             resource=resource,
@@ -122,13 +123,7 @@ class AuthorityPolicy:
 
 @dataclass(frozen=True)
 class AuthorityDecision:
-    """Immutable, auditable result of an authority evaluation.
-
-    ``_provenance_token`` is populated only by ``AuthorityEngine``. It is not a
-    public constructor argument and is intentionally excluded from equality and
-    representation so authority provenance cannot be recreated by copying the
-    decision fields.
-    """
+    """Immutable, auditable result of an authority evaluation."""
 
     request_id: str
     decision: Decision
