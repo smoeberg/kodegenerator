@@ -532,7 +532,6 @@ class ProjectAuditRequest:
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
-            parameters=self.execution_parameters(),
             parameters=self.execution_parameters(),  
         )
 
