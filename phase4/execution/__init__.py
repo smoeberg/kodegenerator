@@ -9,6 +9,14 @@ from .models import (
     GovernedDispatch,
     execution_id_for,
 )
+from .replay_ledger import (
+    ClaimOutcome,
+    ClaimOutcomeKind,
+    ExecutionReplayLedger,
+    InMemoryReplayLedger,
+    LedgerRecord,
+    LedgerStatus,
+)
 
 __all__ = [
     "AdapterResult",
@@ -22,6 +30,12 @@ __all__ = [
     "ExecutionStatus",
     "GovernedDispatch",
     "execution_id_for",
+    "ClaimOutcome",
+    "ClaimOutcomeKind",
+    "ExecutionReplayLedger",
+    "InMemoryReplayLedger",
+    "LedgerRecord",
+    "LedgerStatus",
 ]
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
