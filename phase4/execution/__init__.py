@@ -1,6 +1,7 @@
 """Phase 4 AI-4 Execution Engine public contract."""
 
 from .adapters import AdapterResult, ExecutionAdapter, StaticExecutionAdapter
+from .durable_ledger import ExecutionReplayLedgerModel, SqlAlchemyReplayLedger
 from .engine import ExecutionEngine, ExecutionError, ExecutionRejected
 from .models import (
     ExecutionRequest,
@@ -8,6 +9,14 @@ from .models import (
     ExecutionStatus,
     GovernedDispatch,
     execution_id_for,
+)
+from .replay_ledger import (
+    ClaimOutcome,
+    ClaimOutcomeKind,
+    ExecutionReplayLedger,
+    InMemoryReplayLedger,
+    LedgerRecord,
+    LedgerStatus,
 )
 
 __all__ = [
@@ -22,6 +31,14 @@ __all__ = [
     "ExecutionStatus",
     "GovernedDispatch",
     "execution_id_for",
+    "ClaimOutcome",
+    "ClaimOutcomeKind",
+    "ExecutionReplayLedger",
+    "InMemoryReplayLedger",
+    "LedgerRecord",
+    "LedgerStatus",
+    "ExecutionReplayLedgerModel",
+    "SqlAlchemyReplayLedger",
 ]
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
