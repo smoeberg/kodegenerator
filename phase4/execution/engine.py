@@ -3,12 +3,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from threading import RLock
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision, Decision
 
 from .adapters import ExecutionAdapter
+from .ledger import (
+    ClaimResult,
+    ExecutionLedger,
+    InProcessLedger,
+    PendingClaimOutcome,
+    ReplayPolicy,
+)
 from .models import (
     ExecutionRequest,
     ExecutionResult,
@@ -27,13 +34,27 @@ class ExecutionRejected(ExecutionError):
 
 
 class ExecutionEngine:
-    """Execute only work covered by a verified AI-3 authority grant."""
+    """Execute only work covered by a verified AI-3 authority grant.
 
-    def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = ()) -> None:
+    A durable replay ``ledger`` (P4-01) may be supplied to enforce single
+    execution of an ``execution_id`` across engine instances (restarts,
+    workers, nodes). Without a ledger the legacy in-process replay store is
+    used, which is not durable and not shared across processes.
+    """
+
+    def __init__(
+        self,
+        adapters: Tuple[ExecutionAdapter, ...] = (),
+        *,
+        ledger: Optional[ExecutionLedger] = None,
+        replay_policy: Optional[ReplayPolicy] = None,
+    ) -> None:
         self._adapters: Dict[str, ExecutionAdapter] = {}
         self._results: Dict[str, ExecutionResult] = {}
         self._audit: list[ExecutionResult] = []
         self._lock = RLock()
+        self._ledger: Optional[ExecutionLedger] = ledger
+        self._replay_policy: ReplayPolicy = replay_policy or ReplayPolicy()
         for adapter in adapters:
             self.register_adapter(adapter)
 
@@ -104,6 +125,13 @@ class ExecutionEngine:
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
 
+        # P4-01: when a durable ledger is configured, claim the execution_id
+        # atomically before invoking the adapter. This blocks RA-1 (restart),
+        # RA-2 (multi-worker), RA-3 (crash during adapter), and RA-4 (cross-node
+        # replay of a leaked genuine grant).
+        if self._ledger is not None:
+            return self._execute_with_ledger(request, grant, decision, dispatch, execution_id)
+
         with self._lock:
             previous = self._results.get(execution_id)
             if previous is not None:
@@ -133,49 +161,179 @@ class ExecutionEngine:
                     decision=decision,
                 )
 
-            try:
-                adapter_result = adapter.execute(request, dispatch=dispatch)
-                if adapter_result is None:
-                    return self._rejected(
-                        request,
-                        "adapter rejected execution without a verified governed dispatch",
-                        decision=decision,
-                    )
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.SUCCEEDED,
-                    adapter_id=adapter.adapter_id,
-                    output=adapter_result.output,
-                    error=None,
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
-            except Exception as exc:
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.FAILED,
-                    adapter_id=adapter.adapter_id,
-                    output=(),
-                    error=f"{type(exc).__name__}: {exc}",
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
-
+            result = self._run_adapter(request, decision, dispatch, execution_id, adapter)
             self._results[execution_id] = result
             self._audit.append(result)
             return result
+
+    def _execute_with_ledger(
+        self,
+        request: ExecutionRequest,
+        grant: VerifiedAuthorityGrant,
+        decision: AuthorityDecision,
+        dispatch: GovernedDispatch,
+        execution_id: str,
+    ) -> ExecutionResult:
+        """Claim, run the adapter once, and complete against the durable ledger."""
+        assert self._ledger is not None  # narrowed by caller
+        started_at = datetime.now(timezone.utc).isoformat()
+        claim, existing = self._ledger.claim(
+            execution_id,
+            request_id=request.request_id,
+            grant_id=getattr(grant, "grant_id", ""),
+            authority_policy_id=decision.policy_id,
+            authority_policy_version=decision.policy_version,
+            started_at=started_at,
+        )
+
+        if claim is ClaimResult.REPLAYED and existing is not None:
+            replay = ExecutionResult(
+                execution_id=existing.execution_id,
+                request_id=existing.request_id,
+                authority_policy_id=existing.authority_policy_id,
+                authority_policy_version=existing.authority_policy_version,
+                agent_identity=request.agent_identity,
+                action=request.action,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                status=ExecutionStatus.REPLAYED,
+                adapter_id=existing.adapter_id or "none",
+                output=(),
+                error="idempotent replay; adapter was not invoked again",
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            with self._lock:
+                self._audit.append(replay)
+            return replay
+
+        if claim is ClaimResult.PENDING:
+            # An in-flight execution exists. Apply the policy-driven behaviour.
+            if self._replay_policy.pending_claim is PendingClaimOutcome.WAIT:
+                terminal = self._ledger.wait_for_terminal(execution_id, timeout=5.0)
+                if terminal is not None:
+                    replay = ExecutionResult(
+                        execution_id=terminal.execution_id,
+                        request_id=terminal.request_id,
+                        authority_policy_id=terminal.authority_policy_id,
+                        authority_policy_version=terminal.authority_policy_version,
+                        agent_identity=request.agent_identity,
+                        action=request.action,
+                        resource=request.resource,
+                        context_packet_id=request.context_packet_id,
+                        status=ExecutionStatus.REPLAYED,
+                        adapter_id=terminal.adapter_id or "none",
+                        output=(),
+                        error="idempotent replay after pending wait; adapter not invoked",
+                        executed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    with self._lock:
+                        self._audit.append(replay)
+                    return replay
+                # Timed out waiting: fail closed.
+                return self._rejected(
+                    request,
+                    "execution is in flight and the pending wait timed out",
+                    decision=decision,
+                )
+            return self._rejected(
+                request,
+                "execution is already in flight (pending claim)",
+                decision=decision,
+            )
+
+        # ACQUIRED: this caller owns the execution and must run the adapter.
+        with self._lock:
+            adapter = self._adapters.get(request.action)
+        if adapter is None:
+            self._ledger.complete(
+                execution_id,
+                status=ExecutionStatus.FAILED,
+                adapter_id="none",
+                outcome_fingerprint=None,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                error=f"no execution adapter registered for action {request.action!r}",
+            )
+            return self._rejected(
+                request,
+                f"no execution adapter registered for action {request.action!r}",
+                decision=decision,
+            )
+
+        result = self._run_adapter(request, decision, dispatch, execution_id, adapter)
+
+        if result.status is ExecutionStatus.SUCCEEDED or result.status is ExecutionStatus.FAILED:
+            self._ledger.complete(
+                execution_id,
+                status=result.status,
+                adapter_id=result.adapter_id,
+                outcome_fingerprint=None,
+                completed_at=result.executed_at,
+                error=result.error,
+            )
+
+        with self._lock:
+            self._results[execution_id] = result
+            self._audit.append(result)
+        return result
+
+    def _run_adapter(
+        self,
+        request: ExecutionRequest,
+        decision: AuthorityDecision,
+        dispatch: GovernedDispatch,
+        execution_id: str,
+        adapter: ExecutionAdapter,
+    ) -> ExecutionResult:
+        """Invoke the adapter once and build the result. Side effects only here."""
+        try:
+            adapter_result = adapter.execute(request, dispatch=dispatch)
+            if adapter_result is None:
+                return ExecutionResult(
+                    execution_id=execution_id,
+                    request_id=request.request_id,
+                    authority_policy_id=decision.policy_id,
+                    authority_policy_version=decision.policy_version,
+                    agent_identity=request.agent_identity,
+                    action=request.action,
+                    resource=request.resource,
+                    context_packet_id=request.context_packet_id,
+                    status=ExecutionStatus.REJECTED,
+                    adapter_id="none",
+                    output=(),
+                    error="adapter rejected execution without a verified governed dispatch",
+                    executed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            return ExecutionResult(
+                execution_id=execution_id,
+                request_id=request.request_id,
+                authority_policy_id=decision.policy_id,
+                authority_policy_version=decision.policy_version,
+                agent_identity=request.agent_identity,
+                action=request.action,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                status=ExecutionStatus.SUCCEEDED,
+                adapter_id=adapter.adapter_id,
+                output=adapter_result.output,
+                error=None,
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as exc:
+            return ExecutionResult(
+                execution_id=execution_id,
+                request_id=request.request_id,
+                authority_policy_id=decision.policy_id,
+                authority_policy_version=decision.policy_version,
+                agent_identity=request.agent_identity,
+                action=request.action,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                status=ExecutionStatus.FAILED,
+                adapter_id=adapter.adapter_id,
+                output=(),
+                error=f"{type(exc).__name__}: {exc}",
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
 
     def audit_trail(self) -> Tuple[ExecutionResult, ...]:
         """Return an immutable snapshot of execution records."""
