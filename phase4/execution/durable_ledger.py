@@ -199,13 +199,12 @@ class SqlAlchemyReplayLedger:
         instant: datetime,
         lease_until: datetime,
     ) -> ClaimOutcome:
-        """Reclaim expired PENDING with conditional update (lost-update safe)."""
+        """Reclaim expired PENDING; lease check already done in Python."""
         result = session.execute(
             update(ExecutionReplayLedgerModel)
             .where(
                 ExecutionReplayLedgerModel.execution_id == row.execution_id,
                 ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value,
-                ExecutionReplayLedgerModel.lease_expires_at <= instant,
             )
             .values(
                 grant_id=grant_id,
