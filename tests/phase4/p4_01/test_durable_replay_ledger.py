@@ -23,12 +23,11 @@ from phase4.execution.durable_ledger import (
     SqlAlchemyReplayLedger,
 )
 from phase4.execution.models import ExecutionResult
-from phase4.execution.replay_ledger import ClaimOutcomeKind, LedgerStatus
+from phase4.execution.replay_ledger import ClaimOutcomeKind, LedgerStatus, StaleClaimTokenError
 
 
 def _make_ledger(url: str = "sqlite:///:memory:") -> tuple[SqlAlchemyReplayLedger, any]:
     engine = create_engine(url, future=True)
-    # Ensure durable model is registered on Base.metadata
     assert ExecutionReplayLedgerModel.__tablename__ == "execution_replay_ledger"
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -55,8 +54,13 @@ def _result(execution_id: str, status: ExecutionStatus) -> ExecutionResult:
 
 def test_durable_claim_succeed_and_replay():
     ledger, _ = _make_ledger()
-    assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
-    ledger.complete_succeeded("e1", _result("e1", ExecutionStatus.SUCCEEDED))
+    claim = ledger.try_claim("e1")
+    assert claim.kind is ClaimOutcomeKind.ACQUIRED
+    ledger.complete_succeeded(
+        "e1",
+        _result("e1", ExecutionStatus.SUCCEEDED),
+        fencing_token=claim.record.fencing_token,
+    )
     again = ledger.try_claim("e1")
     assert again.kind is ClaimOutcomeKind.ALREADY_SUCCEEDED
     assert again.record is not None
@@ -66,8 +70,12 @@ def test_durable_claim_succeed_and_replay():
 
 def test_durable_failed_is_retryable():
     ledger, _ = _make_ledger()
-    ledger.try_claim("e1")
-    ledger.complete_failed("e1", _result("e1", ExecutionStatus.FAILED))
+    claim = ledger.try_claim("e1")
+    ledger.complete_failed(
+        "e1",
+        _result("e1", ExecutionStatus.FAILED),
+        fencing_token=claim.record.fencing_token,
+    )
     assert ledger.get("e1").status is LedgerStatus.FAILED
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
 
@@ -80,14 +88,13 @@ def test_durable_pending_is_in_flight():
 
 def test_durable_abandon_releases_row():
     ledger, _ = _make_ledger()
-    ledger.try_claim("e1")
-    ledger.abandon("e1")
+    claim = ledger.try_claim("e1")
+    ledger.abandon("e1", fencing_token=claim.record.fencing_token)
     assert ledger.get("e1") is None
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
 
 
 def test_survives_process_restart_via_file_db(tmp_path: Path):
-    """RA-1: succeeded claim remains after new engine/session on same DB file."""
     db_path = tmp_path / "replay.sqlite"
     url = f"sqlite:///{db_path}"
 
@@ -139,7 +146,6 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
     assert calls["n"] == 1
     engine1.dispose()
 
-    # "Restart": new connection pool + engine, same file
     ledger2, engine2 = _make_ledger(url)
     engine_b = ExecutionEngine(
         (StaticExecutionAdapter("b", "demo.read", handler),),
@@ -153,5 +159,9 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
 
 def test_complete_without_pending_raises():
     ledger, _ = _make_ledger()
-    with pytest.raises(RuntimeError, match="pending"):
-        ledger.complete_succeeded("missing", _result("missing", ExecutionStatus.SUCCEEDED))
+    with pytest.raises(StaleClaimTokenError):
+        ledger.complete_succeeded(
+            "missing",
+            _result("missing", ExecutionStatus.SUCCEEDED),
+            fencing_token="dead",
+        )
