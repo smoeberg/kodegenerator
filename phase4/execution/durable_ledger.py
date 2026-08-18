@@ -1,9 +1,4 @@
-"""Durable SQLAlchemy backend for the P4-01 execution replay ledger.
-
-Implements the same success-only state machine as InMemoryReplayLedger,
-including claim leases so expired PENDING rows can be reclaimed after a
-crashed worker (RA-3).
-"""
+"""Durable SQLAlchemy backend for the P4-01 execution replay ledger."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -23,14 +18,14 @@ from .replay_ledger import (
     ClaimOutcomeKind,
     LedgerRecord,
     LedgerStatus,
+    StaleClaimTokenError,
     _aware_utc,
     _lease_expired,
+    _new_fencing_token,
 )
 
 
 class ExecutionReplayLedgerModel(Base):
-    """Durable claim + outcome row keyed by execution_id."""
-
     __tablename__ = "execution_replay_ledger"
 
     execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -43,6 +38,7 @@ class ExecutionReplayLedgerModel(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    fencing_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -92,12 +88,11 @@ def _to_record(row: ExecutionReplayLedgerModel) -> LedgerRecord:
         grant_id=row.grant_id,
         request_id=row.request_id,
         lease_expires_at=row.lease_expires_at,
+        fencing_token=row.fencing_token,
     )
 
 
 class SqlAlchemyReplayLedger:
-    """Crash-safe replay ledger backed by a shared SQLAlchemy session factory."""
-
     def __init__(
         self,
         session_factory: Callable[[], Session],
@@ -121,6 +116,7 @@ class SqlAlchemyReplayLedger:
             raise ValueError("execution_id must be non-empty")
         instant = _aware_utc(now)
         lease_until = instant + timedelta(seconds=self.claim_lease_seconds)
+        token = _new_fencing_token()
 
         with self.session_factory() as session:
             row = session.get(ExecutionReplayLedgerModel, execution_id)
@@ -135,6 +131,7 @@ class SqlAlchemyReplayLedger:
                         started_at=instant,
                         completed_at=None,
                         lease_expires_at=lease_until,
+                        fencing_token=token,
                         error_text=None,
                     )
                 )
@@ -153,6 +150,7 @@ class SqlAlchemyReplayLedger:
                         grant_id=grant_id,
                         request_id=request_id,
                         lease_expires_at=lease_until,
+                        fencing_token=token,
                     ),
                 )
 
@@ -175,6 +173,7 @@ class SqlAlchemyReplayLedger:
                     request_id=request_id,
                     instant=instant,
                     lease_until=lease_until,
+                    fencing_token=token,
                 )
 
             if row.status == LedgerStatus.FAILED.value:
@@ -185,6 +184,7 @@ class SqlAlchemyReplayLedger:
                     request_id=request_id,
                     instant=instant,
                     lease_until=lease_until,
+                    fencing_token=token,
                 )
 
             raise RuntimeError(f"unknown ledger status {row.status!r}")
@@ -198,8 +198,8 @@ class SqlAlchemyReplayLedger:
         request_id: str | None,
         instant: datetime,
         lease_until: datetime,
+        fencing_token: str,
     ) -> ClaimOutcome:
-        """Reclaim expired PENDING; lease check already done in Python."""
         result = session.execute(
             update(ExecutionReplayLedgerModel)
             .where(
@@ -213,6 +213,7 @@ class SqlAlchemyReplayLedger:
                 started_at=instant,
                 completed_at=None,
                 lease_expires_at=lease_until,
+                fencing_token=fencing_token,
                 error_text=None,
             )
         )
@@ -220,9 +221,7 @@ class SqlAlchemyReplayLedger:
         if result.rowcount != 1:
             refreshed = session.get(ExecutionReplayLedgerModel, row.execution_id)
             if refreshed is None:
-                raise RuntimeError(
-                    f"pending reclaim lost row for {row.execution_id!r}"
-                )
+                raise RuntimeError(f"pending reclaim lost row for {row.execution_id!r}")
             if refreshed.status == LedgerStatus.SUCCEEDED.value:
                 return ClaimOutcome(
                     kind=ClaimOutcomeKind.ALREADY_SUCCEEDED,
@@ -240,6 +239,7 @@ class SqlAlchemyReplayLedger:
                 grant_id=grant_id,
                 request_id=request_id,
                 lease_expires_at=lease_until,
+                fencing_token=fencing_token,
             ),
         )
 
@@ -252,6 +252,7 @@ class SqlAlchemyReplayLedger:
         request_id: str | None,
         instant: datetime,
         lease_until: datetime,
+        fencing_token: str,
     ) -> ClaimOutcome:
         result = session.execute(
             update(ExecutionReplayLedgerModel)
@@ -267,6 +268,7 @@ class SqlAlchemyReplayLedger:
                 started_at=instant,
                 completed_at=None,
                 lease_expires_at=lease_until,
+                fencing_token=fencing_token,
                 error_text=None,
             )
         )
@@ -292,6 +294,7 @@ class SqlAlchemyReplayLedger:
                 grant_id=grant_id,
                 request_id=request_id,
                 lease_expires_at=lease_until,
+                fencing_token=fencing_token,
             ),
         )
 
@@ -306,9 +309,7 @@ class SqlAlchemyReplayLedger:
     ) -> ClaimOutcome:
         row = session.get(ExecutionReplayLedgerModel, execution_id)
         if row is None:
-            raise RuntimeError(
-                f"integrity conflict for {execution_id!r} but row missing"
-            )
+            raise RuntimeError(f"integrity conflict for {execution_id!r} but row missing")
         if row.status == LedgerStatus.SUCCEEDED.value:
             return ClaimOutcome(
                 kind=ClaimOutcomeKind.ALREADY_SUCCEEDED,
@@ -323,6 +324,7 @@ class SqlAlchemyReplayLedger:
                     request_id=request_id,
                     instant=instant,
                     lease_until=lease_until,
+                    fencing_token=_new_fencing_token(),
                 )
             return ClaimOutcome(
                 kind=ClaimOutcomeKind.IN_FLIGHT,
@@ -336,52 +338,96 @@ class SqlAlchemyReplayLedger:
                 request_id=request_id,
                 instant=instant,
                 lease_until=lease_until,
+                fencing_token=_new_fencing_token(),
             )
         return ClaimOutcome(
             kind=ClaimOutcomeKind.IN_FLIGHT,
             record=_to_record(row),
         )
 
-    def complete_succeeded(self, execution_id: str, result: ExecutionResult) -> None:
+    def complete_succeeded(
+        self,
+        execution_id: str,
+        result: ExecutionResult,
+        *,
+        fencing_token: str,
+    ) -> None:
         if result.status is not ExecutionStatus.SUCCEEDED:
             raise ValueError("complete_succeeded requires SUCCEEDED result")
+        if not fencing_token or not fencing_token.strip():
+            raise ValueError("fencing_token must be non-empty")
         now = datetime.now(timezone.utc)
         with self.session_factory() as session:
-            row = session.get(ExecutionReplayLedgerModel, execution_id)
-            if row is None or row.status != LedgerStatus.PENDING.value:
-                raise RuntimeError(
-                    f"complete_succeeded requires pending claim for {execution_id!r}"
+            upd = session.execute(
+                update(ExecutionReplayLedgerModel)
+                .where(
+                    ExecutionReplayLedgerModel.execution_id == execution_id,
+                    ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value,
+                    ExecutionReplayLedgerModel.fencing_token == fencing_token,
                 )
-            row.status = LedgerStatus.SUCCEEDED.value
-            row.result_json = _result_to_json(result)
-            row.completed_at = now
-            row.lease_expires_at = None
-            row.error_text = None
+                .values(
+                    status=LedgerStatus.SUCCEEDED.value,
+                    result_json=_result_to_json(result),
+                    completed_at=now,
+                    lease_expires_at=None,
+                    fencing_token=None,
+                    error_text=None,
+                )
+            )
             session.commit()
+            if upd.rowcount != 1:
+                raise StaleClaimTokenError(
+                    f"complete_succeeded fencing token mismatch for {execution_id!r}"
+                )
 
-    def complete_failed(self, execution_id: str, result: ExecutionResult) -> None:
+    def complete_failed(
+        self,
+        execution_id: str,
+        result: ExecutionResult,
+        *,
+        fencing_token: str,
+    ) -> None:
         if result.status is not ExecutionStatus.FAILED:
             raise ValueError("complete_failed requires FAILED result")
+        if not fencing_token or not fencing_token.strip():
+            raise ValueError("fencing_token must be non-empty")
         now = datetime.now(timezone.utc)
+        with self.session_factory() as session:
+            upd = session.execute(
+                update(ExecutionReplayLedgerModel)
+                .where(
+                    ExecutionReplayLedgerModel.execution_id == execution_id,
+                    ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value,
+                    ExecutionReplayLedgerModel.fencing_token == fencing_token,
+                )
+                .values(
+                    status=LedgerStatus.FAILED.value,
+                    result_json=_result_to_json(result),
+                    completed_at=now,
+                    lease_expires_at=None,
+                    fencing_token=None,
+                    error_text=result.error,
+                )
+            )
+            session.commit()
+            if upd.rowcount != 1:
+                raise StaleClaimTokenError(
+                    f"complete_failed fencing token mismatch for {execution_id!r}"
+                )
+
+    def abandon(self, execution_id: str, *, fencing_token: str) -> None:
+        if not fencing_token or not fencing_token.strip():
+            raise ValueError("fencing_token must be non-empty")
         with self.session_factory() as session:
             row = session.get(ExecutionReplayLedgerModel, execution_id)
             if row is None or row.status != LedgerStatus.PENDING.value:
-                raise RuntimeError(
-                    f"complete_failed requires pending claim for {execution_id!r}"
+                return
+            if row.fencing_token != fencing_token:
+                raise StaleClaimTokenError(
+                    f"abandon fencing token mismatch for {execution_id!r}"
                 )
-            row.status = LedgerStatus.FAILED.value
-            row.result_json = _result_to_json(result)
-            row.completed_at = now
-            row.lease_expires_at = None
-            row.error_text = result.error
+            session.delete(row)
             session.commit()
-
-    def abandon(self, execution_id: str) -> None:
-        with self.session_factory() as session:
-            row = session.get(ExecutionReplayLedgerModel, execution_id)
-            if row is not None and row.status == LedgerStatus.PENDING.value:
-                session.delete(row)
-                session.commit()
 
     def get(self, execution_id: str) -> LedgerRecord | None:
         with self.session_factory() as session:

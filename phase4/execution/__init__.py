@@ -17,6 +17,7 @@ from .replay_ledger import (
     InMemoryReplayLedger,
     LedgerRecord,
     LedgerStatus,
+    StaleClaimTokenError,
 )
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "InMemoryReplayLedger",
     "LedgerRecord",
     "LedgerStatus",
+    "StaleClaimTokenError",
     "ExecutionReplayLedgerModel",
     "SqlAlchemyReplayLedger",
 ]
