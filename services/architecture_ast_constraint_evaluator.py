@@ -1,10 +1,11 @@
 """AST- and source-based evaluation of Architecture Contract v1 constraints.
 
 Supported constraint types (v1):
-- forbid_pattern / require_pattern: token-prepared regex with optional match_mode
-  and line numbers (params.match_mode: include_strings | code_only)
-- forbid_call: structured AST Call matching (callee + optional keyword constants)
-- no_path_traversal_writes: AST detects writes/open calls that embed '..'
+- forbid_pattern / require_pattern: token-prepared regex with match_mode + line numbers
+- forbid_call: structured AST Call matching
+- no_path_traversal_writes: AST write/open with '..'
+- max_module_fanout: unique outbound internal imports per source file
+- allowlisted_dependencies_only: third-party packages must be on allowlist
 
 Unsupported constraint types with severity=block fail closed.
 """
@@ -27,6 +28,12 @@ from services.architecture_ast_source import (
     prepare_pattern_source,
 )
 from services.architecture_dependency_evaluator import CheckResult, normalize_repo_path
+from services.architecture_graph_constraints import (
+    evaluate_allowlisted_dependencies,
+    evaluate_max_module_fanout,
+    load_edges,
+    load_externals,
+)
 
 
 class ConstraintEvaluationError(ValueError):
@@ -49,7 +56,14 @@ _SKIP_DIRS = frozenset(
 )
 
 _SUPPORTED = frozenset(
-    {"forbid_pattern", "require_pattern", "forbid_call", "no_path_traversal_writes"}
+    {
+        "forbid_pattern",
+        "require_pattern",
+        "forbid_call",
+        "no_path_traversal_writes",
+        "max_module_fanout",
+        "allowlisted_dependencies_only",
+    }
 )
 
 
@@ -83,7 +97,7 @@ class ConstraintEvaluationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.3"},
+            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.4"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -233,6 +247,28 @@ def evaluate_constraints(
     checks: list[CheckResult] = []
     block_failed = False
     files = list(_iter_python_files(workspace))
+
+    # Lazy-loaded graph data for graph constraints
+    edges_cache: list | None = None
+    externals_cache: list | None = None
+
+    def edges():
+        nonlocal edges_cache
+        if edges_cache is None:
+            try:
+                edges_cache = load_edges(workspace)
+            except ValueError as exc:
+                raise ConstraintEvaluationError(str(exc)) from exc
+        return edges_cache
+
+    def externals():
+        nonlocal externals_cache
+        if externals_cache is None:
+            try:
+                externals_cache = load_externals(workspace)
+            except ValueError as exc:
+                raise ConstraintEvaluationError(str(exc)) from exc
+        return externals_cache
 
     if not contract.constraints:
         checks.append(
@@ -449,6 +485,24 @@ def evaluate_constraints(
                             ),
                         )
                     )
+
+            elif constraint.type == "max_module_fanout":
+                fanout_checks = evaluate_max_module_fanout(constraint, edges())
+                for c in fanout_checks:
+                    if c.status == "FAIL" and constraint.severity == "block":
+                        block_failed = True
+                    elif c.status == "FAIL":
+                        block_failed = block_failed or c.severity == "block"
+                checks.extend(fanout_checks)
+
+            elif constraint.type == "allowlisted_dependencies_only":
+                allow_checks = evaluate_allowlisted_dependencies(constraint, externals())
+                for c in allow_checks:
+                    if c.status == "FAIL" and (
+                        constraint.severity == "block" or c.severity == "block"
+                    ):
+                        block_failed = True
+                checks.extend(allow_checks)
 
     overall = "FAIL" if block_failed else "PASS"
     return ConstraintEvaluationResult(
