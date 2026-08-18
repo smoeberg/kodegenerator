@@ -1,5 +1,13 @@
 """Phase 4 AI-3 Authority Engine public contract."""
 
+from .audit import (
+    AuthorityAuditSink,
+    NullAuthorityAuditSink,
+    RecordingAuthorityAuditSink,
+    composite_audit_sink,
+)
+from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
+from .grants import VerifiedAuthorityGrant
 from .models import (
     AuthorityDecision,
     AuthorityPolicy,
@@ -7,8 +15,6 @@ from .models import (
     AuthorityRule,
     Decision,
 )
-from .grants import VerifiedAuthorityGrant
-from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
 
 __all__ = [
     "AuthorityDecision",
@@ -20,6 +26,10 @@ __all__ = [
     "AuthorityEngine",
     "AuthorityError",
     "PolicyValidationError",
+    "AuthorityAuditSink",
+    "NullAuthorityAuditSink",
+    "RecordingAuthorityAuditSink",
+    "composite_audit_sink",
 ]
 
-__version__ = "4.0.0"
+__version__ = "4.0.1"
