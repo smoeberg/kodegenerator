@@ -176,19 +176,26 @@ def test_adapter_exception_is_audited_as_failure():
     assert engine.audit_trail()[-1] == result
 
 
-def test_failed_execution_is_not_silently_retried():
+def test_failed_execution_may_be_retried_until_success():
+    """P4-01 success-only dedup: FAILED does not lock execution_id."""
     counter = {"calls": 0}
-    def failing(_):
+
+    def flaky(_):
         counter["calls"] += 1
-        raise RuntimeError("temporary failure")
-    engine = ExecutionEngine((StaticExecutionAdapter("adapter.fail", "demo.read", failing),))
+        if counter["calls"] == 1:
+            raise RuntimeError("temporary failure")
+        return AdapterResult(output=(("ok", "1"),))
+
+    engine = ExecutionEngine((StaticExecutionAdapter("adapter.flaky", "demo.read", flaky),))
     req = request()
     grant = grant_for(req)
     first = engine.execute(req, grant)
     second = engine.execute(req, grant)
+    third = engine.execute(req, grant)
     assert first.status is ExecutionStatus.FAILED
-    assert second.status is ExecutionStatus.REPLAYED
-    assert counter["calls"] == 1
+    assert second.status is ExecutionStatus.SUCCEEDED
+    assert third.status is ExecutionStatus.REPLAYED
+    assert counter["calls"] == 2
 
 
 def test_execution_result_is_immutable():
