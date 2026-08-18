@@ -20,6 +20,7 @@ from .replay_ledger import (
     ClaimOutcomeKind,
     ExecutionReplayLedger,
     InMemoryReplayLedger,
+    StaleClaimTokenError,
 )
 
 
@@ -48,7 +49,6 @@ class ExecutionEngine:
             self.register_adapter(adapter)
 
     def register_adapter(self, adapter: ExecutionAdapter) -> None:
-        """Register a trusted adapter explicitly; duplicate actions are rejected."""
         adapter_id = adapter.adapter_id
         action = adapter.action
         if not adapter_id.strip() or not action.strip():
@@ -63,16 +63,6 @@ class ExecutionEngine:
         request: ExecutionRequest,
         authority: VerifiedAuthorityGrant | AuthorityDecision | None,
     ) -> ExecutionResult:
-        """Execute only work covered by a verified AI-3 grant.
-
-        A raw ``AuthorityDecision`` is deliberately not accepted here. Even a
-        genuine decision carries policy provenance, not an execution capability.
-        Only ``VerifiedAuthorityGrant`` may cross the AI-3 -> AI-4 boundary.
-
-        Replay prevention uses the P4-01 ledger state machine: only a prior
-        *successful* execution locks the execution_id. Failed attempts remain
-        retryable. Concurrent pending claims fail closed.
-        """
         if authority is None:
             return self._rejected(request, "missing authority decision")
 
@@ -158,10 +148,20 @@ class ExecutionEngine:
                 decision=decision,
             )
 
-        # ACQUIRED — we own the pending claim until complete_* or abandon
+        fencing_token = claim.record.fencing_token if claim.record is not None else None
+        if not fencing_token:
+            return self._rejected(
+                request,
+                "acquired claim missing fencing token",
+                decision=decision,
+            )
+
         adapter = self._adapters.get(request.action)
         if adapter is None:
-            self._ledger.abandon(execution_id)
+            try:
+                self._ledger.abandon(execution_id, fencing_token=fencing_token)
+            except StaleClaimTokenError:
+                pass
             return self._rejected(
                 request,
                 f"no execution adapter registered for action {request.action!r}",
@@ -171,7 +171,10 @@ class ExecutionEngine:
         try:
             adapter_result = adapter.execute(request, dispatch=dispatch)
             if adapter_result is None:
-                self._ledger.abandon(execution_id)
+                try:
+                    self._ledger.abandon(execution_id, fencing_token=fencing_token)
+                except StaleClaimTokenError:
+                    pass
                 return self._rejected(
                     request,
                     "adapter rejected execution without a verified governed dispatch",
@@ -192,7 +195,22 @@ class ExecutionEngine:
                 error=None,
                 executed_at=datetime.now(timezone.utc).isoformat(),
             )
-            self._ledger.complete_succeeded(execution_id, result)
+            try:
+                self._ledger.complete_succeeded(
+                    execution_id, result, fencing_token=fencing_token
+                )
+            except StaleClaimTokenError:
+                return self._rejected(
+                    request,
+                    "stale claim fencing token; execution was reclaimed",
+                    decision=decision,
+                )
+        except StaleClaimTokenError:
+            return self._rejected(
+                request,
+                "stale claim fencing token; execution was reclaimed",
+                decision=decision,
+            )
         except Exception as exc:
             result = ExecutionResult(
                 execution_id=execution_id,
@@ -209,14 +227,22 @@ class ExecutionEngine:
                 error=f"{type(exc).__name__}: {exc}",
                 executed_at=datetime.now(timezone.utc).isoformat(),
             )
-            self._ledger.complete_failed(execution_id, result)
+            try:
+                self._ledger.complete_failed(
+                    execution_id, result, fencing_token=fencing_token
+                )
+            except StaleClaimTokenError:
+                return self._rejected(
+                    request,
+                    "stale claim fencing token; execution was reclaimed",
+                    decision=decision,
+                )
 
         with self._lock:
             self._audit.append(result)
         return result
 
     def audit_trail(self) -> Tuple[ExecutionResult, ...]:
-        """Return an immutable snapshot of execution records."""
         with self._lock:
             return tuple(self._audit)
 
