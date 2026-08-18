@@ -51,11 +51,20 @@ def _keywords_match(node: ast.Call, required: Mapping[str, Any]) -> bool:
         if val is not None:
             found[kw.arg] = val
     for key, expected in required.items():
-        if key not in found:
-            return False
-        if found[key] != expected:
+        if key not in found or found[key] != expected:
             return False
     return True
+
+
+def _name_matches(name: str, target: str) -> bool:
+    if name == target:
+        return True
+    # subprocess.call matches call only when target has no dots? No — require precision.
+    # Allow target "subprocess.call" to match name "subprocess.call".
+    # Allow target "call" only as exact last segment when target has no module.
+    if "." in target:
+        return name == target or name.endswith("." + target)
+    return name == target or name.split(".")[-1] == target
 
 
 def find_forbidden_calls(
@@ -79,29 +88,7 @@ def find_forbidden_calls(
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node)
-        if name is None:
-            continue
-        # Match full name or trailing attribute (call vs subprocess.call).
-        if name != target and not name.endswith("." + target) and name.split(".")[-1] != target.split(".")[-1]:
-            # Require exact or suffix match on dotted path
-            if name != target and not (
-                target.count(".") >= 1 and name == target
-            ):
-                if not (name == target or name.endswith("." + target.split(".")[-1]) and target in name):
-                    # Simplified: exact match OR name ends with .callee when callee is dotted
-                    pass
-        matched = name == target or (
-            "." in target and name == target
-        ) or (
-            "." not in target and name.split(".")[-1] == target
-        )
-        # Prefer precise dotted match when target is dotted.
-        if "." in target:
-            matched = name == target or name.endswith("." + target)
-        else:
-            matched = name == target or name.split(".")[-1] == target
-
-        if not matched:
+        if name is None or not _name_matches(name, target):
             continue
         if not _keywords_match(node, required):
             continue

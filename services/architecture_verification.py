@@ -2,10 +2,9 @@
 
 Combines:
 1. AST import-graph dependency rule evaluation
-2. AST/source constraint evaluation
-3. Formal contract exceptions (fingerprint-bound, fail-closed on expiry)
-
-Returns one aggregated verification-result shaped object for evidence adapters.
+2. framework_independent layer checks (external imports)
+3. AST/source constraint evaluation (patterns, forbid_call, path traversal)
+4. Formal contract exceptions (fingerprint-bound, fail-closed on expiry)
 """
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ from services.architecture_dependency_evaluator import (
     evaluate_dependency_rules,
 )
 from services.architecture_exception_policy import apply_exceptions, overall_status
+from services.architecture_framework_independence import evaluate_framework_independence
 from services.python_import_graph import ImportGraphError, collect_import_edges
 
 
@@ -61,7 +61,7 @@ class ArchitectureVerificationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_verification", "version": "1.1"},
+            "evaluator": {"name": "architecture_verification", "version": "1.2"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -74,7 +74,7 @@ def verify_architecture(
     result_id: str | None = None,
     evaluated_at: datetime | None = None,
 ) -> ArchitectureVerificationResult:
-    """Run dependency-rule and constraint verification against a workspace."""
+    """Run full architecture verification against a workspace."""
     workspace = Path(root)
     if not workspace.is_dir():
         raise ArchitectureVerificationError(f"Root must be an existing directory: {root}")
@@ -90,6 +90,9 @@ def verify_architecture(
     dep_result = evaluate_dependency_rules(
         contract, edges, result_id=f"{rid}-dep", evaluated_at=when
     )
+    fw_checks = evaluate_framework_independence(
+        contract, workspace, result_id=f"{rid}-fw", evaluated_at=when
+    )
 
     try:
         con_result = evaluate_constraints(
@@ -98,7 +101,7 @@ def verify_architecture(
     except ConstraintEvaluationError as exc:
         raise ArchitectureVerificationError(str(exc)) from exc
 
-    merged = tuple(dep_result.checks) + tuple(con_result.checks)
+    merged = tuple(dep_result.checks) + tuple(fw_checks) + tuple(con_result.checks)
     checks = apply_exceptions(contract, merged, at=when)
     status = overall_status(checks)
 
