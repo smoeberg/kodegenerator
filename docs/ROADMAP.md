@@ -2,9 +2,9 @@
 
 | Metadata | Value |
 | --- | --- |
-| Document version | 1.0.0 |
+| Document version | 1.1.0 |
 | Status | Approved master roadmap |
-| Verified baseline | `main` at `e4d88ab`; 366/366 Python tests green |
+| Verified baseline | `main` at `d831a1e`; 691/691 Python tests green (excl. `phase6` sandbox env)
 | Historical checkpoint | Phase 3 complete; 168/168 tests green |
 | Target delivery | DOR v1.0 — governed Digital Organization Runtime |
 
@@ -73,7 +73,7 @@ Control Plane command
 | Phase 2.1 | Complete | Foundation hardening |
 | Phase 3 / P3-18–P3-22 | Complete | Compiler, distribution, verification, execution adapters, and orchestrator |
 | Phase 4A / AI-1–AI-7 | Complete reference base | Registry, Context Packet, authority, execution, outcome, planner, and orchestrator contracts |
-| Implementation Agent | Partial | Governed bounded proposal contract and AI-1–AI-5 reference flow; operational runtime integration remains |
+| Implementation Agent | Complete | Governed bounded proposal runtime (AI-1–AI-5), safe patch-apply boundary, allowlisted adapters, immutable evidence, and canonical API command |
 | Project Audit Agent | Operational | Governed read-only runtime, CLI, baseline provider, and optional OpenAI provider |
 | PM Agent | Not started | Required in Phase 4B |
 | Test Agent | Not started | Required in Phase 4B |
@@ -84,8 +84,11 @@ Control Plane command
 | Module extension architecture | Specification | Normative design is tracked separately; runtime is not implemented |
 
 The 168-test count remains the historical Phase 3 completion marker. The
-current merged `main` baseline records 366/366 Python tests, including focused
-integration, CI watcher, and cross-project integrity coverage.
+current merged `main` baseline records 691/691 Python tests (excluding the
+`phase6` native process-sandbox harness), including focused integration, CI
+watcher, and cross-project integrity coverage. The historical audit finding
+`implementation-agent-not-runtime-integrated` is verified CLOSED against the
+current tree.
 
 ## 4. Phase 4 — Agent ecosystem and governed execution
 
@@ -116,15 +119,19 @@ yet a distributed, durable production runtime.
 
 ### 4.2 Phase 4B — Operational specialist agents and Control Plane (current)
 
-#### 4.2.1 Implementation Agent runtime integration
+#### 4.2.1 Implementation Agent runtime integration (complete)
 
-- [ ] Bind the provider adapter to exact Context Packets and authority records.
-- [ ] Add a safe patch-apply boundary that cannot broaden the authorized scope.
-- [ ] Add allowlisted lint, test, build, and packaging adapters; no free shell or
-  agent-selected arbitrary commands.
-- [ ] Emit immutable artifacts, evidence, fingerprints, and provenance.
-- [ ] Expose one canonical runtime/API command and close the current audit
-  finding `implementation-agent-not-runtime-integrated`.
+- [x] Bind the AI-1 through AI-5 runtime to exact Context Packets and authority
+  records (`phase4/implementation_agent/runtime.py`).
+- [x] Add a safe patch-apply boundary that cannot broaden the authorized scope
+  (`phase4/implementation_agent/patch_runtime.py`, AI-3 `ALLOW` scope binding).
+- [x] Add allowlisted lint, test, build, and packaging adapters; no free shell or
+  agent-selected arbitrary commands (`patch_adapter.py`).
+- [x] Emit immutable artifacts, evidence, fingerprints, and provenance
+  (`phase4/implementation_agent/models.py`).
+- [x] Expose one canonical runtime/API command and close the audit finding
+  `implementation-agent-not-runtime-integrated`
+  (`api/endpoints/implementation_agent.py`).
 
 #### 4.2.2 First-party Control Plane GUI and Core API
 
