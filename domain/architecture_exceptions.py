@@ -12,7 +12,15 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from typing import Any, Mapping
 
-from domain.architecture_contract_v1 import ArchitectureContractV1Error, _require_nonempty_str
+
+class ArchitectureExceptionError(ValueError):
+    """Raised when an architecture exception document is invalid."""
+
+
+def _require_nonempty_str(name: str, value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ArchitectureExceptionError(f"{name} must be a non-empty string")
+    return value.strip()
 
 
 @dataclass(frozen=True)
@@ -31,13 +39,13 @@ class ExceptionV1:
         _require_nonempty_str("exception.reason", self.reason)
         _require_nonempty_str("exception.approved_by", self.approved_by)
         if not self.id.startswith("EXC-"):
-            raise ArchitectureContractV1Error(f"exception.id must start with EXC-: {self.id}")
+            raise ArchitectureExceptionError(f"exception.id must start with EXC-: {self.id}")
         if "../" in self.path or self.path.startswith("/"):
-            raise ArchitectureContractV1Error(
+            raise ArchitectureExceptionError(
                 f"exception.path must be repo-relative without traversal: {self.path}"
             )
         if self.expires_at is not None and self.expires_at.tzinfo is None:
-            raise ArchitectureContractV1Error("exception.expires_at must be timezone-aware")
+            raise ArchitectureExceptionError("exception.expires_at must be timezone-aware")
 
     def is_active(self, at: datetime | None = None) -> bool:
         if self.expires_at is None:
