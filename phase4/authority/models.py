@@ -27,6 +27,9 @@ class AuthorityRequest:
     agent_role: Optional[str] = None
     context: Tuple[Tuple[str, str], ...] = ()
     parameters: Tuple[Tuple[str, str], ...] = ()
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    capability: Optional[str] = None
 
     def __post_init__(self) -> None:
         for name in ("request_id", "agent_identity", "action", "resource", "context_packet_id", "requested_at"):
@@ -34,6 +37,10 @@ class AuthorityRequest:
                 raise ValueError(f"{name} must be non-empty")
         if self.agent_role is not None and not self.agent_role.strip():
             raise ValueError("agent_role must be non-empty when supplied")
+        for name in ("organization_id", "actor_id", "capability"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty when supplied")
         context_keys = [key for key, _ in self.context]
         if len(context_keys) != len(set(context_keys)):
             raise ValueError("context keys must be unique")
@@ -52,6 +59,9 @@ class AuthorityRequest:
         context: Mapping[str, str] | None = None,
         parameters: Mapping[str, str] | None = None,
         request_id: str | None = None,
+        organization_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        capability: Optional[str] = None,
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
         canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
@@ -65,6 +75,12 @@ class AuthorityRequest:
             "context": canonical_context,
             "parameters": canonical_parameters,
         }
+        if organization_id is not None:
+            identity_payload["organization_id"] = organization_id
+        if actor_id is not None:
+            identity_payload["actor_id"] = actor_id
+        if capability is not None:
+            identity_payload["capability"] = capability
         encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
         canonical_request_id = hashlib.sha256(encoded).hexdigest()
         return AuthorityRequest(
@@ -77,6 +93,9 @@ class AuthorityRequest:
             agent_role=agent_role,
             context=tuple(canonical_context),
             parameters=tuple(canonical_parameters),
+            organization_id=organization_id,
+            actor_id=actor_id,
+            capability=capability,
         )
 
 
@@ -137,13 +156,21 @@ class AuthorityDecision:
     reason: str
     evaluated_at: str
     parameters: Tuple[Tuple[str, str], ...] = ()
-    _provenance_token: object | None = field(default=None, init=False, repr=False, compare=False)
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    capability: Optional[str] = None
+    _provenance_issuer: str = field(default="", init=False, repr=False, compare=False)
+    _provenance_signature: str = field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.request_id.strip() or not self.agent_identity.strip():
             raise ValueError("request_id and agent_identity must be non-empty")
         if not self.reason.strip():
             raise ValueError("reason must be non-empty")
+        for name in ("organization_id", "actor_id", "capability"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty when supplied")
         keys = [key for key, _ in self.parameters]
         if len(keys) != len(set(keys)):
             raise ValueError("parameter keys must be unique")
@@ -154,4 +181,7 @@ class AuthorityDecision:
 
     @property
     def provenance_verified(self) -> bool:
-        return self._provenance_token is not None
+        """Verify the issuer signature against the decision's current fields."""
+        from .grants import _decision_has_valid_provenance
+
+        return _decision_has_valid_provenance(self)

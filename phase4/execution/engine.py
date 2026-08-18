@@ -97,6 +97,9 @@ class ExecutionEngine:
             reason="verified AI-3 authority grant",
             evaluated_at="verified-grant",
             parameters=grant.parameters,
+            organization_id=grant.organization_id,
+            actor_id=grant.actor_id,
+            capability=grant.capability,
         )
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
