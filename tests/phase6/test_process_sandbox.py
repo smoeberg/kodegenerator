@@ -33,11 +33,14 @@ def _spec(*, executable: str = PYTHON, network: tuple[str, ...] = ()) -> Executi
 
 
 def test_adapter_fails_closed_for_missing_bubblewrap() -> None:
+    # bwrap availability is resolved lazily at execute() so that construction
+    # and spec validation remain testable without the primitive installed.
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path="/definitely/missing/bwrap",
+    )
     with pytest.raises(ProcessSandboxUnavailable):
-        BubblewrapProcessAdapter(
-            allowed_executables=(PYTHON,),
-            bubblewrap_path="/definitely/missing/bwrap",
-        )
+        adapter.execute(_spec())
 
 
 def test_adapter_rejects_non_allowlisted_executable() -> None:
@@ -90,3 +93,53 @@ def test_writable_path_must_exist(tmp_path) -> None:
 
     with pytest.raises(InvalidExecutionSpec, match="does not exist"):
         adapter.execute(spec)
+
+
+def test_adapter_construction_does_not_require_bwrap_to_be_installed() -> None:
+    """The adapter can be constructed without bwrap on the host.
+
+    bwrap availability is resolved lazily at execute() time, so that
+    construction and spec validation remain testable in any environment
+    (local dev, CI without bubblewrap, etc.). fail-closed is preserved by
+    test_adapter_fails_closed_for_missing_bubblewrap.
+    """
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path="/definitely/missing/bwrap",
+    )
+    assert adapter.adapter_id == "bubblewrap-process"
+
+
+def test_spec_validation_runs_without_invoking_bwrap() -> None:
+    """Spec validation must reject an invalid spec before bwrap is resolved.
+
+    This proves the security contract (allowlist, path checks) is enforced
+    independently of the isolation primitive being present.
+    """
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path="/definitely/missing/bwrap",
+    )
+    with pytest.raises(InvalidExecutionSpec, match="not allowlisted"):
+        adapter.execute(_spec(executable="/bin/sh"))
+    with pytest.raises(InvalidExecutionSpec, match="network allowlists"):
+        adapter.execute(_spec(network=("example.com",)))
+
+
+def test_command_construction_is_deterministic_and_independent_of_bwrap() -> None:
+    """_build_command produces the isolation command structure without bwrap."""
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path="/definitely/missing/bwrap",
+    )
+    adapter._bubblewrap_path = "/resolved/bwrap"
+    command = adapter._build_command(_spec())
+    assert command[0] == "/resolved/bwrap"
+    assert "--unshare-user" in command
+    assert "--unshare-net" in command
+    assert "--unshare-pid" in command
+    assert "--ro-bind" in command
+    assert "--dev" in command
+    assert "--proc" in command
+    assert "--tmpfs" in command
+    assert command[command.index("--") + 1] == PYTHON
