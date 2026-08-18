@@ -6,7 +6,7 @@ from fnmatch import fnmatchcase
 from typing import Dict, List, Mapping, Tuple
 
 from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
-from .grants import VerifiedAuthorityGrant
+from .grants import VerifiedAuthorityGrant, _attach_decision_provenance
 
 
 class AuthorityError(Exception):
@@ -72,11 +72,12 @@ class AuthorityEngine:
             reason=reason,
             evaluated_at=evaluated_at,
             parameters=request.parameters,
+            organization_id=request.organization_id,
+            actor_id=request.actor_id,
+            capability=request.capability,
         )
-        # The token is an object-identity capability owned by this authority
-        # engine. It is intentionally not representable in AuthorityDecision's
-        # public constructor and cannot be recreated from copied fields.
-        object.__setattr__(result, "_provenance_token", object())
+        # AI-4 validates this tamper-evident provenance before any dispatch.
+        _attach_decision_provenance(result)
         self._audit.append(result)
         return result
 

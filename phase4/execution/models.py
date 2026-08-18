@@ -31,6 +31,9 @@ class ExecutionRequest:
     context_packet_id: str
     parameters: Tuple[Tuple[str, str], ...] = ()
     idempotency_key: Optional[str] = None
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    capability: Optional[str] = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -44,6 +47,10 @@ class ExecutionRequest:
             raise ValueError("parameter keys must be unique")
         if self.idempotency_key is not None and not self.idempotency_key.strip():
             raise ValueError("idempotency_key must be non-empty when supplied")
+        for name in ("organization_id", "actor_id", "capability"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty when supplied")
 
     @staticmethod
     def create(
@@ -55,6 +62,9 @@ class ExecutionRequest:
         *,
         parameters: Mapping[str, str] | None = None,
         idempotency_key: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        capability: Optional[str] = None,
     ) -> "ExecutionRequest":
         canonical = tuple(sorted((str(k), str(v)) for k, v in (parameters or {}).items()))
         return ExecutionRequest(
@@ -65,6 +75,9 @@ class ExecutionRequest:
             context_packet_id=context_packet_id,
             parameters=canonical,
             idempotency_key=idempotency_key,
+            organization_id=organization_id,
+            actor_id=actor_id,
+            capability=capability,
         )
 
 
@@ -137,6 +150,9 @@ def execution_id_for(request: ExecutionRequest, decision: AuthorityDecision) -> 
         "context_packet_id": request.context_packet_id,
         "parameters": sorted(list(request.parameters)),
         "idempotency_key": request.idempotency_key,
+        "organization_id": request.organization_id,
+        "actor_id": request.actor_id,
+        "capability": request.capability,
         "authority_decision": decision.decision.value,
         "policy_id": decision.policy_id,
         "policy_version": decision.policy_version,
