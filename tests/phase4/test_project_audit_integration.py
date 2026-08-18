@@ -6,6 +6,7 @@ import hashlib
 
 from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
 from phase4.authority import AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionStatus
 from phase4.outcome.engine import OutcomeEngine
@@ -267,7 +268,7 @@ def test_project_auditor_rejects_false_claims_and_reports_global_drift_ai1_to_ai
 
     execution = ExecutionEngine((adapter,)).execute(
         request.execution_request(idempotency_key="phase4b-2-acceptance"),
-        authority,
+        VerifiedAuthorityGrant.from_decision(authority),
     )
     outcome = OutcomeEngine().process(execution)
 

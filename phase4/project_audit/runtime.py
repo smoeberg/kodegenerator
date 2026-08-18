@@ -10,7 +10,6 @@ from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
-from phase4.execution.models import ExecutionRequest
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
@@ -134,13 +133,7 @@ class ProjectAuditRuntime:
         # AI-3 evaluates this exact request. AI-4 receives an execution request
         # carrying the same canonical identity and parameters.
         authority_request = request.authority_request()
-        execution_request = ExecutionRequest.create(
-            request_id=authority_request.request_id,
-            agent_identity=authority_request.agent_identity,
-            action=authority_request.action,
-            resource=authority_request.resource,
-            context_packet_id=authority_request.context_packet_id,
-            parameters=authority_request.parameters,
+        execution_request = request.execution_request(
             idempotency_key=f"project-audit:{request.request_fingerprint}",
         )
         if execution_request.request_id != authority_request.request_id:
