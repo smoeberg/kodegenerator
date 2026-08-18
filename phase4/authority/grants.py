@@ -25,6 +25,7 @@ class VerifiedAuthorityGrant:
     policy_version: str
     matched_rule_ids: tuple[str, ...]
     decision: str
+    parameters: tuple[tuple[str, str], ...] = ()
     _issuer_token: object | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
@@ -42,6 +43,7 @@ class VerifiedAuthorityGrant:
             policy_version=decision.policy_version,
             matched_rule_ids=decision.matched_rule_ids,
             decision=decision.decision.value,
+            parameters=decision.parameters,
         )
         object.__setattr__(grant, "_issuer_token", token)
         return grant
@@ -58,4 +60,5 @@ class VerifiedAuthorityGrant:
             and self.action == request.action
             and self.resource == request.resource
             and self.context_packet_id == request.context_packet_id
+            and self.parameters == tuple(request.parameters)
         )

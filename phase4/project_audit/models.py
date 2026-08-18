@@ -526,12 +526,14 @@ class ProjectAuditRequest:
     def authority_request(self) -> AuthorityRequest:
         """Build the exact AI-3 question without granting authority."""
         return AuthorityRequest.create(
+            request_id=self.request_fingerprint,
             agent_identity=self.agent_identity,
             agent_role=self.agent_role,
             action=PROJECT_AUDIT_ACTION,
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
+            parameters=self.execution_parameters(),
         )
 
     def execution_parameters(self) -> Mapping[str, str]:

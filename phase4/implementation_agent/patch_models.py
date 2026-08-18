@@ -325,6 +325,12 @@ class PatchExecutionRequest:
             "toolchain_fingerprint": self.toolchain_fingerprint,
         }
 
+    def execution_parameters(self) -> dict[str, str]:
+        """Return the immutable parameters shared by AI-3 and AI-4."""
+        return {
+            "patch_execution_request_fingerprint": self.request_fingerprint,
+        }
+
     def authority_request(self) -> AuthorityRequest:
         return AuthorityRequest.create(
             agent_identity=self.agent_identity,
@@ -333,6 +339,7 @@ class PatchExecutionRequest:
             resource=self.resource,
             context_packet_id=self.context_packet_id,
             context=self.authority_context(),
+            parameters=self.execution_parameters(),
         )
 
     def execution_request(
@@ -345,9 +352,7 @@ class PatchExecutionRequest:
             action=IMPLEMENTATION_APPLY_ACTION,
             resource=self.resource,
             context_packet_id=self.context_packet_id,
-            parameters={
-                "patch_execution_request_fingerprint": self.request_fingerprint,
-            },
+            parameters=self.execution_parameters(),
             idempotency_key=idempotency_key,
         )
 

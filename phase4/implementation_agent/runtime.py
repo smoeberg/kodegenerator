@@ -22,6 +22,7 @@ from phase4.authority import (
     Decision,
     VerifiedAuthorityGrant,
 )
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import (
     ContextItem,
     ContextPacket,

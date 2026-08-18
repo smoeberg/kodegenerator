@@ -71,6 +71,7 @@ class AuthorityEngine:
             matched_rule_ids=tuple(rule.rule_id for rule in matched),
             reason=reason,
             evaluated_at=evaluated_at,
+            parameters=request.parameters,
         )
         # The token is an object-identity capability owned by this authority
         # engine. It is intentionally not representable in AuthorityDecision's

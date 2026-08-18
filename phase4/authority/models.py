@@ -26,6 +26,7 @@ class AuthorityRequest:
     requested_at: str
     agent_role: Optional[str] = None
     context: Tuple[Tuple[str, str], ...] = ()
+    parameters: Tuple[Tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("request_id", "agent_identity", "action", "resource", "context_packet_id", "requested_at"):
@@ -33,9 +34,12 @@ class AuthorityRequest:
                 raise ValueError(f"{name} must be non-empty")
         if self.agent_role is not None and not self.agent_role.strip():
             raise ValueError("agent_role must be non-empty when supplied")
-        keys = [key for key, _ in self.context]
-        if len(keys) != len(set(keys)):
+        context_keys = [key for key, _ in self.context]
+        if len(context_keys) != len(set(context_keys)):
             raise ValueError("context keys must be unique")
+        parameter_keys = [key for key, _ in self.parameters]
+        if len(parameter_keys) != len(set(parameter_keys)):
+            raise ValueError("parameter keys must be unique")
 
     @staticmethod
     def create(
@@ -46,9 +50,12 @@ class AuthorityRequest:
         *,
         agent_role: Optional[str] = None,
         context: Mapping[str, str] | None = None,
+        parameters: Mapping[str, str] | None = None,
+        request_id: str | None = None,
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
         canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
+        canonical_parameters = sorted((str(k), str(v)) for k, v in (parameters or {}).items())
         identity_payload = {
             "agent_identity": agent_identity,
             "action": action,
@@ -56,11 +63,12 @@ class AuthorityRequest:
             "context_packet_id": context_packet_id,
             "agent_role": agent_role,
             "context": canonical_context,
+            "parameters": canonical_parameters,
         }
         encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
-        request_id = hashlib.sha256(encoded).hexdigest()
+        canonical_request_id = hashlib.sha256(encoded).hexdigest()
         return AuthorityRequest(
-            request_id=request_id,
+            request_id=request_id or canonical_request_id,
             agent_identity=agent_identity,
             action=action,
             resource=resource,
@@ -68,6 +76,7 @@ class AuthorityRequest:
             requested_at=timestamp,
             agent_role=agent_role,
             context=tuple(canonical_context),
+            parameters=tuple(canonical_parameters),
         )
 
 
@@ -114,13 +123,7 @@ class AuthorityPolicy:
 
 @dataclass(frozen=True)
 class AuthorityDecision:
-    """Immutable, auditable result of an authority evaluation.
-
-    ``_provenance_token`` is populated only by ``AuthorityEngine``. It is not a
-    public constructor argument and is intentionally excluded from equality and
-    representation so authority provenance cannot be recreated by copying the
-    decision fields.
-    """
+    """Immutable, auditable result of an authority evaluation."""
 
     request_id: str
     decision: Decision
@@ -133,6 +136,7 @@ class AuthorityDecision:
     matched_rule_ids: Tuple[str, ...]
     reason: str
     evaluated_at: str
+    parameters: Tuple[Tuple[str, str], ...] = ()
     _provenance_token: object | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -140,6 +144,9 @@ class AuthorityDecision:
             raise ValueError("request_id and agent_identity must be non-empty")
         if not self.reason.strip():
             raise ValueError("reason must be non-empty")
+        keys = [key for key, _ in self.parameters]
+        if len(keys) != len(set(keys)):
+            raise ValueError("parameter keys must be unique")
 
     @property
     def allowed(self) -> bool:

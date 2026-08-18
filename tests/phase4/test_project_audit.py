@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from phase4.authority import AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionStatus
 from phase4.project_audit import (
@@ -410,7 +411,7 @@ class TestProjectAuditAdapter:
         )
         result = ExecutionEngine((adapter,)).execute(
             request.execution_request(idempotency_key="audit-1"),
-            allow_decision(request),
+            VerifiedAuthorityGrant.from_decision(allow_decision(request)),
         )
 
         assert result.status is ExecutionStatus.SUCCEEDED
@@ -460,9 +461,12 @@ class TestProjectAuditAdapter:
             ),
         )
 
-        result = ExecutionEngine((adapter,)).execute(tampered, allow_decision(request))
-        assert result.status is ExecutionStatus.FAILED
-        assert "parameters does not match" in result.error
+        result = ExecutionEngine((adapter,)).execute(
+            tampered,
+            VerifiedAuthorityGrant.from_decision(allow_decision(request)),
+        )
+        assert result.status is ExecutionStatus.REJECTED
+        assert "not bound" in result.error
         assert provider.calls == ()
 
         empty_adapter = ProjectAuditExecutionAdapter(
@@ -470,7 +474,8 @@ class TestProjectAuditAdapter:
             provider=provider,
         )
         result = ExecutionEngine((empty_adapter,)).execute(
-            request.execution_request(), allow_decision(request)
+            request.execution_request(),
+            VerifiedAuthorityGrant.from_decision(allow_decision(request)),
         )
         assert result.status is ExecutionStatus.FAILED
         assert "ProjectAuditRequestNotFoundError" in result.error
@@ -508,10 +513,12 @@ class TestProjectAuditAdapter:
         )
         engine = ExecutionEngine((adapter,))
         execution_request = request.execution_request(idempotency_key="audit-replay")
-        authority = allow_decision(request)
+        authority_grant = VerifiedAuthorityGrant.from_decision(
+            allow_decision(request)
+        )
 
-        first = engine.execute(execution_request, authority)
-        second = engine.execute(execution_request, authority)
+        first = engine.execute(execution_request, authority_grant)
+        second = engine.execute(execution_request, authority_grant)
 
         assert first.status is ExecutionStatus.SUCCEEDED
         assert second.status is ExecutionStatus.REPLAYED
