@@ -103,6 +103,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/constraint" }
     },
+    "exceptions": {
+      "type": "array",
+      "description": "Formal, fingerprint-bound exceptions. Only active non-expired exceptions may suppress matching checks.",
+      "items": { "$ref": "#/$defs/exception" }
+    },
     "quality_gates": {
       "type": "array",
       "minItems": 1,
@@ -246,6 +251,7 @@
           "enum": [
             "forbid_pattern",
             "require_pattern",
+            "forbid_call",
             "require_auth_on_routes",
             "no_path_traversal_writes",
             "no_cross_module_db_access",
@@ -263,7 +269,8 @@
         },
         "params": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "description": "For forbid_call: {\"callee\": \"subprocess.call\", \"keywords\": {\"shell\": true}}"
         }
       },
       "allOf": [
@@ -278,8 +285,46 @@
             "properties": { "type": { "const": "require_pattern" } }
           },
           "then": { "required": ["pattern"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "forbid_call" } }
+          },
+          "then": {
+            "required": ["params"],
+            "properties": {
+              "params": {
+                "type": "object",
+                "required": ["callee"],
+                "properties": {
+                  "callee": { "type": "string", "minLength": 1 },
+                  "keywords": { "type": "object", "additionalProperties": true }
+                }
+              }
+            }
+          }
         }
       ]
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rule_id", "path", "reason", "approved_by"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^EXC-[0-9]{3,}$"
+        },
+        "rule_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "References DEP-/CON-/SEC-/PERF- rule ids"
+        },
+        "path": { "$ref": "#/$defs/relative_path_glob" },
+        "reason": { "type": "string", "minLength": 1 },
+        "approved_by": { "type": "string", "minLength": 1 },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
     },
     "quality_gate": {
       "type": "object",
