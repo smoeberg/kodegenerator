@@ -3,6 +3,7 @@
 Supported constraint types (v1):
 - forbid_pattern: regex must not match any scoped source file (comments stripped)
 - require_pattern: regex must match at least one scoped source file (comments stripped)
+- forbid_call: structured AST Call matching (callee + optional keyword constants)
 - no_path_traversal_writes: AST detects writes/open calls that embed '..'
 
 Unsupported constraint types with severity=block fail closed.
@@ -16,10 +17,11 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 import re
-from typing import Iterable
+from typing import Any, Iterable
 from uuid import uuid4
 
 from domain.architecture_contract_v1 import ArchitectureContractV1, ConstraintV1
+from services.architecture_ast_call_matcher import find_forbidden_calls
 from services.architecture_ast_source import source_without_comments
 from services.architecture_dependency_evaluator import CheckResult, normalize_repo_path
 
@@ -43,7 +45,9 @@ _SKIP_DIRS = frozenset(
     }
 )
 
-_SUPPORTED = frozenset({"forbid_pattern", "require_pattern", "no_path_traversal_writes"})
+_SUPPORTED = frozenset(
+    {"forbid_pattern", "require_pattern", "forbid_call", "no_path_traversal_writes"}
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,7 @@ class ConstraintEvaluationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.1"},
+            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.2"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -190,6 +194,21 @@ def _find_path_traversal_writes(source: str, filename: str) -> list[tuple[int, s
     return hits
 
 
+def _forbid_call_params(constraint: ConstraintV1) -> tuple[str, dict[str, Any]]:
+    params = dict(constraint.params or {})
+    callee = params.get("callee")
+    if not isinstance(callee, str) or not callee.strip():
+        raise ConstraintEvaluationError(
+            f"{constraint.id} forbid_call requires params.callee"
+        )
+    keywords = params.get("keywords") or {}
+    if not isinstance(keywords, dict):
+        raise ConstraintEvaluationError(
+            f"{constraint.id} forbid_call params.keywords must be an object"
+        )
+    return callee.strip(), dict(keywords)
+
+
 def evaluate_constraints(
     contract: ArchitectureContractV1,
     root: str | Path,
@@ -259,8 +278,7 @@ def evaluate_constraints(
                 for path in scoped:
                     rel = _repo_relative(workspace, path)
                     text = source_without_comments(path.read_text(encoding="utf-8"))
-                    match = regex.search(text)
-                    if match:
+                    if regex.search(text):
                         status = _status_for_severity(constraint.severity, True)
                         if status == "FAIL":
                             block_failed = True
@@ -323,6 +341,46 @@ def evaluate_constraints(
                         ),
                     )
                 )
+
+            elif constraint.type == "forbid_call":
+                callee, keywords = _forbid_call_params(constraint)
+                violations = []
+                for path in scoped:
+                    rel = _repo_relative(workspace, path)
+                    text = path.read_text(encoding="utf-8")
+                    for match in find_forbidden_calls(
+                        text, path=rel, callee=callee, keywords=keywords
+                    ):
+                        status = _status_for_severity(constraint.severity, True)
+                        if status == "FAIL":
+                            block_failed = True
+                        violations.append(
+                            CheckResult(
+                                check_id=f"con-{constraint.id}-{rel}-{match.line}",
+                                rule_id=constraint.id,
+                                type="constraint",
+                                severity=constraint.severity,
+                                status=status,
+                                message=match.message,
+                                source_path=rel,
+                            )
+                        )
+                if violations:
+                    checks.extend(violations)
+                else:
+                    checks.append(
+                        CheckResult(
+                            check_id=f"con-{constraint.id}",
+                            rule_id=constraint.id,
+                            type="constraint",
+                            severity=constraint.severity,
+                            status="PASS",
+                            message=(
+                                f"Forbidden call '{callee}' not found in scope "
+                                f"({len(scoped)} files)"
+                            ),
+                        )
+                    )
 
             elif constraint.type == "no_path_traversal_writes":
                 violations = []
