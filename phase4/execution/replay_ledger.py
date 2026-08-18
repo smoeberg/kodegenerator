@@ -2,18 +2,18 @@
 
 Invariant: for a given execution_id the adapter may perform at most one
 *successful* side-effecting invocation (cluster-wide once a durable backend
-is plugged in). Failed attempts do not permanently lock the id.
+is plugged in). Failed and abandoned attempts do not permanently lock the id;
+abandoned rows are retained for audit (append-only).
 
 State machine::
 
-    (empty) ──claim──► pending ──complete(succeeded)──► succeeded  (terminal lock)
-                         │
-                         ├──complete(failed)──► failed   (retryable; reclaim ok)
-                         ├──abandon/reject────► (empty)  (retryable)
-                         └──concurrent claim──► IN_FLIGHT (fail-closed by default)
+    (empty|failed|abandoned) ──claim──► pending ──complete(succeeded)──► succeeded
+                                           │
+                                           ├──complete(failed)──► failed
+                                           ├──abandon───────────► abandoned
+                                           └──concurrent claim──► IN_FLIGHT
 
-    succeeded ──claim──► ALREADY_SUCCEEDED (return cached result as REPLAYED)
-    failed    ──claim──► pending (reclaim)
+    succeeded ──claim──► ALREADY_SUCCEEDED
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ class LedgerStatus(str, Enum):
     PENDING = "pending"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    ABANDONED = "abandoned"
 
 
 class ClaimOutcomeKind(str, Enum):
@@ -52,6 +53,9 @@ class ClaimOutcome:
     record: LedgerRecord | None = None
 
 
+_RECLAIMABLE = frozenset({LedgerStatus.FAILED, LedgerStatus.ABANDONED})
+
+
 class ExecutionReplayLedger(Protocol):
     """Port for durable or in-process replay prevention."""
 
@@ -71,7 +75,7 @@ class ExecutionReplayLedger(Protocol):
         """Mark claim failed (retryable) and store the last failure result."""
 
     def abandon(self, execution_id: str) -> None:
-        """Drop a pending claim without locking (e.g. pre-adapter reject)."""
+        """Mark pending claim abandoned without deleting the row (audit retained)."""
 
     def get(self, execution_id: str) -> LedgerRecord | None:
         """Return the current record if any."""
@@ -79,12 +83,7 @@ class ExecutionReplayLedger(Protocol):
 
 @dataclass
 class InMemoryReplayLedger:
-    """Process-local ledger implementing the P4-01 state machine.
-
-    Concurrent claims for the same id while status is pending return IN_FLIGHT
-    (fail-closed). A durable shared store can implement the same transitions
-    with atomic INSERT … ON CONFLICT.
-    """
+    """Process-local ledger implementing the P4-01 state machine."""
 
     _records: dict[str, LedgerRecord] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock)
@@ -100,7 +99,7 @@ class InMemoryReplayLedger:
             raise ValueError("execution_id must be non-empty")
         with self._lock:
             current = self._records.get(execution_id)
-            if current is None or current.status is LedgerStatus.FAILED:
+            if current is None or current.status in _RECLAIMABLE:
                 record = LedgerRecord(
                     execution_id=execution_id,
                     status=LedgerStatus.PENDING,
@@ -115,7 +114,6 @@ class InMemoryReplayLedger:
                     kind=ClaimOutcomeKind.ALREADY_SUCCEEDED,
                     record=current,
                 )
-            # PENDING — single-flight fail-closed
             return ClaimOutcome(kind=ClaimOutcomeKind.IN_FLIGHT, record=current)
 
     def complete_succeeded(self, execution_id: str, result: ExecutionResult) -> None:
@@ -152,7 +150,11 @@ class InMemoryReplayLedger:
         with self._lock:
             current = self._records.get(execution_id)
             if current is not None and current.status is LedgerStatus.PENDING:
-                del self._records[execution_id]
+                self._records[execution_id] = replace(
+                    current,
+                    status=LedgerStatus.ABANDONED,
+                    result=None,
+                )
 
     def get(self, execution_id: str) -> LedgerRecord | None:
         with self._lock:

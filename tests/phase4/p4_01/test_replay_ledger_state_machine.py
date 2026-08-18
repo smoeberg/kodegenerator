@@ -69,11 +69,13 @@ def test_concurrent_pending_is_in_flight():
     assert second.kind is ClaimOutcomeKind.IN_FLIGHT
 
 
-def test_abandon_releases_pending_for_retry():
+def test_abandon_retains_row_and_allows_retry():
     ledger = InMemoryReplayLedger()
     ledger.try_claim("exec-1")
     ledger.abandon("exec-1")
-    assert ledger.get("exec-1") is None
+    record = ledger.get("exec-1")
+    assert record is not None
+    assert record.status is LedgerStatus.ABANDONED
     assert ledger.try_claim("exec-1").kind is ClaimOutcomeKind.ACQUIRED
 
 

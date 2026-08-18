@@ -28,7 +28,6 @@ from phase4.execution.replay_ledger import ClaimOutcomeKind, LedgerStatus
 
 def _make_ledger(url: str = "sqlite:///:memory:") -> tuple[SqlAlchemyReplayLedger, any]:
     engine = create_engine(url, future=True)
-    # Ensure durable model is registered on Base.metadata
     assert ExecutionReplayLedgerModel.__tablename__ == "execution_replay_ledger"
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -78,11 +77,13 @@ def test_durable_pending_is_in_flight():
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.IN_FLIGHT
 
 
-def test_durable_abandon_releases_row():
+def test_durable_abandon_retains_row():
     ledger, _ = _make_ledger()
     ledger.try_claim("e1")
     ledger.abandon("e1")
-    assert ledger.get("e1") is None
+    record = ledger.get("e1")
+    assert record is not None
+    assert record.status is LedgerStatus.ABANDONED
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
 
 
@@ -139,7 +140,6 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
     assert calls["n"] == 1
     engine1.dispose()
 
-    # "Restart": new connection pool + engine, same file
     ledger2, engine2 = _make_ledger(url)
     engine_b = ExecutionEngine(
         (StaticExecutionAdapter("b", "demo.read", handler),),

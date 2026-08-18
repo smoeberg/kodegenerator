@@ -1,15 +1,14 @@
 """Durable SQLAlchemy backend for the P4-01 execution replay ledger.
 
 Implements the same success-only state machine as InMemoryReplayLedger,
-with atomic claims suitable for multi-process sharing when the database
-supports concurrent transactions (SQLite file or server DB).
+with atomic claims and append-only abandon (status=abandoned, row retained).
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from sqlalchemy import DateTime, String, Text, select
+from sqlalchemy import DateTime, String, Text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.types import JSON
@@ -147,16 +146,29 @@ class SqlAlchemyReplayLedger:
                     record=_to_record(row),
                 )
 
-            # FAILED — reclaim
-            if row.status == LedgerStatus.FAILED.value:
-                row.status = LedgerStatus.PENDING.value
-                row.grant_id = grant_id
-                row.request_id = request_id
-                row.result_json = None
-                row.started_at = now
-                row.completed_at = None
-                row.error_text = None
+            if row.status in {
+                LedgerStatus.FAILED.value,
+                LedgerStatus.ABANDONED.value,
+            }:
+                result = session.execute(
+                    update(ExecutionReplayLedgerModel)
+                    .where(
+                        ExecutionReplayLedgerModel.execution_id == execution_id,
+                        ExecutionReplayLedgerModel.status == row.status,
+                    )
+                    .values(
+                        status=LedgerStatus.PENDING.value,
+                        grant_id=grant_id,
+                        request_id=request_id,
+                        result_json=None,
+                        started_at=now,
+                        completed_at=None,
+                        error_text=None,
+                    )
+                )
                 session.commit()
+                if result.rowcount != 1:
+                    return self._outcome_after_conflict(session, execution_id)
                 return ClaimOutcome(
                     kind=ClaimOutcomeKind.ACQUIRED,
                     record=LedgerRecord(
@@ -187,7 +199,6 @@ class SqlAlchemyReplayLedger:
                 kind=ClaimOutcomeKind.IN_FLIGHT,
                 record=_to_record(row),
             )
-        # Concurrent reclaim of failed — treat as in-flight if another won
         return ClaimOutcome(
             kind=ClaimOutcomeKind.IN_FLIGHT,
             record=_to_record(row),
@@ -226,10 +237,13 @@ class SqlAlchemyReplayLedger:
             session.commit()
 
     def abandon(self, execution_id: str) -> None:
+        now = datetime.now(timezone.utc)
         with self.session_factory() as session:
             row = session.get(ExecutionReplayLedgerModel, execution_id)
             if row is not None and row.status == LedgerStatus.PENDING.value:
-                session.delete(row)
+                row.status = LedgerStatus.ABANDONED.value
+                row.completed_at = now
+                row.result_json = None
                 session.commit()
 
     def get(self, execution_id: str) -> LedgerRecord | None:
