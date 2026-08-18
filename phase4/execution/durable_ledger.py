@@ -1,15 +1,15 @@
 """Durable SQLAlchemy backend for the P4-01 execution replay ledger.
 
 Implements the same success-only state machine as InMemoryReplayLedger,
-with atomic claims suitable for multi-process sharing when the database
-supports concurrent transactions (SQLite file or server DB).
+including claim leases so expired PENDING rows can be reclaimed after a
+crashed worker (RA-3).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from sqlalchemy import DateTime, String, Text, select
+from sqlalchemy import DateTime, String, Text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.types import JSON
@@ -18,10 +18,13 @@ from infrastructure.persistence.models import Base
 
 from .models import ExecutionResult, ExecutionStatus
 from .replay_ledger import (
+    DEFAULT_CLAIM_LEASE_SECONDS,
     ClaimOutcome,
     ClaimOutcomeKind,
     LedgerRecord,
     LedgerStatus,
+    _aware_utc,
+    _lease_expired,
 )
 
 
@@ -37,6 +40,9 @@ class ExecutionReplayLedgerModel(Base):
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -85,14 +91,23 @@ def _to_record(row: ExecutionReplayLedgerModel) -> LedgerRecord:
         result=_result_from_json(row.result_json),
         grant_id=row.grant_id,
         request_id=row.request_id,
+        lease_expires_at=row.lease_expires_at,
     )
 
 
 class SqlAlchemyReplayLedger:
     """Crash-safe replay ledger backed by a shared SQLAlchemy session factory."""
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], Session],
+        *,
+        claim_lease_seconds: int = DEFAULT_CLAIM_LEASE_SECONDS,
+    ) -> None:
+        if type(claim_lease_seconds) is not int or claim_lease_seconds < 1:
+            raise ValueError("claim_lease_seconds must be a positive int")
         self.session_factory = session_factory
+        self.claim_lease_seconds = claim_lease_seconds
 
     def try_claim(
         self,
@@ -100,10 +115,12 @@ class SqlAlchemyReplayLedger:
         *,
         grant_id: str | None = None,
         request_id: str | None = None,
+        now: datetime | None = None,
     ) -> ClaimOutcome:
         if not execution_id or not execution_id.strip():
             raise ValueError("execution_id must be non-empty")
-        now = datetime.now(timezone.utc)
+        instant = _aware_utc(now)
+        lease_until = instant + timedelta(seconds=self.claim_lease_seconds)
 
         with self.session_factory() as session:
             row = session.get(ExecutionReplayLedgerModel, execution_id)
@@ -115,8 +132,9 @@ class SqlAlchemyReplayLedger:
                         grant_id=grant_id,
                         request_id=request_id,
                         result_json=None,
-                        started_at=now,
+                        started_at=instant,
                         completed_at=None,
+                        lease_expires_at=lease_until,
                         error_text=None,
                     )
                 )
@@ -124,7 +142,9 @@ class SqlAlchemyReplayLedger:
                     session.commit()
                 except IntegrityError:
                     session.rollback()
-                    return self._outcome_after_conflict(session, execution_id)
+                    return self._outcome_after_conflict(
+                        session, execution_id, instant, grant_id, request_id, lease_until
+                    )
                 return ClaimOutcome(
                     kind=ClaimOutcomeKind.ACQUIRED,
                     record=LedgerRecord(
@@ -132,6 +152,7 @@ class SqlAlchemyReplayLedger:
                         status=LedgerStatus.PENDING,
                         grant_id=grant_id,
                         request_id=request_id,
+                        lease_expires_at=lease_until,
                     ),
                 )
 
@@ -142,35 +163,147 @@ class SqlAlchemyReplayLedger:
                 )
 
             if row.status == LedgerStatus.PENDING.value:
-                return ClaimOutcome(
-                    kind=ClaimOutcomeKind.IN_FLIGHT,
-                    record=_to_record(row),
+                if not _lease_expired(row.lease_expires_at, instant):
+                    return ClaimOutcome(
+                        kind=ClaimOutcomeKind.IN_FLIGHT,
+                        record=_to_record(row),
+                    )
+                return self._reclaim_pending(
+                    session,
+                    row,
+                    grant_id=grant_id,
+                    request_id=request_id,
+                    instant=instant,
+                    lease_until=lease_until,
                 )
 
-            # FAILED — reclaim
             if row.status == LedgerStatus.FAILED.value:
-                row.status = LedgerStatus.PENDING.value
-                row.grant_id = grant_id
-                row.request_id = request_id
-                row.result_json = None
-                row.started_at = now
-                row.completed_at = None
-                row.error_text = None
-                session.commit()
-                return ClaimOutcome(
-                    kind=ClaimOutcomeKind.ACQUIRED,
-                    record=LedgerRecord(
-                        execution_id=execution_id,
-                        status=LedgerStatus.PENDING,
-                        grant_id=grant_id,
-                        request_id=request_id,
-                    ),
+                return self._reclaim_failed(
+                    session,
+                    execution_id,
+                    grant_id=grant_id,
+                    request_id=request_id,
+                    instant=instant,
+                    lease_until=lease_until,
                 )
 
             raise RuntimeError(f"unknown ledger status {row.status!r}")
 
+    def _reclaim_pending(
+        self,
+        session: Session,
+        row: ExecutionReplayLedgerModel,
+        *,
+        grant_id: str | None,
+        request_id: str | None,
+        instant: datetime,
+        lease_until: datetime,
+    ) -> ClaimOutcome:
+        """Reclaim expired PENDING with conditional update (lost-update safe)."""
+        result = session.execute(
+            update(ExecutionReplayLedgerModel)
+            .where(
+                ExecutionReplayLedgerModel.execution_id == row.execution_id,
+                ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value,
+                ExecutionReplayLedgerModel.lease_expires_at <= instant,
+            )
+            .values(
+                grant_id=grant_id,
+                request_id=request_id,
+                result_json=None,
+                started_at=instant,
+                completed_at=None,
+                lease_expires_at=lease_until,
+                error_text=None,
+            )
+        )
+        session.commit()
+        if result.rowcount != 1:
+            refreshed = session.get(ExecutionReplayLedgerModel, row.execution_id)
+            if refreshed is None:
+                raise RuntimeError(
+                    f"pending reclaim lost row for {row.execution_id!r}"
+                )
+            if refreshed.status == LedgerStatus.SUCCEEDED.value:
+                return ClaimOutcome(
+                    kind=ClaimOutcomeKind.ALREADY_SUCCEEDED,
+                    record=_to_record(refreshed),
+                )
+            return ClaimOutcome(
+                kind=ClaimOutcomeKind.IN_FLIGHT,
+                record=_to_record(refreshed),
+            )
+        return ClaimOutcome(
+            kind=ClaimOutcomeKind.ACQUIRED,
+            record=LedgerRecord(
+                execution_id=row.execution_id,
+                status=LedgerStatus.PENDING,
+                grant_id=grant_id,
+                request_id=request_id,
+                lease_expires_at=lease_until,
+            ),
+        )
+
+    def _reclaim_failed(
+        self,
+        session: Session,
+        execution_id: str,
+        *,
+        grant_id: str | None,
+        request_id: str | None,
+        instant: datetime,
+        lease_until: datetime,
+    ) -> ClaimOutcome:
+        result = session.execute(
+            update(ExecutionReplayLedgerModel)
+            .where(
+                ExecutionReplayLedgerModel.execution_id == execution_id,
+                ExecutionReplayLedgerModel.status == LedgerStatus.FAILED.value,
+            )
+            .values(
+                status=LedgerStatus.PENDING.value,
+                grant_id=grant_id,
+                request_id=request_id,
+                result_json=None,
+                started_at=instant,
+                completed_at=None,
+                lease_expires_at=lease_until,
+                error_text=None,
+            )
+        )
+        session.commit()
+        if result.rowcount != 1:
+            refreshed = session.get(ExecutionReplayLedgerModel, execution_id)
+            if refreshed is None:
+                raise RuntimeError(f"failed reclaim lost row for {execution_id!r}")
+            if refreshed.status == LedgerStatus.SUCCEEDED.value:
+                return ClaimOutcome(
+                    kind=ClaimOutcomeKind.ALREADY_SUCCEEDED,
+                    record=_to_record(refreshed),
+                )
+            return ClaimOutcome(
+                kind=ClaimOutcomeKind.IN_FLIGHT,
+                record=_to_record(refreshed),
+            )
+        return ClaimOutcome(
+            kind=ClaimOutcomeKind.ACQUIRED,
+            record=LedgerRecord(
+                execution_id=execution_id,
+                status=LedgerStatus.PENDING,
+                grant_id=grant_id,
+                request_id=request_id,
+                lease_expires_at=lease_until,
+            ),
+        )
+
     def _outcome_after_conflict(
-        self, session: Session, execution_id: str
+        self,
+        session: Session,
+        execution_id: str,
+        instant: datetime,
+        grant_id: str | None,
+        request_id: str | None,
+        lease_until: datetime,
     ) -> ClaimOutcome:
         row = session.get(ExecutionReplayLedgerModel, execution_id)
         if row is None:
@@ -183,11 +316,28 @@ class SqlAlchemyReplayLedger:
                 record=_to_record(row),
             )
         if row.status == LedgerStatus.PENDING.value:
+            if _lease_expired(row.lease_expires_at, instant):
+                return self._reclaim_pending(
+                    session,
+                    row,
+                    grant_id=grant_id,
+                    request_id=request_id,
+                    instant=instant,
+                    lease_until=lease_until,
+                )
             return ClaimOutcome(
                 kind=ClaimOutcomeKind.IN_FLIGHT,
                 record=_to_record(row),
             )
-        # Concurrent reclaim of failed — treat as in-flight if another won
+        if row.status == LedgerStatus.FAILED.value:
+            return self._reclaim_failed(
+                session,
+                execution_id,
+                grant_id=grant_id,
+                request_id=request_id,
+                instant=instant,
+                lease_until=lease_until,
+            )
         return ClaimOutcome(
             kind=ClaimOutcomeKind.IN_FLIGHT,
             record=_to_record(row),
@@ -206,6 +356,7 @@ class SqlAlchemyReplayLedger:
             row.status = LedgerStatus.SUCCEEDED.value
             row.result_json = _result_to_json(result)
             row.completed_at = now
+            row.lease_expires_at = None
             row.error_text = None
             session.commit()
 
@@ -222,6 +373,7 @@ class SqlAlchemyReplayLedger:
             row.status = LedgerStatus.FAILED.value
             row.result_json = _result_to_json(result)
             row.completed_at = now
+            row.lease_expires_at = None
             row.error_text = result.error
             session.commit()
 
