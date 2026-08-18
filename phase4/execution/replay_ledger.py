@@ -63,9 +63,13 @@ class ClaimOutcome:
 
 
 def _aware_utc(value: datetime | None = None) -> datetime:
+    """Normalize to UTC-aware datetime.
+
+    Naive values (common when SQLite returns timestamps) are treated as UTC.
+    """
     instant = value or datetime.now(timezone.utc)
     if instant.tzinfo is None or instant.utcoffset() is None:
-        raise ValueError("ledger timestamps must be timezone-aware")
+        return instant.replace(tzinfo=timezone.utc)
     return instant.astimezone(timezone.utc)
 
 
