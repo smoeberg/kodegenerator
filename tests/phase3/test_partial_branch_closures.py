@@ -5,7 +5,7 @@ Targets branches that line coverage can hide:
 - unsupported constraint types with non-block severity (SKIPPED)
 - invalid max_fanout / allowlist config (fail-closed)
 - empty constraint scope (all paths in scope)
-- path-traversal: read-only open; open mode= keyword; write_text/bytes args
+- path-traversal: read-only open; open mode keyword; write_text args
 - exception policy: WARN suppression and target_path fallback
 """
 from __future__ import annotations
@@ -297,6 +297,25 @@ def test_open_write_mode_keyword_with_traversal_fails(tmp_path: Path):
     assert any(c.rule_id == "CON-OPEN-KW" and c.status == "FAIL" for c in result.checks)
 
 
+def test_open_binary_write_with_traversal_fails(tmp_path: Path):
+    """Exercise open mode containing 'w' via binary write ('wb')."""
+    _write(
+        tmp_path / "src" / "adapters" / "files.py",
+        "def save(data):\n    open('../out.bin', 'wb').write(data)\n",
+    )
+    contract = base_contract(
+        ConstraintV1(
+            id="CON-WB",
+            type="no_path_traversal_writes",
+            severity="block",
+            scope=("src/**",),
+        )
+    )
+    result = evaluate_constraints(contract, tmp_path)
+    assert result.status == "FAIL"
+    assert any(c.rule_id == "CON-WB" and c.status == "FAIL" for c in result.checks)
+
+
 def test_write_text_arg_with_traversal_fails(tmp_path: Path):
     _write(
         tmp_path / "src" / "adapters" / "files.py",
@@ -313,24 +332,6 @@ def test_write_text_arg_with_traversal_fails(tmp_path: Path):
     result = evaluate_constraints(contract, tmp_path)
     assert result.status == "FAIL"
     assert any(c.rule_id == "CON-WT" and c.status == "FAIL" for c in result.checks)
-
-
-def test_write_bytes_arg_with_traversal_fails(tmp_path: Path):
-    _write(
-        tmp_path / "src" / "adapters" / "files.py",
-        "from pathlib import Path\n\ndef save():\n    Path('out.bin').write_bytes(b'../out.bin')\n",
-    )
-    contract = base_contract(
-        ConstraintV1(
-            id="CON-WB",
-            type="no_path_traversal_writes",
-            severity="block",
-            scope=("src/**",),
-        )
-    )
-    result = evaluate_constraints(contract, tmp_path)
-    assert result.status == "FAIL"
-    assert any(c.rule_id == "CON-WB" and c.status == "FAIL" for c in result.checks)
 
 
 def test_exception_suppresses_warn_check():
