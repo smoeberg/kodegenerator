@@ -35,6 +35,7 @@ class CheckResult:
     message: str
     source_path: str | None = None
     target_path: str | None = None
+    source_line: int | None = None
 
     def to_dict(self) -> dict:
         data = {
@@ -47,7 +48,10 @@ class CheckResult:
         }
         locations = []
         if self.source_path:
-            locations.append({"path": self.source_path})
+            loc: dict = {"path": self.source_path}
+            if self.source_line is not None:
+                loc["line"] = self.source_line
+            locations.append(loc)
         if self.target_path:
             locations.append({"path": self.target_path})
         if locations:
@@ -110,7 +114,6 @@ def resolve_layer_id(contract: ArchitectureContractV1, path: str) -> str | None:
     matches: list[tuple[int, str]] = []
     for layer in contract.layers:
         pattern = layer.path
-        # Support both 'src/domain/**' and exact prefixes.
         candidates = [pattern]
         if pattern.endswith("/**"):
             prefix = pattern[:-3].rstrip("/")
@@ -123,7 +126,6 @@ def resolve_layer_id(contract: ArchitectureContractV1, path: str) -> str | None:
                 specificity = len(layer.path)
                 matches.append((specificity, layer.id))
                 break
-            # Prefix match for directory-style layer paths.
             prefix = layer.path.rstrip("*").rstrip("/")
             if prefix and (normalized == prefix or normalized.startswith(prefix + "/")):
                 matches.append((len(prefix), layer.id))
@@ -141,12 +143,7 @@ def evaluate_dependency_rules(
     result_id: str | None = None,
     evaluated_at: datetime | None = None,
 ) -> DependencyEvaluationResult:
-    """Evaluate import edges against contract dependency_rules.
-
-    Returns a verification-result shaped object. Overall status:
-    - FAIL if any block-severity violation
-    - PASS otherwise (warn-only issues do not fail the result)
-    """
+    """Evaluate import edges against contract dependency_rules."""
     checks: list[CheckResult] = []
     block_failed = False
 
