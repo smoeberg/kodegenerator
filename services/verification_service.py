@@ -17,7 +17,9 @@ from domain.verification import (
 from domain.distribution import DispatchRecord
 
 
-_REQUIRED_EVIDENCE = ("test", "audit", "security", "provenance")
+# Required evidence classes for release eligibility. Architecture is first-class:
+# a failed or missing architecture check blocks PASS (fail-closed).
+_REQUIRED_EVIDENCE = ("test", "audit", "security", "architecture", "provenance")
 
 
 class VerificationService:

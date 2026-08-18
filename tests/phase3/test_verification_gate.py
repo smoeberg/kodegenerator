@@ -14,6 +14,8 @@ REQ_FP = "r" * 64
 ARCH_FP = "a" * 64
 ART_FP = "p" * 64
 
+_REQUIRED_KINDS = ("test", "audit", "security", "architecture", "provenance")
+
 
 def make_package() -> AgentContractPackage:
     contracts = tuple(
@@ -71,7 +73,10 @@ def make_product(dispatch, evidence_items=None) -> DeliveredProduct:
         artifact_id="artifact-001",
         artifact_fingerprint=ART_FP,
         output_names=("report",),
-        evidence=tuple(evidence_items or [evidence(dispatch, kind) for kind in ("test", "audit", "security", "provenance")]),
+        evidence=tuple(
+            evidence_items
+            or [evidence(dispatch, kind) for kind in _REQUIRED_KINDS]
+        ),
     )
 
 
@@ -98,15 +103,55 @@ def test_verification_is_deterministic() -> None:
 
 def test_missing_test_evidence_fails_closed() -> None:
     dispatch = make_dispatch()
-    product = make_product(dispatch, [evidence(dispatch, kind) for kind in ("audit", "security", "provenance")])
+    product = make_product(
+        dispatch,
+        [evidence(dispatch, kind) for kind in ("audit", "security", "architecture", "provenance")],
+    )
     result = VerificationService().verify(dispatch, product)
     assert result.status == "FAIL"
     assert any("Required test evidence" in failure for failure in result.failures)
 
 
+def test_missing_architecture_evidence_fails_closed() -> None:
+    dispatch = make_dispatch()
+    product = make_product(
+        dispatch,
+        [evidence(dispatch, kind) for kind in ("test", "audit", "security", "provenance")],
+    )
+    result = VerificationService().verify(dispatch, product)
+    assert result.status == "FAIL"
+    assert any("Required architecture evidence" in failure for failure in result.failures)
+
+
+def test_failed_architecture_evidence_fails_closed() -> None:
+    dispatch = make_dispatch()
+    product = make_product(
+        dispatch,
+        [
+            evidence(dispatch, "test"),
+            evidence(dispatch, "audit"),
+            evidence(dispatch, "security"),
+            evidence(dispatch, "architecture", False),
+            evidence(dispatch, "provenance"),
+        ],
+    )
+    result = VerificationService().verify(dispatch, product)
+    assert result.status == "FAIL"
+    assert any("Required architecture evidence" in failure for failure in result.failures)
+
+
 def test_failed_security_evidence_fails_closed() -> None:
     dispatch = make_dispatch()
-    product = make_product(dispatch, [evidence(dispatch, "test"), evidence(dispatch, "audit"), evidence(dispatch, "security", False), evidence(dispatch, "provenance")])
+    product = make_product(
+        dispatch,
+        [
+            evidence(dispatch, "test"),
+            evidence(dispatch, "audit"),
+            evidence(dispatch, "security", False),
+            evidence(dispatch, "architecture"),
+            evidence(dispatch, "provenance"),
+        ],
+    )
     result = VerificationService().verify(dispatch, product)
     assert result.status == "FAIL"
     assert any("Required security evidence" in failure for failure in result.failures)
@@ -115,7 +160,16 @@ def test_failed_security_evidence_fails_closed() -> None:
 def test_evidence_with_wrong_dispatch_fingerprint_fails_closed() -> None:
     dispatch = make_dispatch()
     bad = replace(evidence(dispatch, "test"), dispatch_fingerprint="x" * 64)
-    product = make_product(dispatch, [bad, evidence(dispatch, "audit"), evidence(dispatch, "security"), evidence(dispatch, "provenance")])
+    product = make_product(
+        dispatch,
+        [
+            bad,
+            evidence(dispatch, "audit"),
+            evidence(dispatch, "security"),
+            evidence(dispatch, "architecture"),
+            evidence(dispatch, "provenance"),
+        ],
+    )
     result = VerificationService().verify(dispatch, product)
     assert result.status == "FAIL"
     assert any("bound to the exact dispatch" in failure for failure in result.failures)
@@ -132,7 +186,16 @@ def test_unpermitted_output_fails_closed() -> None:
 def test_artifact_fingerprint_mismatch_in_evidence_fails_closed() -> None:
     dispatch = make_dispatch()
     bad = replace(evidence(dispatch, "test"), artifact_fingerprint="x" * 64)
-    product = make_product(dispatch, [bad, evidence(dispatch, "audit"), evidence(dispatch, "security"), evidence(dispatch, "provenance")])
+    product = make_product(
+        dispatch,
+        [
+            bad,
+            evidence(dispatch, "audit"),
+            evidence(dispatch, "security"),
+            evidence(dispatch, "architecture"),
+            evidence(dispatch, "provenance"),
+        ],
+    )
     result = VerificationService().verify(dispatch, product)
     assert result.status == "FAIL"
     assert any("bound to the exact dispatch and artifact" in failure for failure in result.failures)

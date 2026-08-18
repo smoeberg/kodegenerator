@@ -34,10 +34,15 @@ PASS / FAIL + evidence
    - `test`
    - `audit`
    - `security`
+   - `architecture`
    - `provenance`
 6. Any missing, failed or mismatched evidence produces `FAIL`.
 7. Verification is deterministic for identical inputs.
 8. No LLM call, prompt rewriting, architecture selection or policy invention occurs inside the gate.
+
+Architecture evidence is first-class. A failed architecture dependency evaluation
+(for example from `ArchitectureDependencyEvidenceAdapter`) must block overall
+`PASS`. Missing architecture evidence is also fail-closed.
 
 ## VerificationResult
 

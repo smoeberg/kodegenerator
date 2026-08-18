@@ -96,6 +96,15 @@ def architecture_contract() -> ArchitectureContractV1:
     )
 
 
+def core_adapters():
+    return (
+        CommandEvidenceAdapter("tests", "test", (sys.executable, "-c", "pass")),
+        CommandEvidenceAdapter("audit", "audit", (sys.executable, "-c", "pass")),
+        CommandEvidenceAdapter("security", "security", (sys.executable, "-c", "pass")),
+        CommandEvidenceAdapter("provenance", "provenance", (sys.executable, "-c", "pass")),
+    )
+
+
 def test_command_adapter_produces_bound_pass_evidence(tmp_path):
     adapter = CommandEvidenceAdapter(
         "smoke",
@@ -142,16 +151,20 @@ def test_canonical_adapters_have_expected_contracts():
 
 
 def test_execution_service_produces_verifiable_product(tmp_path):
-    adapters = (
-        CommandEvidenceAdapter("tests", "test", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("audit", "audit", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("security", "security", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("provenance", "provenance", (sys.executable, "-c", "pass")),
+    root = tmp_path
+    _write(root / "src" / "domain" / "model.py", "VALUE = 1\n")
+    _write(
+        root / "src" / "application" / "service.py",
+        "from src.domain import model\n",
     )
     delivered, result = VerificationExecutionService().execute(
-        dispatch(), product(), cwd=tmp_path, adapters=adapters
+        dispatch(),
+        product(),
+        cwd=root,
+        adapters=core_adapters(),
+        architecture_contract=architecture_contract(),
     )
-    assert len(delivered.evidence) == 4
+    assert len(delivered.evidence) == 5
     assert result.status == "PASS"
     assert result.failures == ()
 
@@ -170,17 +183,11 @@ def test_execution_service_runs_architecture_contract_adapter(tmp_path):
         root / "src" / "application" / "service.py",
         "from src.domain import model\n",
     )
-    adapters = (
-        CommandEvidenceAdapter("tests", "test", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("audit", "audit", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("security", "security", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("provenance", "provenance", (sys.executable, "-c", "pass")),
-    )
     delivered, result = VerificationExecutionService().execute(
         dispatch(),
         product(),
         cwd=root,
-        adapters=adapters,
+        adapters=core_adapters(),
         architecture_contract=architecture_contract(),
     )
     assert len(delivered.evidence) == 5
@@ -190,30 +197,22 @@ def test_execution_service_runs_architecture_contract_adapter(tmp_path):
     assert result.status == "PASS"
 
 
-def test_execution_service_architecture_violation_still_emits_evidence(tmp_path):
-    """Architecture FAIL is recorded as evidence; P3-20 still requires core kinds."""
+def test_execution_service_architecture_violation_fails_gate(tmp_path):
+    """Architecture FAIL is required evidence and blocks overall P3-20 PASS."""
     root = tmp_path
     _write(root / "src" / "adapters" / "db.py", "ENGINE = 'x'\n")
     _write(
         root / "src" / "domain" / "model.py",
         "from src.adapters import db\n",
     )
-    adapters = (
-        CommandEvidenceAdapter("tests", "test", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("audit", "audit", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("security", "security", (sys.executable, "-c", "pass")),
-        CommandEvidenceAdapter("provenance", "provenance", (sys.executable, "-c", "pass")),
-    )
     delivered, result = VerificationExecutionService().execute(
         dispatch(),
         product(),
         cwd=root,
-        adapters=adapters,
+        adapters=core_adapters(),
         architecture_contract=architecture_contract(),
     )
     architecture = next(item for item in delivered.evidence if item.kind == "architecture")
     assert architecture.passed is False
-    # Core required evidence still passes, so P3-20 may still PASS until architecture
-    # is promoted to a required evidence class. Evidence is nonetheless recorded.
-    assert any(item.kind == "architecture" for item in delivered.evidence)
-    assert result.status == "PASS"
+    assert result.status == "FAIL"
+    assert any("Required architecture evidence" in failure for failure in result.failures)
