@@ -1,6 +1,7 @@
 """Phase 4 AI-4 Execution Engine public contract."""
 
 from .adapters import AdapterResult, ExecutionAdapter, StaticExecutionAdapter
+from .durable_ledger import ExecutionReplayLedgerModel, SqlAlchemyReplayLedger
 from .engine import ExecutionEngine, ExecutionError, ExecutionRejected
 from .models import (
     ExecutionRequest,
@@ -36,6 +37,8 @@ __all__ = [
     "InMemoryReplayLedger",
     "LedgerRecord",
     "LedgerStatus",
+    "ExecutionReplayLedgerModel",
+    "SqlAlchemyReplayLedger",
 ]
 
 __version__ = "4.1.0"
