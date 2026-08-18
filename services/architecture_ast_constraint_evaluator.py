@@ -1,13 +1,12 @@
 """AST- and source-based evaluation of Architecture Contract v1 constraints.
 
 Supported constraint types (v1):
-- forbid_pattern: regex must not match any scoped source file (comments stripped)
-- require_pattern: regex must match at least one scoped source file (comments stripped)
+- forbid_pattern / require_pattern: token-prepared regex with optional match_mode
+  and line numbers (params.match_mode: include_strings | code_only)
 - forbid_call: structured AST Call matching (callee + optional keyword constants)
 - no_path_traversal_writes: AST detects writes/open calls that embed '..'
 
 Unsupported constraint types with severity=block fail closed.
-Unsupported constraint types with severity=warn/info are reported as SKIPPED.
 """
 from __future__ import annotations
 
@@ -22,7 +21,11 @@ from uuid import uuid4
 
 from domain.architecture_contract_v1 import ArchitectureContractV1, ConstraintV1
 from services.architecture_ast_call_matcher import find_forbidden_calls
-from services.architecture_ast_source import source_without_comments
+from services.architecture_ast_source import (
+    MatchMode,
+    line_number_at,
+    prepare_pattern_source,
+)
 from services.architecture_dependency_evaluator import CheckResult, normalize_repo_path
 
 
@@ -80,7 +83,7 @@ class ConstraintEvaluationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.2"},
+            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.3"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -124,6 +127,13 @@ def _compile_pattern(constraint: ConstraintV1) -> re.Pattern[str]:
         raise ConstraintEvaluationError(
             f"Invalid regex in {constraint.id}: {exc}"
         ) from exc
+
+
+def _match_mode(constraint: ConstraintV1) -> MatchMode:
+    raw = (constraint.params or {}).get("match_mode", "include_strings")
+    if raw == "code_only":
+        return "code_only"
+    return "include_strings"
 
 
 def _status_for_severity(severity: str, violated: bool) -> str:
@@ -274,26 +284,31 @@ def evaluate_constraints(
 
             if constraint.type == "forbid_pattern":
                 regex = _compile_pattern(constraint)
+                mode = _match_mode(constraint)
                 violations: list[CheckResult] = []
                 for path in scoped:
                     rel = _repo_relative(workspace, path)
-                    text = source_without_comments(path.read_text(encoding="utf-8"))
-                    if regex.search(text):
+                    original = path.read_text(encoding="utf-8")
+                    prepared = prepare_pattern_source(original, match_mode=mode)
+                    match = regex.search(prepared)
+                    if match:
+                        line = line_number_at(original, match.start())
                         status = _status_for_severity(constraint.severity, True)
                         if status == "FAIL":
                             block_failed = True
                         violations.append(
                             CheckResult(
-                                check_id=f"con-{constraint.id}-{rel}",
+                                check_id=f"con-{constraint.id}-{rel}-{line}",
                                 rule_id=constraint.id,
                                 type="constraint",
                                 severity=constraint.severity,
                                 status=status,
                                 message=(
-                                    f"Forbidden pattern matched in {rel}: "
+                                    f"Forbidden pattern matched in {rel}:line {line}: "
                                     f"/{constraint.pattern}/"
                                 ),
                                 source_path=rel,
+                                source_line=line,
                             )
                         )
                 if violations:
@@ -308,22 +323,41 @@ def evaluate_constraints(
                             status="PASS",
                             message=(
                                 f"Forbidden pattern not found in scope "
-                                f"({len(scoped)} files): /{constraint.pattern}/"
+                                f"({len(scoped)} files, match_mode={mode}): "
+                                f"/{constraint.pattern}/"
                             ),
                         )
                     )
 
             elif constraint.type == "require_pattern":
                 regex = _compile_pattern(constraint)
+                mode = _match_mode(constraint)
                 found = False
+                found_line: int | None = None
+                found_path: str | None = None
                 for path in scoped:
-                    text = source_without_comments(path.read_text(encoding="utf-8"))
-                    if regex.search(text):
+                    rel = _repo_relative(workspace, path)
+                    original = path.read_text(encoding="utf-8")
+                    prepared = prepare_pattern_source(original, match_mode=mode)
+                    match = regex.search(prepared)
+                    if match:
                         found = True
+                        found_line = line_number_at(original, match.start())
+                        found_path = rel
                         break
                 status = _status_for_severity(constraint.severity, not found)
                 if status == "FAIL":
                     block_failed = True
+                if found:
+                    message = (
+                        f"Required pattern found in {found_path}:line {found_line} "
+                        f"({len(scoped)} files scanned, match_mode={mode})"
+                    )
+                else:
+                    message = (
+                        f"Required pattern missing in scope "
+                        f"({len(scoped)} files, match_mode={mode}): /{constraint.pattern}/"
+                    )
                 checks.append(
                     CheckResult(
                         check_id=f"con-{constraint.id}",
@@ -331,14 +365,9 @@ def evaluate_constraints(
                         type="constraint",
                         severity=constraint.severity,
                         status=status,
-                        message=(
-                            f"Required pattern found in scope ({len(scoped)} files)"
-                            if found
-                            else (
-                                f"Required pattern missing in scope "
-                                f"({len(scoped)} files): /{constraint.pattern}/"
-                            )
-                        ),
+                        message=message,
+                        source_path=found_path,
+                        source_line=found_line,
                     )
                 )
 
@@ -363,6 +392,7 @@ def evaluate_constraints(
                                 status=status,
                                 message=match.message,
                                 source_path=rel,
+                                source_line=match.line,
                             )
                         )
                 if violations:
@@ -400,6 +430,7 @@ def evaluate_constraints(
                                 status=status,
                                 message=f"{message} at {rel}:{line}",
                                 source_path=rel,
+                                source_line=line,
                             )
                         )
                 if violations:
