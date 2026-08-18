@@ -3,12 +3,21 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol
 
+from domain.architecture_contract_v1 import ArchitectureContractV1
 from domain.distribution import DispatchRecord
 from domain.verification import DeliveredProduct, Evidence, VerificationResult
-from services.verification_execution import CommandEvidenceAdapter, ExecutionBinding, VerificationExecutionError
+from services.architecture_dependency_adapter import architecture_dependency_adapter
+from services.verification_execution import ExecutionBinding, VerificationExecutionError
 from services.verification_service import VerificationService
+
+
+class EvidenceAdapter(Protocol):
+    """Minimal contract for P3-21 evidence producers."""
+
+    def run(self, binding: ExecutionBinding, *, cwd: str | Path) -> Evidence:
+        ...
 
 
 class VerificationExecutionService:
@@ -23,11 +32,28 @@ class VerificationExecutionService:
         product: DeliveredProduct,
         *,
         cwd: str | Path,
-        adapters: Iterable[CommandEvidenceAdapter],
+        adapters: Iterable[EvidenceAdapter] = (),
+        architecture_contract: ArchitectureContractV1 | None = None,
     ) -> tuple[DeliveredProduct, VerificationResult]:
-        adapter_list = tuple(adapters)
+        """Run adapters and verify the delivered product.
+
+        When ``architecture_contract`` is provided, the canonical architecture
+        dependency adapter is executed first and contributes Evidence(kind=
+        "architecture"). Callers may still pass additional adapters (test, audit,
+        security, provenance, ...).
+
+        At least one evidence source is required: either explicit adapters,
+        an architecture_contract, or both.
+        """
+        adapter_list: list[EvidenceAdapter] = []
+        if architecture_contract is not None:
+            adapter_list.append(architecture_dependency_adapter(architecture_contract))
+        adapter_list.extend(tuple(adapters))
+
         if not adapter_list:
-            raise VerificationExecutionError("At least one verification adapter is required")
+            raise VerificationExecutionError(
+                "At least one verification adapter or architecture_contract is required"
+            )
 
         binding = ExecutionBinding(
             package_fingerprint=dispatch.package_fingerprint,

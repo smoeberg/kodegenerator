@@ -3,6 +3,12 @@
 Extracts a Python import graph from a workspace, evaluates it against an
 ArchitectureContractV1, and emits bound Evidence(kind="architecture") for the
 P3-20 verification gate. No LLM calls. Fail-closed on parse/evaluation errors.
+
+Binding semantics:
+- Evidence.contract_fingerprint is the *dispatch/specialist* contract fingerprint
+  required by P3-20 evidence binding.
+- ArchitectureContractV1.fingerprint is recorded in execution identity and statement
+  for auditability; it is a different identity from the specialist contract.
 """
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ from services.verification_execution import ExecutionBinding, VerificationExecut
 
 @dataclass(frozen=True)
 class ArchitectureDependencyEvidenceAdapter:
-    """Produce architecture dependency evidence for one fixed contract identity."""
+    """Produce architecture dependency evidence for one fixed architecture contract."""
 
     contract: ArchitectureContractV1
     adapter_id: str = "architecture-dependency-v1"
@@ -36,9 +42,9 @@ class ArchitectureDependencyEvidenceAdapter:
         payload = {
             "adapter_id": self.adapter_id,
             "kind": "architecture",
-            "contract_id": self.contract.contract_id,
-            "contract_version": self.contract.version,
-            "contract_fingerprint": self.contract.fingerprint,
+            "architecture_contract_id": self.contract.contract_id,
+            "architecture_contract_version": self.contract.version,
+            "architecture_contract_fingerprint": self.contract.fingerprint,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return "execution-" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
@@ -58,24 +64,6 @@ class ArchitectureDependencyEvidenceAdapter:
         if not isinstance(binding, ExecutionBinding):
             raise VerificationExecutionError("run requires an ExecutionBinding")
 
-        # Evidence must remain bound to the delivery context. When an architecture
-        # contract fingerprint is available on the binding, require an exact match.
-        if binding.contract_fingerprint != self.contract.fingerprint:
-            return Evidence(
-                kind="architecture",
-                evidence_id=self.execution_id,
-                passed=False,
-                statement=(
-                    "Architecture contract fingerprint mismatch between binding and adapter "
-                    f"(binding={binding.contract_fingerprint[:12]}…, "
-                    f"adapter={self.contract.fingerprint[:12]}…)"
-                ),
-                package_fingerprint=binding.package_fingerprint,
-                contract_fingerprint=binding.contract_fingerprint,
-                dispatch_fingerprint=binding.dispatch_fingerprint,
-                artifact_fingerprint=binding.artifact_fingerprint,
-            )
-
         try:
             result = self.evaluate_workspace(cwd)
         except VerificationExecutionError as exc:
@@ -92,16 +80,20 @@ class ArchitectureDependencyEvidenceAdapter:
 
         failed = [c for c in result.checks if c.status == "FAIL"]
         passed = result.status == "PASS"
+        arch_ref = (
+            f"architecture {self.contract.contract_id}@{self.contract.version} "
+            f"fp={self.contract.fingerprint[:12]}"
+        )
         if passed:
             statement = (
                 f"{self.adapter_id} PASS: {result.summary['passed']} checks, "
-                f"0 block failures (contract {self.contract.contract_id}@{self.contract.version})"
+                f"0 block failures ({arch_ref})"
             )
         else:
             sample = failed[0].message if failed else "dependency evaluation failed"
             statement = (
                 f"{self.adapter_id} FAIL: {result.summary['failed']} block failures; "
-                f"example: {sample}"
+                f"example: {sample} ({arch_ref})"
             )
 
         return Evidence(

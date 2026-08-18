@@ -95,9 +95,10 @@ def test_adapter_passes_on_valid_layer_graph(tmp_path: Path):
 
     contract = make_contract()
     adapter = architecture_dependency_adapter(contract)
+    # Dispatch/specialist contract fingerprint is independent of architecture fingerprint.
     binding = ExecutionBinding(
         package_fingerprint="pkg" + "a" * 61,
-        contract_fingerprint=contract.fingerprint,
+        contract_fingerprint="specialist-contract-fingerprint" + "0" * 32,
         dispatch_fingerprint="dsp" + "b" * 61,
         artifact_fingerprint="art" + "c" * 61,
     )
@@ -105,7 +106,8 @@ def test_adapter_passes_on_valid_layer_graph(tmp_path: Path):
     assert isinstance(evidence, Evidence)
     assert evidence.kind == "architecture"
     assert evidence.passed is True
-    assert evidence.contract_fingerprint == contract.fingerprint
+    assert evidence.contract_fingerprint == binding.contract_fingerprint
+    assert contract.fingerprint[:12] in evidence.statement
 
 
 def test_adapter_fails_on_forbidden_domain_to_adapters(tmp_path: Path):
@@ -120,29 +122,13 @@ def test_adapter_fails_on_forbidden_domain_to_adapters(tmp_path: Path):
     adapter = architecture_dependency_adapter(contract)
     binding = ExecutionBinding(
         package_fingerprint="pkg" + "a" * 61,
-        contract_fingerprint=contract.fingerprint,
+        contract_fingerprint="specialist-contract-fingerprint" + "0" * 32,
         dispatch_fingerprint="dsp" + "b" * 61,
         artifact_fingerprint="art" + "c" * 61,
     )
     evidence = adapter.run(binding, cwd=root)
     assert evidence.passed is False
     assert "FAIL" in evidence.statement
-
-
-def test_adapter_fails_on_contract_fingerprint_mismatch(tmp_path: Path):
-    root = tmp_path
-    _write(root / "src" / "domain" / "model.py", "VALUE = 1\n")
-    contract = make_contract()
-    adapter = architecture_dependency_adapter(contract)
-    binding = ExecutionBinding(
-        package_fingerprint="pkg" + "a" * 61,
-        contract_fingerprint="0" * 64,
-        dispatch_fingerprint="dsp" + "b" * 61,
-        artifact_fingerprint="art" + "c" * 61,
-    )
-    evidence = adapter.run(binding, cwd=root)
-    assert evidence.passed is False
-    assert "fingerprint mismatch" in evidence.statement
 
 
 def test_evaluate_workspace_exposes_structured_result(tmp_path: Path):
