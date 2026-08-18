@@ -1,0 +1,81 @@
+schema_version: "1.0"
+contract_id: arch-checkout-service
+version: "1.0.0"
+status: review
+project:
+  name: checkout-service
+  language: python
+  runtime: python3.12
+style: hexagonal
+
+layers:
+  - id: domain
+    path: src/domain/**
+    framework_independent: true
+  - id: application
+    path: src/application/**
+    framework_independent: true
+  - id: ports
+    path: src/ports/**
+  - id: adapters
+    path: src/adapters/**
+  - id: tests
+    path: tests/**
+
+dependency_rules:
+  - id: DEP-001
+    source: domain
+    may_depend_on: []
+    severity: block
+    description: Domain has no outbound dependencies
+  - id: DEP-002
+    source: application
+    may_depend_on: [domain, ports]
+    severity: block
+  - id: DEP-003
+    source: adapters
+    may_depend_on: [domain, application, ports]
+    severity: block
+
+interfaces:
+  http:
+    - id: API-orders
+      openapi_path: contracts/openapi/orders.v1.yaml
+      auth_required: true
+
+constraints:
+  - id: SEC-001
+    type: forbid_pattern
+    pattern: "subprocess\\.call\\(.*shell\\s*=\\s*True"
+    severity: block
+    scope: ["src/**"]
+  - id: CON-001
+    type: no_path_traversal_writes
+    severity: block
+
+quality_gates:
+  - id: QG-dep
+    type: dependency_rules
+    required: true
+  - id: QG-unit
+    type: command
+    command: pytest -q
+    required: true
+    timeout_seconds: 600
+  - id: QG-openapi
+    type: openapi_conformance
+    required: true
+
+decisions:
+  - id: ADR-001
+    decision: Use hexagonal boundaries with framework-free domain/application
+    rationale: Keep business rules testable without FastAPI/SQLAlchemy
+    requirement_ids: [NFR-003]
+
+traceability:
+  - source_id: NFR-003
+    target_id: ADR-001
+    relation: derived_from
+
+approval:
+  status: pending

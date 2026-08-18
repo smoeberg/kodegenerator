@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/smoeberg/kodegenerator/blob/main/docs/schemas/architecture-verification-result-v1.schema.json",
+  "title": "DOR Architecture Verification Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "result_id",
+    "contract_id",
+    "contract_version",
+    "contract_fingerprint",
+    "subject",
+    "status",
+    "evaluated_at",
+    "checks",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "result_id": { "type": "string", "minLength": 1 },
+    "contract_id": { "type": "string", "minLength": 1 },
+    "contract_version": { "type": "string", "minLength": 1 },
+    "contract_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["repository_snapshot", "patch_proposal", "artifact_bundle"]
+        },
+        "commit_sha": { "type": "string" },
+        "patch_proposal_id": { "type": "string" },
+        "artifact_id": { "type": "string" },
+        "content_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "status": {
+      "enum": ["PASS", "FAIL", "ERROR"],
+      "description": "ERROR = verifier could not complete; fail-closed consumers treat as non-PASS"
+    },
+    "evaluated_at": { "type": "string", "format": "date-time" },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "warned", "errored"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "warned": { "type": "integer", "minimum": 0 },
+        "errored": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_id", "rule_id", "type", "severity", "status"],
+      "properties": {
+        "check_id": { "type": "string", "minLength": 1 },
+        "rule_id": {
+          "type": "string",
+          "description": "References DEP-/CON-/SEC-/QG-/API- ids from the contract"
+        },
+        "type": {
+          "enum": [
+            "dependency_rule",
+            "constraint",
+            "quality_gate",
+            "interface_conformance",
+            "scope",
+            "custom"
+          ]
+        },
+        "severity": { "enum": ["block", "warn", "info"] },
+        "status": { "enum": ["PASS", "FAIL", "WARN", "ERROR", "SKIPPED"] },
+        "message": { "type": "string" },
+        "locations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 },
+              "symbol": { "type": "string" }
+            }
+          }
+        },
+        "evidence_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/smoeberg/kodegenerator/blob/main/docs/schemas/architecture-contract-v1.schema.json",
+  "title": "DOR Architecture Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "version",
+    "status",
+    "project",
+    "style",
+    "layers",
+    "dependency_rules",
+    "interfaces",
+    "constraints",
+    "quality_gates",
+    "decisions",
+    "traceability",
+    "approval"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "contract_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^arch-[a-z0-9][a-z0-9._-]{1,63}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+    },
+    "status": {
+      "enum": ["draft", "review", "approved", "superseded", "rejected"]
+    },
+    "previous_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+    },
+    "content_fingerprint": {
+      "type": "string",
+      "description": "SHA-256 of canonical contract content (excluding approval workflow metadata)",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "repository": { "type": "string", "minLength": 1 },
+        "default_branch": { "type": "string", "minLength": 1 },
+        "language": {
+          "enum": ["python", "typescript", "go", "java", "csharp", "other"]
+        },
+        "runtime": { "type": "string" }
+      }
+    },
+    "style": {
+      "enum": [
+        "hexagonal",
+        "clean",
+        "modular_monolith",
+        "microservices",
+        "layered",
+        "other"
+      ]
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/layer" }
+    },
+    "modules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/module" }
+    },
+    "dependency_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dependency_rule" }
+    },
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/http_interface" }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/event_interface" }
+        },
+        "data": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/data_interface" }
+        }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/constraint" }
+    },
+    "quality_gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/quality_gate" }
+    },
+    "decisions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/decision" }
+    },
+    "technology_constraints": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relative_path_glob" }
+        },
+        "denied_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relative_path_glob" }
+        }
+      }
+    },
+    "traceability": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/trace_link" }
+    },
+    "approval": { "$ref": "#/$defs/approval" }
+  },
+  "$defs": {
+    "relative_path_glob": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*\\.\\./)[A-Za-z0-9_./\\-\\*\\[\\]?]+$",
+      "description": "Repo-relative glob without path traversal"
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,32}$"
+        },
+        "path": { "$ref": "#/$defs/relative_path_glob" },
+        "description": { "type": "string" },
+        "framework_independent": { "type": "boolean" }
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,32}$"
+        },
+        "path": { "$ref": "#/$defs/relative_path_glob" },
+        "owner": { "type": "string" },
+        "public_api_path": { "$ref": "#/$defs/relative_path_glob" }
+      }
+    },
+    "dependency_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "may_depend_on", "severity"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^DEP-[0-9]{3,}$"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Layer or module id"
+        },
+        "may_depend_on": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "description": { "type": "string" }
+      }
+    },
+    "http_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "openapi_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^API-[A-Za-z0-9_-]{1,64}$"
+        },
+        "openapi_path": { "$ref": "#/$defs/relative_path_glob" },
+        "base_path": { "type": "string" },
+        "auth_required": { "type": "boolean" }
+      }
+    },
+    "event_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schema_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^EVT-[A-Za-z0-9_-]{1,64}$"
+        },
+        "schema_path": { "$ref": "#/$defs/relative_path_glob" },
+        "direction": { "enum": ["publish", "subscribe", "both"] }
+      }
+    },
+    "data_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schema_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^DATA-[A-Za-z0-9_-]{1,64}$"
+        },
+        "schema_path": { "$ref": "#/$defs/relative_path_glob" },
+        "ownership_module": { "type": "string" }
+      }
+    },
+    "constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "severity"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(CON|SEC|DATA|PERF)-[0-9]{3,}$"
+        },
+        "type": {
+          "enum": [
+            "forbid_pattern",
+            "require_pattern",
+            "require_auth_on_routes",
+            "no_path_traversal_writes",
+            "no_cross_module_db_access",
+            "max_module_fanout",
+            "allowlisted_dependencies_only",
+            "custom"
+          ]
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "description": { "type": "string" },
+        "pattern": { "type": "string" },
+        "scope": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relative_path_glob" }
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "forbid_pattern" } }
+          },
+          "then": { "required": ["pattern"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "require_pattern" } }
+          },
+          "then": { "required": ["pattern"] }
+        }
+      ]
+    },
+    "quality_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "required"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^QG-[A-Za-z0-9_-]{1,64}$"
+        },
+        "type": {
+          "enum": [
+            "command",
+            "architecture_tests",
+            "openapi_conformance",
+            "event_schema_conformance",
+            "dependency_rules",
+            "security_scan",
+            "custom"
+          ]
+        },
+        "required": { "type": "boolean" },
+        "command": { "type": "string" },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "description": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "command" } }
+          },
+          "then": { "required": ["command"] }
+        }
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "decision", "rationale"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ADR-[0-9]{3,}$"
+        },
+        "decision": { "type": "string", "minLength": 1 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(FR|NFR|BR|DR|IR|SR|CR|CON)-[0-9]{3,}$"
+          }
+        }
+      }
+    },
+    "trace_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "target_id", "relation"],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1 },
+        "target_id": { "type": "string", "minLength": 1 },
+        "relation": {
+          "enum": [
+            "implements",
+            "constrains",
+            "satisfies",
+            "derived_from",
+            "verifies"
+          ]
+        }
+      }
+    },
+    "severity": {
+      "enum": ["block", "warn", "info"]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending", "approved", "rejected"] },
+        "contract_id": { "type": "string" },
+        "version": { "type": "string" },
+        "content_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "approver_id": { "type": "string" },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "validation_result": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "approved" } }
+          },
+          "then": {
+            "required": [
+              "approver_id",
+              "approved_at",
+              "content_fingerprint"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
