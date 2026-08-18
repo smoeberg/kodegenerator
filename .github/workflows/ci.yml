@@ -57,13 +57,26 @@ jobs:
           alembic upgrade head
           test -f dor_runtime.db
 
-      - name: Run complete test suite
+      - name: Run complete test suite with coverage
         env:
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
-        run: pytest -q
+        run: >-
+          pytest -q
+          --cov
+          --cov-config=.coveragerc
+          --cov-report=term-missing:skip-covered
+          --cov-report=xml:coverage.xml
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
 
       - name: API startup and health smoke test
         env:

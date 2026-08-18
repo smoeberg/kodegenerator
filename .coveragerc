@@ -1,0 +1,39 @@
+[run]
+source =
+    ai
+    api
+    dashboard
+    domain
+    execution
+    generation
+    infrastructure
+    monitoring
+    phase4
+    phase5
+    phase6
+    runtime
+    services
+omit =
+    */tests/*
+    tests/*
+    */alembic/*
+    alembic/*
+    */venv/*
+    */.venv/*
+    */__pycache__/*
+    */site-packages/*
+branch = False
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+
+[html]
+directory = htmlcov
