@@ -31,6 +31,7 @@ _ALLOWED_CONSTRAINT_TYPES = frozenset(
     {
         "forbid_pattern",
         "require_pattern",
+        "forbid_call",
         "require_auth_on_routes",
         "no_path_traversal_writes",
         "no_cross_module_db_access",
@@ -158,6 +159,10 @@ class ConstraintV1:
             raise ArchitectureContractV1Error(f"Invalid severity: {self.severity}")
         if self.type in {"forbid_pattern", "require_pattern"} and not self.pattern:
             raise ArchitectureContractV1Error(f"{self.type} requires pattern")
+        if self.type == "forbid_call":
+            callee = (self.params or {}).get("callee")
+            if not isinstance(callee, str) or not callee.strip():
+                raise ArchitectureContractV1Error("forbid_call requires params.callee")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
