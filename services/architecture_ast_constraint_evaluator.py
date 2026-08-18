@@ -3,7 +3,7 @@
 Supported constraint types (v1):
 - forbid_pattern / require_pattern: token-prepared regex with match_mode + line numbers
 - forbid_call: structured AST Call matching
-- no_path_traversal_writes: AST write/open with '..'
+- no_path_traversal_writes: AST write/open with '..' (literal + L1 local flow)
 - max_module_fanout: unique outbound internal imports per source file
 - allowlisted_dependencies_only: third-party packages must be on allowlist
 
@@ -97,7 +97,7 @@ class ConstraintEvaluationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.4"},
+            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.5"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -160,13 +160,34 @@ def _status_for_severity(severity: str, violated: bool) -> str:
     return "PASS"
 
 
+def _string_has_path_traversal(value: str) -> bool:
+    try:
+        pure = PurePosixPath(value.replace("\\", "/"))
+    except Exception:
+        return ".." in value
+    return ".." in pure.parts or "../" in value or "..\\" in value
+
+
 def _contains_path_traversal_literal(node: ast.AST) -> bool:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        try:
-            pure = PurePosixPath(node.value.replace("\\", "/"))
-        except Exception:
-            return ".." in node.value
-        return ".." in pure.parts or "../" in node.value or "..\\" in node.value
+        return _string_has_path_traversal(node.value)
+    return False
+
+
+def _arg_has_path_traversal(arg: ast.AST, env: dict[str, str]) -> bool:
+    """True if arg embeds '..' as a string literal or L1-resolved Name."""
+    if _contains_path_traversal_literal(arg):
+        return True
+    if isinstance(arg, ast.Name) and arg.id in env:
+        return _string_has_path_traversal(env[arg.id])
+    for child in ast.walk(arg):
+        if child is arg:
+            continue
+        if _contains_path_traversal_literal(child):
+            return True
+        if isinstance(child, ast.Name) and child.id in env:
+            if _string_has_path_traversal(env[child.id]):
+                return True
     return False
 
 
@@ -193,29 +214,78 @@ def _is_write_open_call(node: ast.Call) -> bool:
     return False
 
 
+class _PathTraversalWriteVisitor(ast.NodeVisitor):
+    """L0 literals + L1 local Name=string flow within each function/class scope."""
+
+    def __init__(self) -> None:
+        self.hits: list[tuple[int, str]] = []
+        self._env_stack: list[dict[str, str]] = [{}]
+
+    @property
+    def env(self) -> dict[str, str]:
+        return self._env_stack[-1]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._env_stack.append({})
+        self.generic_visit(node)
+        self._env_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._env_stack.append({})
+        self.generic_visit(node)
+        self._env_stack.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._env_stack.append({})
+        self.generic_visit(node)
+        self._env_stack.pop()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.env[target.id] = node.value.value
+        else:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.env.pop(target.id, None)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            if (
+                node.value is not None
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                self.env[node.target.id] = node.value.value
+            elif node.value is not None:
+                self.env.pop(node.target.id, None)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.generic_visit(node)
+        if not _is_write_open_call(node):
+            return
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            if _arg_has_path_traversal(arg, self.env):
+                line = getattr(node, "lineno", 1)
+                self.hits.append(
+                    (line, "write/open call embeds path traversal ('..')")
+                )
+                break
+
+
 def _find_path_traversal_writes(source: str, filename: str) -> list[tuple[int, str]]:
     try:
         tree = ast.parse(source, filename=filename)
     except SyntaxError as exc:
         raise ConstraintEvaluationError(f"Syntax error in {filename}: {exc}") from exc
 
-    hits: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not _is_write_open_call(node):
-            continue
-        for arg in list(node.args) + [kw.value for kw in node.keywords]:
-            if _contains_path_traversal_literal(arg):
-                line = getattr(node, "lineno", 1)
-                hits.append((line, "write/open call embeds path traversal ('..')"))
-                break
-            for child in ast.walk(arg):
-                if _contains_path_traversal_literal(child):
-                    line = getattr(node, "lineno", 1)
-                    hits.append((line, "write/open call embeds path traversal ('..')"))
-                    break
-    return hits
+    visitor = _PathTraversalWriteVisitor()
+    visitor.visit(tree)
+    return visitor.hits
 
 
 def _forbid_call_params(constraint: ConstraintV1) -> tuple[str, dict[str, Any]]:
