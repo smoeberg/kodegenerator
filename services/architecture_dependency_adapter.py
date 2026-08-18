@@ -1,8 +1,8 @@
-"""P3-21 style evidence adapter for Architecture Contract v1 dependency rules.
+"""P3-21 style evidence adapter for Architecture Contract v1 verification.
 
-Extracts a Python import graph from a workspace, evaluates it against an
-ArchitectureContractV1, and emits bound Evidence(kind="architecture") for the
-P3-20 verification gate. No LLM calls. Fail-closed on parse/evaluation errors.
+Runs unified architecture verification (import-graph dependency rules + AST
+constraints) and emits bound Evidence(kind="architecture") for the P3-20 gate.
+No LLM calls. Fail-closed on parse/evaluation errors.
 
 Binding semantics:
 - Evidence.contract_fingerprint is the *dispatch/specialist* contract fingerprint
@@ -19,17 +19,19 @@ from pathlib import Path
 
 from domain.architecture_contract_v1 import ArchitectureContractV1
 from domain.verification import Evidence
-from services.architecture_dependency_evaluator import evaluate_dependency_rules
-from services.python_import_graph import ImportGraphError, collect_import_edges
+from services.architecture_verification import (
+    ArchitectureVerificationError,
+    verify_architecture,
+)
 from services.verification_execution import ExecutionBinding, VerificationExecutionError
 
 
 @dataclass(frozen=True)
 class ArchitectureDependencyEvidenceAdapter:
-    """Produce architecture dependency evidence for one fixed architecture contract."""
+    """Produce architecture verification evidence for one fixed architecture contract."""
 
     contract: ArchitectureContractV1
-    adapter_id: str = "architecture-dependency-v1"
+    adapter_id: str = "architecture-verification-v1"
 
     def __post_init__(self) -> None:
         if not isinstance(self.contract, ArchitectureContractV1):
@@ -50,15 +52,14 @@ class ArchitectureDependencyEvidenceAdapter:
         return "execution-" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
 
     def evaluate_workspace(self, cwd: str | Path):
-        """Return the structured dependency evaluation for a workspace root."""
+        """Return the unified architecture verification result for a workspace."""
         workspace = Path(cwd)
         if not workspace.is_dir():
             raise VerificationExecutionError("Execution cwd must be an existing directory")
         try:
-            edges = collect_import_edges(workspace)
-        except ImportGraphError as exc:
+            return verify_architecture(self.contract, workspace)
+        except ArchitectureVerificationError as exc:
             raise VerificationExecutionError(str(exc)) from exc
-        return evaluate_dependency_rules(self.contract, edges)
 
     def run(self, binding: ExecutionBinding, *, cwd: str | Path) -> Evidence:
         if not isinstance(binding, ExecutionBinding):
@@ -90,7 +91,7 @@ class ArchitectureDependencyEvidenceAdapter:
                 f"0 block failures ({arch_ref})"
             )
         else:
-            sample = failed[0].message if failed else "dependency evaluation failed"
+            sample = failed[0].message if failed else "architecture verification failed"
             statement = (
                 f"{self.adapter_id} FAIL: {result.summary['failed']} block failures; "
                 f"example: {sample} ({arch_ref})"
@@ -111,5 +112,5 @@ class ArchitectureDependencyEvidenceAdapter:
 def architecture_dependency_adapter(
     contract: ArchitectureContractV1,
 ) -> ArchitectureDependencyEvidenceAdapter:
-    """Factory for the canonical architecture dependency evidence adapter."""
+    """Factory for the canonical architecture verification evidence adapter."""
     return ArchitectureDependencyEvidenceAdapter(contract=contract)
