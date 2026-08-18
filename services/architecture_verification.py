@@ -3,6 +3,7 @@
 Combines:
 1. AST import-graph dependency rule evaluation
 2. AST/source constraint evaluation
+3. Formal contract exceptions (fingerprint-bound, fail-closed on expiry)
 
 Returns one aggregated verification-result shaped object for evidence adapters.
 """
@@ -22,6 +23,7 @@ from services.architecture_dependency_evaluator import (
     CheckResult,
     evaluate_dependency_rules,
 )
+from services.architecture_exception_policy import apply_exceptions, overall_status
 from services.python_import_graph import ImportGraphError, collect_import_edges
 
 
@@ -59,7 +61,7 @@ class ArchitectureVerificationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_verification", "version": "1.0"},
+            "evaluator": {"name": "architecture_verification", "version": "1.1"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -96,9 +98,9 @@ def verify_architecture(
     except ConstraintEvaluationError as exc:
         raise ArchitectureVerificationError(str(exc)) from exc
 
-    checks = tuple(dep_result.checks) + tuple(con_result.checks)
-    block_failed = dep_result.status == "FAIL" or con_result.status == "FAIL"
-    status = "FAIL" if block_failed else "PASS"
+    merged = tuple(dep_result.checks) + tuple(con_result.checks)
+    checks = apply_exceptions(contract, merged, at=when)
+    status = overall_status(checks)
 
     return ArchitectureVerificationResult(
         result_id=rid,

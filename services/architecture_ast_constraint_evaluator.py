@@ -1,8 +1,8 @@
 """AST- and source-based evaluation of Architecture Contract v1 constraints.
 
 Supported constraint types (v1):
-- forbid_pattern: regex must not match any scoped source file
-- require_pattern: regex must match at least one scoped source file
+- forbid_pattern: regex must not match any scoped source file (comments stripped)
+- require_pattern: regex must match at least one scoped source file (comments stripped)
 - no_path_traversal_writes: AST detects writes/open calls that embed '..'
 
 Unsupported constraint types with severity=block fail closed.
@@ -20,6 +20,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from domain.architecture_contract_v1 import ArchitectureContractV1, ConstraintV1
+from services.architecture_ast_source import source_without_comments
 from services.architecture_dependency_evaluator import CheckResult, normalize_repo_path
 
 
@@ -75,7 +76,7 @@ class ConstraintEvaluationResult:
             "subject": {"type": "repository_snapshot"},
             "status": self.status,
             "evaluated_at": self.evaluated_at.isoformat(),
-            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.0"},
+            "evaluator": {"name": "architecture_ast_constraint_evaluator", "version": "1.1"},
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
         }
@@ -128,7 +129,7 @@ def _status_for_severity(severity: str, violated: bool) -> str:
         return "FAIL"
     if severity == "warn":
         return "WARN"
-    return "PASS"  # info findings do not fail
+    return "PASS"
 
 
 def _contains_path_traversal_literal(node: ast.AST) -> bool:
@@ -142,7 +143,6 @@ def _contains_path_traversal_literal(node: ast.AST) -> bool:
 
 
 def _is_write_open_call(node: ast.Call) -> bool:
-    """Detect open(..., mode=write-ish) and Path.write_text/write_bytes/open."""
     func = node.func
     name = None
     if isinstance(func, ast.Name):
@@ -153,7 +153,6 @@ def _is_write_open_call(node: ast.Call) -> bool:
     if name in {"write_text", "write_bytes", "writelines", "write"}:
         return True
     if name == "open":
-        # open(path) defaults to read — only flag explicit write modes when present.
         for keyword in node.keywords:
             if keyword.arg in {"mode", None} and isinstance(keyword.value, ast.Constant):
                 mode = str(keyword.value.value)
@@ -183,7 +182,6 @@ def _find_path_traversal_writes(source: str, filename: str) -> list[tuple[int, s
                 line = getattr(node, "lineno", 1)
                 hits.append((line, "write/open call embeds path traversal ('..')"))
                 break
-            # f-strings / joined paths with constants containing '..'
             for child in ast.walk(arg):
                 if _contains_path_traversal_literal(child):
                     line = getattr(node, "lineno", 1)
@@ -260,7 +258,7 @@ def evaluate_constraints(
                 violations: list[CheckResult] = []
                 for path in scoped:
                     rel = _repo_relative(workspace, path)
-                    text = path.read_text(encoding="utf-8")
+                    text = source_without_comments(path.read_text(encoding="utf-8"))
                     match = regex.search(text)
                     if match:
                         status = _status_for_severity(constraint.severity, True)
@@ -301,7 +299,7 @@ def evaluate_constraints(
                 regex = _compile_pattern(constraint)
                 found = False
                 for path in scoped:
-                    text = path.read_text(encoding="utf-8")
+                    text = source_without_comments(path.read_text(encoding="utf-8"))
                     if regex.search(text):
                         found = True
                         break

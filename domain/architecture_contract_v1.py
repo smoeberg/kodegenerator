@@ -1,7 +1,8 @@
 """Architecture Contract v1 — machine-evaluable architecture rules.
 
 Extends the Phase 3 ArchitectureContract foundation with structural layers,
-dependency rules, constraints, quality gates, and content fingerprinting.
+dependency rules, constraints, quality gates, formal exceptions, and content
+fingerprinting.
 
 Only human-approved contracts may authorize downstream codegen/verification.
 """
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any, Mapping
+
+from domain.architecture_exceptions import ExceptionV1
 
 
 class ArchitectureContractV1Error(ValueError):
@@ -371,6 +374,7 @@ class ArchitectureContractV1:
     decisions: tuple[DecisionV1, ...] = ()
     traceability: tuple[TraceLinkV1, ...] = ()
     technology_constraints: tuple[str, ...] = ()
+    exceptions: tuple[ExceptionV1, ...] = ()
     language: str | None = None
     runtime: str | None = None
     approval: ApprovalV1 = field(default_factory=lambda: ApprovalV1(status="pending"))
@@ -408,6 +412,9 @@ class ArchitectureContractV1:
                     raise ArchitectureContractV1Error(
                         f"dependency_rule {rule.id} may_depend_on unknown layer: {target}"
                     )
+        exc_ids = [exc.id for exc in self.exceptions]
+        if len(exc_ids) != len(set(exc_ids)):
+            raise ArchitectureContractV1Error("Exception ids must be unique")
         if self.language is not None and self.language not in _ALLOWED_LANGUAGES:
             raise ArchitectureContractV1Error(f"Invalid language: {self.language}")
         if self.status == "approved":
@@ -437,6 +444,7 @@ class ArchitectureContractV1:
             "quality_gates": [g.to_dict() for g in self.quality_gates],
             "decisions": [d.to_dict() for d in self.decisions],
             "technology_constraints": list(self.technology_constraints),
+            "exceptions": [e.to_dict() for e in self.exceptions],
             "traceability": [t.to_dict() for t in self.traceability],
         }
 
@@ -480,6 +488,7 @@ class ArchitectureContractV1:
             decisions=self.decisions,
             traceability=self.traceability,
             technology_constraints=self.technology_constraints,
+            exceptions=self.exceptions,
             language=self.language,
             runtime=self.runtime,
             approval=approval,
@@ -503,6 +512,7 @@ class ArchitectureContractV1:
         gates = tuple(QualityGateV1.from_dict(item) for item in (data.get("quality_gates") or []))
         decisions = tuple(DecisionV1.from_dict(item) for item in (data.get("decisions") or []))
         traces = tuple(TraceLinkV1.from_dict(item) for item in (data.get("traceability") or []))
+        exceptions = tuple(ExceptionV1.from_dict(item) for item in (data.get("exceptions") or []))
         tech = tuple(str(t) for t in (data.get("technology_constraints") or []))
         approval_raw = data.get("approval") or {"status": "pending"}
         approval = ApprovalV1.from_dict(approval_raw)
@@ -520,6 +530,7 @@ class ArchitectureContractV1:
             decisions=decisions,
             traceability=traces,
             technology_constraints=tech,
+            exceptions=exceptions,
             language=project.get("language"),
             runtime=project.get("runtime"),
             approval=approval,
