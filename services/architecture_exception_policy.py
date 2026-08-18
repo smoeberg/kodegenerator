@@ -35,7 +35,6 @@ def apply_exceptions(
             exceptions, rule_id=check.rule_id, path=path, at=when
         )
         if exc is None and path is not None:
-            # Also try target_path for dependency edges.
             exc = find_active_exception(
                 exceptions,
                 rule_id=check.rule_id,
@@ -58,6 +57,7 @@ def apply_exceptions(
                 ),
                 source_path=check.source_path,
                 target_path=check.target_path,
+                source_line=check.source_line,
             )
         )
     return tuple(adjusted)
