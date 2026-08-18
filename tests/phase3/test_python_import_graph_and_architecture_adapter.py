@@ -71,6 +71,20 @@ def test_collect_import_edges_resolves_internal_imports(tmp_path: Path):
     assert not any(target.endswith("json.py") for _, target in pairs)
 
 
+def test_collect_import_edges_resolves_from_package_import_submodule(tmp_path: Path):
+    """from pkg import submodule must resolve pkg.submodule, not only the package."""
+    root = tmp_path
+    _write(root / "src" / "adapters" / "db.py", "ENGINE = 'x'\n")
+    _write(
+        root / "src" / "domain" / "model.py",
+        "from src.adapters import db\n",
+    )
+
+    edges = collect_import_edges(root)
+    pairs = {(e.source_path, e.target_path) for e in edges}
+    assert ("src/domain/model.py", "src/adapters/db.py") in pairs
+
+
 def test_adapter_passes_on_valid_layer_graph(tmp_path: Path):
     root = tmp_path
     _write(root / "src" / "domain" / "model.py", "VALUE = 1\n")

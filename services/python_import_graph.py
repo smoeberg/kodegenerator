@@ -64,14 +64,7 @@ def _build_module_index(root: Path) -> dict[str, Path]:
 def _resolve_absolute_module(module: str, index: dict[str, Path]) -> Path | None:
     if module in index:
         return index[module]
-    # Allow importing a package submodule that maps to a file.
-    candidate = module
-    while "." in candidate:
-        candidate = candidate.rsplit(".", 1)[0]
-        if candidate in index:
-            # Prefer exact leaf if present; otherwise nearest package is not a file edge target.
-            break
-    # Try progressively longer prefixes for submodule files.
+    # Try progressively shorter prefixes for package fallback.
     parts = module.split(".")
     for i in range(len(parts), 0, -1):
         key = ".".join(parts[:i])
@@ -99,6 +92,51 @@ def _resolve_relative_module(
     if not target:
         return None
     return _resolve_absolute_module(target, index)
+
+
+def _resolve_import_from_targets(
+    *,
+    current_module: str,
+    node: ast.ImportFrom,
+    index: dict[str, Path],
+) -> set[Path]:
+    """Resolve ImportFrom targets including ``from pkg import submodule``.
+
+    For ``from src.adapters import db``, both ``src.adapters`` (package) and
+    ``src.adapters.db`` (submodule) are considered. Prefer exact submodule hits.
+    """
+    targets: set[Path] = set()
+
+    def add_module(module_name: str | None) -> None:
+        if not module_name:
+            return
+        if node.level and node.level > 0:
+            resolved = _resolve_relative_module(
+                current_module, node.level, module_name, index
+            )
+        else:
+            resolved = _resolve_absolute_module(module_name, index)
+        if resolved is not None:
+            targets.add(resolved)
+
+    # Package / module path on the ImportFrom itself.
+    add_module(node.module)
+
+    # Submodules or names imported from that package:
+    #   from src.adapters import db  -> src.adapters.db
+    #   from .adapters import db     -> <relative>.adapters.db
+    for alias in node.names:
+        if not alias.name or alias.name == "*":
+            continue
+        if node.module:
+            add_module(f"{node.module}.{alias.name}")
+        elif node.level and node.level > 0:
+            # from . import sibling_module
+            add_module(alias.name)
+        else:
+            add_module(alias.name)
+
+    return targets
 
 
 def _repo_relative(root: Path, path: Path) -> str:
@@ -140,16 +178,13 @@ def collect_import_edges(root: str | Path) -> list[ImportEdge]:
                     if resolved is not None:
                         targets.add(resolved)
             elif isinstance(node, ast.ImportFrom):
-                if node.level and node.level > 0:
-                    resolved = _resolve_relative_module(
-                        current_module, node.level, node.module, index
+                targets.update(
+                    _resolve_import_from_targets(
+                        current_module=current_module,
+                        node=node,
+                        index=index,
                     )
-                    if resolved is not None:
-                        targets.add(resolved)
-                elif node.module:
-                    resolved = _resolve_absolute_module(node.module, index)
-                    if resolved is not None:
-                        targets.add(resolved)
+                )
 
         for target_path in sorted(targets, key=lambda p: p.as_posix()):
             if target_path.resolve() == source_path.resolve():
