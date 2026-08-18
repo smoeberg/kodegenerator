@@ -5,7 +5,7 @@ Targets branches that line coverage can hide:
 - unsupported constraint types with non-block severity (SKIPPED)
 - invalid max_fanout / allowlist config (fail-closed)
 - empty constraint scope (all paths in scope)
-- path-traversal negatives: read-only open, write_text/write_bytes with '..'
+- path-traversal: read-only open; open mode= keyword; write_text/bytes args
 - exception policy: WARN suppression and target_path fallback
 """
 from __future__ import annotations
@@ -64,11 +64,6 @@ def base_contract(*constraints: ConstraintV1) -> ArchitectureContractV1:
     )
 
 
-# ---------------------------------------------------------------------------
-# 1–2. severity=warn and info on graph / pattern constraints
-# ---------------------------------------------------------------------------
-
-
 def test_max_module_fanout_warn_does_not_fail_overall(tmp_path: Path):
     for name in ("a", "b", "c"):
         _write(tmp_path / "src" / "domain" / f"{name}.py", f"VALUE_{name.upper()} = 1\n")
@@ -86,7 +81,6 @@ def test_max_module_fanout_warn_does_not_fail_overall(tmp_path: Path):
         )
     )
     result = evaluate_constraints(contract, tmp_path)
-    # warn violations must not flip overall status to FAIL
     assert result.status == "PASS"
     assert any(c.status == "WARN" for c in result.checks)
     assert any("fanout" in c.message.lower() for c in result.checks if c.status == "WARN")
@@ -109,7 +103,6 @@ def test_allowlisted_dependencies_warn_status(tmp_path: Path):
 
 
 def test_forbid_pattern_info_severity_treats_violation_as_pass(tmp_path: Path):
-    """severity=info is allowed by the domain model but maps to PASS on violation."""
     _write(
         tmp_path / "src" / "adapters" / "run.py",
         "import subprocess\nsubprocess.call('ls', shell=True)\n",
@@ -131,13 +124,7 @@ def test_forbid_pattern_info_severity_treats_violation_as_pass(tmp_path: Path):
     )
 
 
-# ---------------------------------------------------------------------------
-# 3. unsupported constraint type (domain-allowed 'custom') with non-block → SKIPPED
-# ---------------------------------------------------------------------------
-
-
 def test_unsupported_warn_constraint_is_skipped(tmp_path: Path):
-    """type=custom is domain-valid but not implemented in the evaluator."""
     _write(tmp_path / "src" / "domain" / "model.py", "VALUE = 1\n")
     contract = base_contract(
         ConstraintV1(
@@ -167,11 +154,6 @@ def test_unsupported_info_constraint_is_skipped(tmp_path: Path):
     result = evaluate_constraints(contract, tmp_path)
     assert result.status == "PASS"
     assert any(c.rule_id == "CON-CUSTOM-INFO" and c.status == "SKIPPED" for c in result.checks)
-
-
-# ---------------------------------------------------------------------------
-# 4–5. invalid max_fanout / allowlist config (fail-closed)
-# ---------------------------------------------------------------------------
 
 
 def test_max_module_fanout_missing_param_fails_config(tmp_path: Path):
@@ -233,7 +215,7 @@ def test_allowlist_not_a_list_fails_config(tmp_path: Path):
             type="allowlisted_dependencies_only",
             severity="block",
             scope=("src/**",),
-            params={"allowlist": "fastapi"},  # must be a list
+            params={"allowlist": "fastapi"},
         )
     )
     result = evaluate_constraints(contract, tmp_path)
@@ -242,11 +224,6 @@ def test_allowlist_not_a_list_fails_config(tmp_path: Path):
         c.status == "FAIL" and "allowlist" in c.message.lower() and "list" in c.message.lower()
         for c in result.checks
     )
-
-
-# ---------------------------------------------------------------------------
-# 6. empty scope → all paths in scope
-# ---------------------------------------------------------------------------
 
 
 def test_empty_scope_includes_all_paths_for_forbid_pattern(tmp_path: Path):
@@ -260,7 +237,7 @@ def test_empty_scope_includes_all_paths_for_forbid_pattern(tmp_path: Path):
             type="forbid_pattern",
             pattern=r"subprocess\.call\(.*shell\s*=\s*True",
             severity="block",
-            scope=(),  # empty → everything in scope
+            scope=(),
         )
     )
     result = evaluate_constraints(contract, tmp_path)
@@ -284,13 +261,7 @@ def test_empty_scope_fanout_still_evaluates(tmp_path: Path):
     assert result.status == "PASS"
 
 
-# ---------------------------------------------------------------------------
-# 7–8. path-traversal: read-only open should PASS; write_text/bytes with '..' FAIL
-# ---------------------------------------------------------------------------
-
-
 def test_read_only_open_with_traversal_does_not_fail(tmp_path: Path):
-    """open(..., 'r') is not a write — must not trip no_path_traversal_writes."""
     _write(
         tmp_path / "src" / "adapters" / "files.py",
         "def load():\n    return open('../etc/passwd', 'r').read()\n",
@@ -308,10 +279,28 @@ def test_read_only_open_with_traversal_does_not_fail(tmp_path: Path):
     assert all(c.status != "FAIL" for c in result.checks if c.rule_id == "CON-TRAVERSE")
 
 
-def test_write_text_with_traversal_fails(tmp_path: Path):
+def test_open_write_mode_keyword_with_traversal_fails(tmp_path: Path):
     _write(
         tmp_path / "src" / "adapters" / "files.py",
-        "from pathlib import Path\n\ndef save(name):\n    Path('../etc/passwd').write_text(name)\n",
+        "def save(name):\n    open('../etc/passwd', mode='w').write(name)\n",
+    )
+    contract = base_contract(
+        ConstraintV1(
+            id="CON-OPEN-KW",
+            type="no_path_traversal_writes",
+            severity="block",
+            scope=("src/**",),
+        )
+    )
+    result = evaluate_constraints(contract, tmp_path)
+    assert result.status == "FAIL"
+    assert any(c.rule_id == "CON-OPEN-KW" and c.status == "FAIL" for c in result.checks)
+
+
+def test_write_text_arg_with_traversal_fails(tmp_path: Path):
+    _write(
+        tmp_path / "src" / "adapters" / "files.py",
+        "from pathlib import Path\n\ndef save():\n    Path('out.txt').write_text('../etc/passwd')\n",
     )
     contract = base_contract(
         ConstraintV1(
@@ -326,10 +315,10 @@ def test_write_text_with_traversal_fails(tmp_path: Path):
     assert any(c.rule_id == "CON-WT" and c.status == "FAIL" for c in result.checks)
 
 
-def test_write_bytes_with_traversal_fails(tmp_path: Path):
+def test_write_bytes_arg_with_traversal_fails(tmp_path: Path):
     _write(
         tmp_path / "src" / "adapters" / "files.py",
-        "from pathlib import Path\n\ndef save(data):\n    Path('../out.bin').write_bytes(data)\n",
+        "from pathlib import Path\n\ndef save():\n    Path('out.bin').write_bytes(b'../out.bin')\n",
     )
     contract = base_contract(
         ConstraintV1(
@@ -342,11 +331,6 @@ def test_write_bytes_with_traversal_fails(tmp_path: Path):
     result = evaluate_constraints(contract, tmp_path)
     assert result.status == "FAIL"
     assert any(c.rule_id == "CON-WB" and c.status == "FAIL" for c in result.checks)
-
-
-# ---------------------------------------------------------------------------
-# 9–10. exception policy: WARN suppression + target_path fallback
-# ---------------------------------------------------------------------------
 
 
 def test_exception_suppresses_warn_check():
@@ -380,14 +364,13 @@ def test_exception_suppresses_warn_check():
 
 
 def test_exception_matches_via_target_path_fallback():
-    """When source_path does not match, policy retries with target_path."""
     contract = replace(
         base_contract(),
         exceptions=(
             ExceptionV1(
                 id="EXC-TGT",
                 rule_id="DEP-001",
-                path="src/adapters/db.py",  # matches target, not source
+                path="src/adapters/db.py",
                 reason="Target-side exception",
                 approved_by="lead_architect",
             ),
