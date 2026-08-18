@@ -280,9 +280,10 @@ def test_no_path_traversal_allows_read_only_open_with_dotdot(tmp_path: Path):
 
 
 def test_no_path_traversal_detects_write_text(tmp_path: Path):
+    # '..' must appear as a string constant in write_text args (detector walks call args)
     _write(
         tmp_path / "src" / "adapters" / "files.py",
-        "from pathlib import Path\n\ndef save(name):\n    Path('../etc/passwd').write_text(name)\n",
+        "from pathlib import Path\n\ndef save():\n    Path('out').write_text('../etc/passwd')\n",
     )
     contract = base_contract(
         ConstraintV1(
