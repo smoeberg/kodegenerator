@@ -1,15 +1,16 @@
 """Close partial branch gaps in architecture constraint evaluators.
 
 Targets branches that line coverage can hide:
-- severity=warn / unknown severity paths in _status_for_severity
+- severity=warn / info paths in _status_for_severity
 - unsupported constraint types with non-block severity (SKIPPED)
 - invalid max_fanout / allowlist config (fail-closed)
 - empty constraint scope (all paths in scope)
-- path-traversal negatives: read-only open, write_text with '..'
+- path-traversal negatives: read-only open, write_text/write_bytes with '..'
 - exception policy: WARN suppression and target_path fallback
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from domain.architecture_contract_v1 import (
@@ -64,7 +65,7 @@ def base_contract(*constraints: ConstraintV1) -> ArchitectureContractV1:
 
 
 # ---------------------------------------------------------------------------
-# 1–2. severity=warn and unknown severity on graph constraints
+# 1–2. severity=warn and info on graph / pattern constraints
 # ---------------------------------------------------------------------------
 
 
@@ -107,15 +108,15 @@ def test_allowlisted_dependencies_warn_status(tmp_path: Path):
     assert any(c.status == "WARN" and "httpx" in c.message for c in result.checks)
 
 
-def test_forbid_pattern_unknown_severity_treats_violation_as_pass(tmp_path: Path):
-    """Unknown severity falls through to PASS in _status_for_severity."""
+def test_forbid_pattern_info_severity_treats_violation_as_pass(tmp_path: Path):
+    """severity=info is allowed by the domain model but maps to PASS on violation."""
     _write(
         tmp_path / "src" / "adapters" / "run.py",
         "import subprocess\nsubprocess.call('ls', shell=True)\n",
     )
     contract = base_contract(
         ConstraintV1(
-            id="SEC-UNK",
+            id="SEC-INFO",
             type="forbid_pattern",
             pattern=r"subprocess\.call\(.*shell\s*=\s*True",
             severity="info",
@@ -124,24 +125,24 @@ def test_forbid_pattern_unknown_severity_treats_violation_as_pass(tmp_path: Path
     )
     result = evaluate_constraints(contract, tmp_path)
     assert result.status == "PASS"
-    # violation observed but severity is not block/warn → status PASS on check
     assert any(
-        c.rule_id == "SEC-UNK" and c.status == "PASS" and "Forbidden pattern matched" in c.message
+        c.rule_id == "SEC-INFO" and c.status == "PASS" and "Forbidden pattern matched" in c.message
         for c in result.checks
     )
 
 
 # ---------------------------------------------------------------------------
-# 3. unsupported constraint type with non-block severity → SKIPPED
+# 3. unsupported constraint type (domain-allowed 'custom') with non-block → SKIPPED
 # ---------------------------------------------------------------------------
 
 
 def test_unsupported_warn_constraint_is_skipped(tmp_path: Path):
+    """type=custom is domain-valid but not implemented in the evaluator."""
     _write(tmp_path / "src" / "domain" / "model.py", "VALUE = 1\n")
     contract = base_contract(
         ConstraintV1(
             id="CON-CUSTOM",
-            type="custom_future",
+            type="custom",
             severity="warn",
             description="not implemented",
         )
@@ -159,7 +160,7 @@ def test_unsupported_info_constraint_is_skipped(tmp_path: Path):
     contract = base_contract(
         ConstraintV1(
             id="CON-CUSTOM-INFO",
-            type="not_a_real_type",
+            type="custom",
             severity="info",
         )
     )
@@ -284,7 +285,7 @@ def test_empty_scope_fanout_still_evaluates(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 7–8. path-traversal: read-only open should PASS; write_text with '..' FAIL
+# 7–8. path-traversal: read-only open should PASS; write_text/bytes with '..' FAIL
 # ---------------------------------------------------------------------------
 
 
@@ -349,12 +350,8 @@ def test_write_bytes_with_traversal_fails(tmp_path: Path):
 
 
 def test_exception_suppresses_warn_check():
-    contract = base_contract()
-    # inject exceptions via replace-style construction
-    from dataclasses import replace
-
     contract = replace(
-        contract,
+        base_contract(),
         exceptions=(
             ExceptionV1(
                 id="EXC-WARN",
@@ -384,8 +381,6 @@ def test_exception_suppresses_warn_check():
 
 def test_exception_matches_via_target_path_fallback():
     """When source_path does not match, policy retries with target_path."""
-    from dataclasses import replace
-
     contract = replace(
         base_contract(),
         exceptions=(
@@ -414,8 +409,6 @@ def test_exception_matches_via_target_path_fallback():
 
 
 def test_exception_does_not_suppress_when_neither_path_matches():
-    from dataclasses import replace
-
     contract = replace(
         base_contract(),
         exceptions=(
