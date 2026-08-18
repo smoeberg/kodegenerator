@@ -526,6 +526,7 @@ class ProjectAuditRequest:
     def authority_request(self) -> AuthorityRequest:
         """Build the exact AI-3 question without granting authority."""
         return AuthorityRequest.create(
+            request_id=self.request_fingerprint,
             agent_identity=self.agent_identity,
             agent_role=self.agent_role,
             action=PROJECT_AUDIT_ACTION,
