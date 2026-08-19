@@ -102,6 +102,7 @@ def test_writable_path_must_exist(tmp_path) -> None:
         adapter.execute(spec)
 
 
+<<<<<<< HEAD
 def test_adapter_construction_does_not_require_bwrap_to_be_installed() -> None:
     """The adapter can be constructed without bwrap on the host.
 
@@ -150,3 +151,39 @@ def test_command_construction_is_deterministic_and_independent_of_bwrap() -> Non
     assert "--proc" in command
     assert "--tmpfs" in command
     assert command[command.index("--") + 1] == PYTHON
+=======
+def test_writable_host_path_outside_temp_is_rejected() -> None:
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
+    )
+    spec = ExecutionSpec(
+        execution_id="exec-1",
+        adapter_id="bubblewrap-process",
+        argv=(PYTHON, "-c", "print('ok')"),
+        security=ExecutionSecurityContext("org-1", "principal-1", "actor-1"),
+        writable_paths=("/etc",),
+    )
+    with pytest.raises(InvalidExecutionSpec, match="under /tmp or /var/tmp"):
+        adapter.execute(spec)
+
+
+def test_writable_symlink_is_rejected(tmp_path) -> None:
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(PYTHON,),
+        bubblewrap_path=BWRAP,
+    )
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    spec = ExecutionSpec(
+        execution_id="exec-1",
+        adapter_id="bubblewrap-process",
+        argv=(PYTHON, "-c", "print('ok')"),
+        security=ExecutionSecurityContext("org-1", "principal-1", "actor-1"),
+        writable_paths=(str(link),),
+    )
+    with pytest.raises(InvalidExecutionSpec, match="must not be symlinks"):
+        adapter.execute(spec)
+>>>>>>> origin/security/p0-p1-hardening

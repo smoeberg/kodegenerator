@@ -26,10 +26,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install system dependencies
+      - name: Verify Bubblewrap runtime
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          set -euo pipefail
+          if command -v bwrap >/dev/null 2>&1; then
+            bwrap --version
+            exit 0
+          fi
+          echo "Bubblewrap is not preinstalled on this runner; installing it via apt."
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          bwrap --version
 
       - name: Install dependencies
         run: |
@@ -47,7 +54,7 @@ jobs:
           set -euo pipefail
           heads="$(alembic heads)"
           printf '%s\n' "$heads"
-          printf '%s\n' "$heads" | grep -Eq '^008_phase7_runtime_queue[[:space:]]+\(head\)$'
+          printf '%s\n' "$heads" | grep -Eq '^009_p4_01_execution_replay_ledger[[:space:]]+\(head\)$'
           test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
 
       - name: Verify clean database migration

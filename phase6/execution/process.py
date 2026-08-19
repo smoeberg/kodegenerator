@@ -152,12 +152,26 @@ class BubblewrapProcessAdapter:
             raise InvalidExecutionSpec(f"executable is not allowlisted: {spec.argv[0]}")
         if spec.network_allowlist:
             raise InvalidExecutionSpec("network allowlists are not supported by the isolated process backend")
+
         for path in (*spec.read_only_paths, *spec.writable_paths):
             if not os.path.isabs(path):
                 raise InvalidExecutionSpec("sandbox filesystem paths must be absolute")
-        for path in spec.writable_paths:
             if not os.path.exists(path):
-                raise InvalidExecutionSpec(f"writable sandbox path does not exist: {path}")
+                raise InvalidExecutionSpec(f"sandbox filesystem path does not exist: {path}")
+
+        for path in spec.writable_paths:
+            # Check the mount source before resolving it. Resolving first would
+            # hide a symlink and could turn an apparently safe /tmp path into a
+            # host path outside the permitted temporary roots.
+            source = Path(path)
+            if source.is_symlink():
+                raise InvalidExecutionSpec("writable sandbox paths must not be symlinks")
+            resolved = source.resolve(strict=True)
+            allowed_roots = (Path("/tmp").resolve(), Path("/var/tmp").resolve())
+            if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+                raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
+            if not resolved.is_dir():
+                raise InvalidExecutionSpec("writable sandbox paths must be directories")
 
     def _build_command(self, spec: ExecutionSpec) -> list[str]:
         command = [
@@ -176,13 +190,13 @@ class BubblewrapProcessAdapter:
             "/dev",
             "--proc",
             "/proc",
-            # Intentional private tmpfs: /tmp is the sandbox's ephemeral filesystem,
-            # not a host temp directory. The suppression is scoped to this primitive.
-            "--tmpfs",  # nosec B108 - bubblewrap creates an isolated in-sandbox tmpfs
+            "--tmpfs",
             "/tmp",
         ]
+        for path in spec.read_only_paths:
+            command.extend(("--ro-bind", str(Path(path).resolve()), str(Path(path).resolve())))
         for path in spec.writable_paths:
-            command.extend(("--bind", path, path))
+            command.extend(("--bind", str(Path(path).resolve()), str(Path(path).resolve())))
         command.extend(("--chdir", "/", "--"))
         command.extend(spec.argv)
         return command
@@ -192,6 +206,7 @@ class BubblewrapProcessAdapter:
         return {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C.UTF-8",
+            "PYTHONNOUSERSITE": "1",
             **dict(spec.environment),
         }
 
