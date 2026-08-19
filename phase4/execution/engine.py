@@ -48,6 +48,9 @@ class ExecutionEngine:
             decision = AuthorityDecision(request_id=grant.request_id, decision=Decision.ALLOW, agent_identity=grant.agent_identity, action=grant.action, resource=grant.resource, context_packet_id=grant.context_packet_id, policy_id=grant.policy_id, policy_version=grant.policy_version, matched_rule_ids=grant.matched_rule_ids, reason="verified AI-3 authority grant", evaluated_at="verified-grant", parameters=grant.parameters, organization_id=grant.organization_id, actor_id=grant.actor_id, capability=grant.capability)
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
+        adapter=self._adapters.get(request.action)
+        if adapter is None:
+            return self._rejected(request, "no execution adapter registered for action", decision=decision)
         claim = self._ledger.try_claim(execution_id, grant_id=grant.grant_id, request_id=request.request_id)
         if claim.kind is ClaimOutcomeKind.ALREADY_SUCCEEDED:
             previous=claim.record.result if claim.record else None
@@ -56,16 +59,12 @@ class ExecutionEngine:
         if claim.kind is ClaimOutcomeKind.IN_FLIGHT: return self._rejected(request,"execution already in flight for this execution_id",decision=decision)
         token=claim.record.fencing_token if claim.record else None
         if not token: return self._rejected(request,"acquired claim missing fencing token",decision=decision)
-        adapter=self._adapters.get(request.action)
-        if adapter is None:
-            result=self._failed(request,execution_id,decision,"no execution adapter registered for action")
-        else:
-            try:
-                adapter_result=adapter.execute(request, dispatch=dispatch)
-                if adapter_result is None: result=self._failed(request,execution_id,decision,"adapter rejected execution without a verified governed dispatch")
-                else: result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id,authority_policy_version=decision.policy_version,agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.SUCCEEDED,adapter_id=adapter.adapter_id,output=adapter_result.output,error=None,executed_at=datetime.now(timezone.utc).isoformat())
-            except Exception as exc:
-                result=self._failed(request,execution_id,decision,f"{type(exc).__name__}: {exc}")
+        try:
+            adapter_result=adapter.execute(request, dispatch=dispatch)
+            if adapter_result is None: result=self._failed(request,execution_id,decision,"adapter rejected execution without a verified governed dispatch")
+            else: result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id,authority_policy_version=decision.policy_version,agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.SUCCEEDED,adapter_id=adapter.adapter_id,output=adapter_result.output,error=None,executed_at=datetime.now(timezone.utc).isoformat())
+        except Exception as exc:
+            result=self._failed(request,execution_id,decision,f"{type(exc).__name__}: {exc}")
         try:
             if result.status is ExecutionStatus.SUCCEEDED: self._ledger.complete_succeeded(execution_id,result,fencing_token=token)
             else: self._ledger.complete_failed(execution_id,result,fencing_token=token)
@@ -86,7 +85,7 @@ class ExecutionEngine:
 
     def _rejected(self, request, reason, *, decision=None):
         execution_id=execution_id_for(request,decision) if decision is not None else "rejected:"+getattr(request,"request_id","unknown")
-        result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id if decision else "none",authority_policy_version=decision.policy_version if decision else "none",agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.REJECTED,adapter_id="none",output=(),error=reason,executed_at=datetime.now(timezone.utc).isoformat())
+        result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id if decision else "none",authority_policy_version=decision.policy_version if decision else "none",agent_identity=getattr(request,"agent_identity","unknown"),action=getattr(request,"action","unknown"),resource=getattr(request,"resource","unknown"),context_packet_id=getattr(request,"context_packet_id","unknown"),status=ExecutionStatus.REJECTED,adapter_id="none",output=(),error=reason,executed_at=datetime.now(timezone.utc).isoformat())
         with self._lock: self._audit.append(result)
         return result
 
