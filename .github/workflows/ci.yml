@@ -26,12 +26,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install system dependencies
-        timeout-minutes: 4
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      - name: Verify Bubblewrap runtime
         run: |
           set -euo pipefail
+          if command -v bwrap >/dev/null 2>&1; then
+            bwrap --version
+            exit 0
+          fi
+          echo "Bubblewrap is not preinstalled on this runner; installing it via apt."
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           sudo apt-get install -y --no-install-recommends bubblewrap
           bwrap --version
