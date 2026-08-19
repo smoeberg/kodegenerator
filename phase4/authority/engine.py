@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
-from typing import Dict, List, Mapping, Tuple
+from typing import List, Mapping, Tuple
 
-from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
+from .audit import AuthorityAuditSink, _as_sink
 from .grants import VerifiedAuthorityGrant, _attach_decision_provenance
+from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
 
 
 class AuthorityError(Exception):
@@ -26,13 +27,20 @@ class AuthorityEngine:
     - any matching DENY wins over ALLOW;
     - the engine never executes commands or mutates agent identity/context;
     - every evaluation produces an immutable decision suitable for audit;
-    - only decisions issued here carry provenance that can become an execution grant.
+    - only decisions issued here carry provenance that can become an execution grant;
+    - optional ``AuthorityAuditSink`` observes decisions without granting power.
     """
 
-    def __init__(self, policy: AuthorityPolicy) -> None:
+    def __init__(
+        self,
+        policy: AuthorityPolicy,
+        *,
+        audit_sink: AuthorityAuditSink | None = None,
+    ) -> None:
         self._validate_policy(policy)
         self._policy = policy
         self._audit: List[AuthorityDecision] = []
+        self._audit_sink = _as_sink(audit_sink)
 
     @property
     def policy(self) -> AuthorityPolicy:
@@ -79,6 +87,7 @@ class AuthorityEngine:
         # AI-4 validates this tamper-evident provenance before any dispatch.
         _attach_decision_provenance(result)
         self._audit.append(result)
+        self._audit_sink.record(result)
         return result
 
     def issue_grant(self, request: AuthorityRequest) -> VerifiedAuthorityGrant:
