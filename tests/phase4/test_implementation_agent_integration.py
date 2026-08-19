@@ -111,6 +111,7 @@ def test_registered_agent_produces_governed_patch_outcome_through_ai1_to_ai5():
         provider=provider,
         requests=(implementation_request,),
     )
+    from phase4.authority.grants import VerifiedAuthorityGrant
     execution_result = ExecutionEngine((implementation_adapter,)).execute(
         implementation_request.execution_request(idempotency_key="REQ-CALC-1"),
         VerifiedAuthorityGrant.from_decision(authority),
