@@ -70,14 +70,7 @@ class BubblewrapProcessAdapter:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.communicate()
-                    return ExecutionResult(
-                        spec.execution_id,
-                        self.adapter_id,
-                        ExecutionOutcome.TIMED_OUT,
-                        _read_bounded_output(output_file, spec.limits.output_bytes),
-                        "execution exceeded wall-time limit",
-                        process.returncode,
-                    )
+                    return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.TIMED_OUT, _read_bounded_output(output_file, spec.limits.output_bytes), "execution exceeded wall-time limit", process.returncode)
             except OSError as exc:
                 return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.FAILED, error=f"sandbox launch failed: {exc}")
             output = _read_bounded_output(output_file, spec.limits.output_bytes)
@@ -148,25 +141,7 @@ class BubblewrapProcessAdapter:
         for path in spec.writable_paths:
             target = str(Path(path).resolve())
             command.extend(("--bind", target, target))
-        # RLIMIT_NPROC cannot be applied to the host-side bwrap launcher: doing
-        # so can prevent bwrap itself from creating its PID-namespace helpers.
-        # Apply the exact requested bound in the sandbox via a small /bin/sh
-        # wrapper.  The original executable and arguments are passed as "$0"
-        # and "$@", so no user-controlled text is shell-evaluated.
-        process_limit = max(1, int(spec.limits.process_count))
-        command.extend(
-            (
-                "--chdir",
-                spec.working_directory or os.sep,
-                "--",
-                "/bin/sh",
-                "-c",
-                'ulimit -u "$1" || exit 125; shift; exec "$@"',
-                "sandbox-process-limit",
-                str(process_limit + 1),
-                *spec.argv,
-            )
-        )
+        command.extend(("--chdir", spec.working_directory or os.sep, "--", *spec.argv))
         return command
 
     @staticmethod
