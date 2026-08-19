@@ -1,18 +1,12 @@
 from pathlib import Path
 
-from phase4.implementation_agent.patch_models import ToolKind, TrustedToolSpec
+from phase4.implementation_agent.patch_models import ToolKind, ToolStatus, TrustedToolSpec
 from phase4.implementation_agent.sandbox_tool_runner import BubblewrapToolRunner
 from phase6.execution.sandbox import ExecutionOutcome
 
 
 def _tool(executable: str) -> TrustedToolSpec:
-    return TrustedToolSpec(
-        "test.tool",
-        ToolKind.TEST,
-        (executable, "-V"),
-        timeout_seconds=10,
-        max_output_bytes=4096,
-    )
+    return TrustedToolSpec("test.tool", ToolKind.TEST, (executable, "-V"), timeout_seconds=10, max_output_bytes=4096)
 
 
 def test_runner_builds_unshared_execution_spec(monkeypatch, tmp_path):
@@ -28,18 +22,13 @@ def test_runner_builds_unshared_execution_spec(monkeypatch, tmp_path):
 
     class FakeAdapter:
         adapter_id = "bubblewrap-process"
-
         def __init__(self, **kwargs):
             captured["kwargs"] = kwargs
-
         def execute(self, spec):
             captured["spec"] = spec
             return FakeResult()
 
-    monkeypatch.setattr(
-        "phase4.implementation_agent.sandbox_tool_runner.BubblewrapProcessAdapter",
-        FakeAdapter,
-    )
+    monkeypatch.setattr("phase4.implementation_agent.sandbox_tool_runner.BubblewrapProcessAdapter", FakeAdapter)
     runner = BubblewrapToolRunner(bubblewrap_path="/usr/bin/bwrap")
     result = runner.run(tool, cwd=tmp_path)
 
