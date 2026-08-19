@@ -39,8 +39,8 @@ jobs:
       - name: Compile Python sources
         run: >-
           python -m compileall -q
-          ai api dashboard domain execution generation infrastructure monitoring
-          phase4 phase6 runtime services main.py seed_data.py
+          ai api alembic artifacts dashboard domain execution generation infrastructure monitoring
+          phase4 phase5 phase6 runtime services templates main.py seed_data.py
 
       - name: Verify Alembic has exactly one canonical head
         run: |

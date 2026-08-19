@@ -53,17 +53,27 @@ class BubblewrapProcessAdapter:
         bubblewrap_path: str | None = None,
         runner: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
     ) -> None:
-        candidate = bubblewrap_path or shutil.which("bwrap")
-        if not candidate or not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
-            raise ProcessSandboxUnavailable("bubblewrap (bwrap) is required for process isolation")
         if not allowed_executables:
             raise ValueError("at least one executable must be allowlisted")
-        self._bubblewrap = str(Path(candidate).resolve())
+        candidate = bubblewrap_path or shutil.which("bwrap")
+        # bwrap availability is resolved lazily at execute() time so that spec
+        # validation and command construction remain testable without the
+        # isolation primitive installed. fail-closed is preserved: an
+        # unavailable primitive rejects any execution before a process starts.
+        self._bubblewrap_candidate = candidate
+        self._bubblewrap_path: str | None = None
         self._allowed = frozenset(str(Path(value).resolve()) for value in allowed_executables)
         self._runner = runner
 
+    def _resolve_bubblewrap(self) -> str:
+        candidate = self._bubblewrap_candidate
+        if not candidate or not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+            raise ProcessSandboxUnavailable("bubblewrap (bwrap) is required for process isolation")
+        return str(Path(candidate).resolve())
+
     def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         self._validate_spec(spec)
+        self._bubblewrap_path = self._resolve_bubblewrap()
         command = self._build_command(spec)
         limits = _ProcessLimits(
             cpu_seconds=max(1, int(spec.limits.cpu_time_seconds)),
@@ -151,7 +161,7 @@ class BubblewrapProcessAdapter:
 
     def _build_command(self, spec: ExecutionSpec) -> list[str]:
         command = [
-            self._bubblewrap,
+            self._bubblewrap_path or "bwrap",
             "--die-with-parent",
             "--new-session",
             "--unshare-user",
