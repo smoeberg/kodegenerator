@@ -1,14 +1,25 @@
+<<<<<<< HEAD
 """P4-00D adversarial tests for the AI-3 -> AI-4 authority boundary.
 
 The suite uses real AuthorityEngine and ExecutionEngine seams. Every rejected
 attack must leave the adapter untouched and return no execution output.
+=======
+"""P4-00D adversarial contract for the post-P4-00C execution gate.
+
+These tests attack the authority boundary without changing production code.
+A passing test means the attempted bypass did not produce a successful execution.
+The suite is intentionally independent of P4-00C's historical RED contract.
+>>>>>>> origin/phase4/p4-00d-adversarial
 """
 from __future__ import annotations
 
 from dataclasses import replace
+<<<<<<< HEAD
 from datetime import datetime, timedelta, timezone
 
 import pytest
+=======
+>>>>>>> origin/phase4/p4-00d-adversarial
 
 from phase4.authority import AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
@@ -18,10 +29,14 @@ from phase4.execution import ExecutionEngine, ExecutionRequest, ExecutionStatus
 
 ACTION = "project.audit"
 RESOURCE = "org-a/project-1"
+<<<<<<< HEAD
 ORGANIZATION = "org-a"
 ACTOR = "actor-1"
 AGENT = "agent-1"
 CAPABILITY = "project.audit"
+=======
+AGENT = "agent-1"
+>>>>>>> origin/phase4/p4-00d-adversarial
 CONTEXT = "context-1"
 
 
@@ -64,32 +79,45 @@ def request(**changes) -> ExecutionRequest:
         context_packet_id=CONTEXT,
         parameters={"fingerprint": "fp-1"},
         idempotency_key="idem-1",
+<<<<<<< HEAD
         organization_id=ORGANIZATION,
         actor_id=ACTOR,
         capability=CAPABILITY,
+=======
+>>>>>>> origin/phase4/p4-00d-adversarial
     )
     return replace(base, **changes)
 
 
 def credentials():
     auth = authority()
+<<<<<<< HEAD
     authority_request = AuthorityRequest(
+=======
+    ar = AuthorityRequest(
+>>>>>>> origin/phase4/p4-00d-adversarial
         request_id="req-1",
         agent_identity=AGENT,
         action=ACTION,
         resource=RESOURCE,
         context_packet_id=CONTEXT,
         requested_at="2026-08-10T00:00:00+00:00",
+<<<<<<< HEAD
         parameters=(("fingerprint", "fp-1"),),
         organization_id=ORGANIZATION,
         actor_id=ACTOR,
         capability=CAPABILITY,
     )
     decision = auth.evaluate(authority_request)
+=======
+    )
+    decision = auth.evaluate(ar)
+>>>>>>> origin/phase4/p4-00d-adversarial
     grant = VerifiedAuthorityGrant.from_decision(decision)
     return auth, decision, grant
 
 
+<<<<<<< HEAD
 def assert_rejected_without_execution(
     grant,
     execution_request: ExecutionRequest | None = None,
@@ -103,6 +131,10 @@ def assert_rejected_without_execution(
 
 
 def test_hand_constructed_grant_is_rejected():
+=======
+def test_forged_grant_is_rejected():
+    engine = ExecutionEngine((CountingAdapter(),))
+>>>>>>> origin/phase4/p4-00d-adversarial
     forged = VerifiedAuthorityGrant(
         request_id="req-1",
         agent_identity=AGENT,
@@ -113,6 +145,7 @@ def test_hand_constructed_grant_is_rejected():
         policy_version="1",
         matched_rule_ids=("allow-1",),
         decision="allow",
+<<<<<<< HEAD
         parameters=(("fingerprint", "fp-1"),),
         organization_id=ORGANIZATION,
         actor_id=ACTOR,
@@ -214,15 +247,62 @@ def test_grant_lifetime_cannot_exceed_the_security_contract():
     _, decision, _ = credentials()
     with pytest.raises(ValueError, match="ttl_seconds"):
         VerifiedAuthorityGrant.from_decision(decision, ttl_seconds=301)
+=======
+    )
+    result = engine.execute(request(), forged)
+    assert result.status is ExecutionStatus.REJECTED
+
+
+def test_stale_grant_cannot_be_reused_for_another_request():
+    _, _, grant = credentials()
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(request_id="req-2"), grant)
+    assert result.status is ExecutionStatus.REJECTED
+
+
+def test_wrong_resource_boundary_cannot_use_existing_grant():
+    _, _, grant = credentials()
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(resource="org-b/project-1"), grant)
+    assert result.status is ExecutionStatus.REJECTED
+
+
+def test_wrong_agent_cannot_use_existing_grant():
+    _, _, grant = credentials()
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(agent_identity="agent-2"), grant)
+    assert result.status is ExecutionStatus.REJECTED
+
+
+def test_wrong_context_cannot_use_existing_grant():
+    _, _, grant = credentials()
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(context_packet_id="context-2"), grant)
+    assert result.status is ExecutionStatus.REJECTED
+
+
+def test_parameter_fingerprint_mismatch_cannot_use_existing_grant():
+    _, _, grant = credentials()
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(parameters=(("fingerprint", "fp-evil"),)), grant)
+    assert result.status is ExecutionStatus.REJECTED
+>>>>>>> origin/phase4/p4-00d-adversarial
 
 
 def test_direct_engine_call_with_authority_decision_is_rejected():
     _, decision, _ = credentials()
+<<<<<<< HEAD
     assert_rejected_without_execution(decision)
+=======
+    engine = ExecutionEngine((CountingAdapter(),))
+    result = engine.execute(request(), decision)
+    assert result.status is ExecutionStatus.REJECTED
+>>>>>>> origin/phase4/p4-00d-adversarial
 
 
 def test_replay_never_produces_a_second_success():
     _, _, grant = credentials()
+<<<<<<< HEAD
     adapter = CountingAdapter()
     engine = ExecutionEngine((adapter,))
     first = engine.execute(request(), grant)
@@ -244,3 +324,10 @@ def test_reissuing_a_grant_cannot_bypass_request_idempotency():
     assert first.status is ExecutionStatus.SUCCEEDED
     assert second.status is ExecutionStatus.REPLAYED
     assert adapter.calls == 1
+=======
+    engine = ExecutionEngine((CountingAdapter(),))
+    first = engine.execute(request(), grant)
+    second = engine.execute(request(), grant)
+    assert first.status is ExecutionStatus.SUCCEEDED
+    assert second.status is not ExecutionStatus.SUCCEEDED
+>>>>>>> origin/phase4/p4-00d-adversarial
