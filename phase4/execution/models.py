@@ -8,7 +8,7 @@ from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision
 
 class ExecutionStatus(str, Enum):
-    SUCCEEDED="succeeded"; FAILED="failed"; REJECTED="rejected"; REPLAYED="replayed"
+    SUCCEEDED="succeeded"; FAILED="failed"; REJECTED="rejected"; REPLAYED="replayed"; ABANDONED="abandoned"
 
 @dataclass(frozen=True)
 class ExecutionRequest:
@@ -41,7 +41,7 @@ class ExecutionResult:
     @property
     def succeeded(self): return self.status is ExecutionStatus.SUCCEEDED
     @property
-    def terminal(self): return self.status in {ExecutionStatus.SUCCEEDED,ExecutionStatus.FAILED,ExecutionStatus.REJECTED,ExecutionStatus.REPLAYED}
+    def terminal(self): return self.status in {ExecutionStatus.SUCCEEDED,ExecutionStatus.FAILED,ExecutionStatus.REJECTED,ExecutionStatus.REPLAYED,ExecutionStatus.ABANDONED}
 
 def execution_id_for(request:ExecutionRequest,decision:AuthorityDecision)->str:
     payload={"request_id":request.request_id,"agent_identity":request.agent_identity,"action":request.action,"resource":request.resource,"context_packet_id":request.context_packet_id,"organization_id":request.organization_id,"parameters":sorted(list(request.parameters)),"idempotency_key":request.idempotency_key,"actor_id":request.actor_id,"capability":request.capability,"authority_decision":decision.decision.value,"policy_id":decision.policy_id,"policy_version":decision.policy_version,"matched_rule_ids":list(decision.matched_rule_ids)}
