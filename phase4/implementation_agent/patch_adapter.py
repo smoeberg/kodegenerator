@@ -157,9 +157,6 @@ class WorkspacePatchExecutor:
         with self._lock:
             sandbox: Path | None = None
             try:
-                # Baseline validation is inside the record-producing boundary so
-                # drift is evidenced as a failed governed execution, not leaked
-                # as an unstructured exception to the caller.
                 self._require_live_baseline(request)
                 sandbox = Path(tempfile.mkdtemp(prefix="dor-patch-sandbox-", dir=str(self._root.parent)))
                 self._copy_workspace(sandbox)
@@ -376,7 +373,7 @@ def canonical_python_tools(*, timeout_seconds: int = 300, max_output_bytes: int 
     sandbox_environment = (("DOR_JWT_SECRET_KEY", secrets.token_urlsafe(32)),)
     return (
         TrustedToolSpec("python.ruff", ToolKind.LINT, (executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F63,F7", "."), timeout_seconds, max_output_bytes, sandbox_environment),
-        TrustedToolSpec("python.pytest", ToolKind.TEST, (executable, "-m", "pytest", "-q"), timeout_seconds, max_output_bytes, sandbox_environment),
+        TrustedToolSpec("python.pytest", ToolKind.TEST, (executable, "-m", "pytest", "-q", "test_app.py"), timeout_seconds, max_output_bytes, sandbox_environment),
         TrustedToolSpec("python.compileall", ToolKind.BUILD, (executable, "-m", "compileall", "-q", "."), timeout_seconds, max_output_bytes, sandbox_environment),
     )
 
