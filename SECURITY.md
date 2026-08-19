@@ -1,0 +1,80 @@
+# Security operations — Digital Organization Runtime (DOR)
+
+This document describes **runtime secrets and security boundaries** as
+implemented in the codebase. It is not a substitute for architecture contracts
+in `docs/`.
+
+## Required environment variables (production)
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | SQLAlchemy database URL for persistence |
+| `DOR_AUTHORITY_SIGNING_KEY` | URL-safe base64 key (≥32 decoded bytes) shared by AI-3/AI-4 processes that exchange grants |
+| `OPENAI_API_KEY` | Only if Implementation Agent provider is enabled |
+| `DOR_IMPLEMENTATION_MODEL` | Model id for Implementation Agent |
+| `DOR_IMPLEMENTATION_ALLOWED_RESOURCES` | Comma-separated allowlisted resources |
+
+### Generate an authority signing key
+
+```bash
+python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+If `DOR_AUTHORITY_SIGNING_KEY` is **absent**, DOR creates a **process-local
+ephemeral key**. That is safe for single-process tests but **fails closed across
+restarts** and is not a multi-process configuration.
+
+### Rotation
+
+- Rotating the signing key invalidates outstanding grants (expected).
+- It must **not** wipe the execution replay ledger; replay identity is
+  `execution_id`, not the HMAC key.
+
+## Authority → execution boundary
+
+```text
+AuthorityDecision  (AI-3 policy outcome + HMAC provenance)
+        │
+        ▼
+VerifiedAuthorityGrant  (short-lived, signed, bound claims)
+        │
+        ▼
+ExecutionEngine  (rejects raw decisions; requires verified grant)
+```
+
+See `docs/phase4/P4_00D_SECURITY_REVIEW.md` and
+`docs/phase4/P4_00D_INDEPENDENT_REVIEW.md`.
+
+## Public HTTP surface
+
+Canonical entrypoint: `api/main.py`.
+
+Mounted with authentication (except health/auth):
+
+- `control_plane`, `workflows`, `implementation_agent`
+
+**Not** part of the canonical public API (do not mount without a security redesign):
+
+- `api/endpoints/tasks.py`
+- `api/endpoints/artifacts.py`
+- other legacy routers under `api/endpoints/` not listed in `api/main.py`
+
+Those modules use ID-only lookups without `OrganizationContext` and are treated
+as **unsafe if exposed**.
+
+## Tenant isolation
+
+Canonical Phase 3 paths use `establish_context` and
+`get_for_organization(...)` queries. New repositories must not use bare
+`session.get(Model, id)` for tenant-owned rows without an organization scope.
+
+## Local secrets
+
+Key material and salts must stay out of git (see `.gitignore`). Prefer
+environment or secret stores over files in the working tree.
+
+## Phase 6 sandbox
+
+Process isolation (e.g. Bubblewrap) is an **environment** requirement where
+enabled. Missing `bwrap` / user namespaces in CI is an infrastructure limit,
+not an authority-bypass in AI-4.

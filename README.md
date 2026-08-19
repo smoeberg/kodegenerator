@@ -1,7 +1,7 @@
 # 📚 Digital Organization Runtime (DOR) - Dokumentation
 
-**Version:** 1.1.0  
-**Senest opdateret:** 12. august 2026  
+**Version:** 1.2.0  
+**Senest opdateret:** 18. august 2026  
 
 ---
 
@@ -13,37 +13,50 @@ The current Phase 4 target is **EIRA Brain & Workforce Control Plane**. The cano
 
 This specification supersedes earlier Phase 4 concepts based on a generic conversation engine. Those concepts are historical and are not the implementation target.
 
-### Phase 4 in one view
+### Phase 4 in one view (aligned with the repository)
 
 ```text
-LibreChat
-   │
-   │ Interactive
+LibreChat / HTTP API (auth)
+   │  Interactive surface — not the worker runtime
    ▼
-EIRA Control Plane
-   ├── Agent Registry
-   ├── Assignment
-   ├── Brain
-   └── Verification Policy
+EIRA Control Plane  (package: phase4/)
+   ├── AI-1 Agent registry          phase4/agent_registry
+   ├── AI-2 Context packets         phase4/context_packet
+   ├── AI-3 Authority               phase4/authority  (HMAC VerifiedAuthorityGrant)
+   ├── AI-4 Execution               phase4/execution  (grant-only + replay ledger)
+   ├── Epistemic persistence        phase4/brain_persistence
+   ├── Implementation agent         phase4/implementation_agent
+   ├── Project audit                phase4/project_audit
+   └── Verification / planner / …   phase4/verification, planner, …
            │
-           ▼
-      Phase 7 Queue
-           │
-           ▼
-         Worker
-           │
-           ▼
-      Agent Runtime
+           ├─ Phase 5 work-product lifecycle    phase5/
+           ├─ Phase 6 execution sandbox         phase6/
+           └─ Phase 7 durable queue / workers   phase7/ + infrastructure/runtime
 ```
+
+**Canonical HTTP entrypoint:** `api/main.py` (health, auth, control_plane, workflows, implementation_agent).  
+Legacy routers such as `api/endpoints/tasks.py` are **not** mounted and must not be exposed without a tenant-scoped redesign — see [SECURITY.md](SECURITY.md).
 
 The fundamental invariants are:
 
 - **Agent ≠ Assignment ≠ Worker**
-- **Context ≠ Knowledge**
-- **Knowledge confirmation ≠ execution authority**
+- **Context ≠ Knowledge** (`context_packet` vs `brain_persistence` / knowledge contracts)
+- **Knowledge confirmation ≠ execution authority** (only `VerifiedAuthorityGrant` executes)
 - **LibreChat ≠ autonomous worker runtime**
 - **Phase 7 owns durable work execution and worker leases**
-- **Phase 1–3 authority controls remain the execution authorization boundary**
+- **Phase 1–3 organization authority remains the multi-tenant API boundary**
+- **AI-3 → AI-4 is fail-closed** (raw `AuthorityDecision` is not executable)
+
+### Authority and execution (implemented)
+
+```text
+AuthorityEngine.evaluate → AuthorityDecision (+ provenance)
+        → VerifiedAuthorityGrant.from_decision (HMAC, TTL ≤ 5 min)
+        → ExecutionEngine.execute(request, grant)
+        → ExecutionReplayLedger claim (P4-01) → adapter
+```
+
+Details: [P4-00D security review](docs/phase4/P4_00D_SECURITY_REVIEW.md), [P4-01 replay ledger](docs/phase4/P4_01_REPLAY_LEDGER.md), [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -62,7 +75,7 @@ DOR er ikke et traditionelt multi-agent system. Det er en digital virksomhed, hv
 * **Workers** er ephemeral compute og må ikke forveksles med agenter.
 * **Artefakter** er versionerede og sporbare.
 * **Workflows** er deterministiske og auditerbare.
-* **Brain** vedligeholder organisationens epistemiske viden separat fra den kortvarige task context.
+* **Brain** vedligeholder organisationens epistemiske viden separat fra den kortvarige task context (`phase4/brain_persistence`).
 
 ### 🎯 Formål
 DOR er designet til at:
@@ -78,94 +91,22 @@ DOR er designet til at:
 
 DOR følger en lagdelt arkitektur med klare adskillelser mellem domain, application, infrastructure og interface.
 
-Phase 4 er EIRA's **Brain & Workforce Control Plane**. LibreChat er et interaction surface for menneskelig interaktion; det er ikke systemets authoritative agent registry, Brain eller autonomous worker runtime.
+| Lag / mappe | Ansvar |
+|-------------|--------|
+| `domain/` | Domæneobjekter og kontrakter |
+| `phase4/` | EIRA control plane (authority, execution, agents, brain persistence) |
+| `phase5/`–`phase7/` | Work-product, sandbox, durable queue |
+| `infrastructure/persistence/` | SQLAlchemy models, org-scoped repositories |
+| `api/` | Canonical HTTP surface (`main.py`) |
+| `runtime/` | Organization context, command/project runtimes |
+| `tests/` | Phase-strukturerede tests (inkl. P4-00D adversarial) |
 
-Phase 7 leverer durable queueing, worker leases, retries og recovery. Phase 6 er den sikre execution boundary. Phase 5 håndterer work-product/release lifecycle. Phase 1–3 ejer governance og authority.
-
-Se den [kanoniske Phase 4-specifikation](docs/PHASE4_ARCHITECTURE.md) for invariants, execution modes, Brain-model, verification, concurrency, failure recovery og LibreChat boundary.
-
----
-
-## 📦 Domæneobjekter
-
-| Objekt | Beskrivelse |
-| :--- | :--- |
-| **Organization** | Juridisk/operationel identitet. |
-| **Actor** | Enhed (AI, menneske, service). |
-| **RoleDefinition** | Stillingens definition. |
-| **Capability** | Evne, som en Actor/Agent kan have. |
-| **Agent** | Persistent digital medarbejderidentitet. |
-| **Assignment** | Binding af arbejde til en Agent. |
-| **ContextPacket** | Afgrænset task-context; ikke organisatorisk knowledge. |
-| **KnowledgeRecord** | Epistemisk record: observation, claim, evidence eller verification. |
-| **KnowledgeState** | Materialiseret aktuel knowledge state. |
-| **VerificationPolicy** | Regler for deterministisk verification, single-agent, quorum eller human escalation. |
-| **Task** | Opgave i et workflow. |
-| **Artifact** | Verificerbart, versioneret resultat. |
-| **Event** | Hændelse til audit, læring og sporbarhed. |
-
----
-
-## 🔒 Sikkerheds- og authority boundary
-
-Brain kan etablere eller bekræfte viden, men **CONFIRMED knowledge er aldrig i sig selv execution authority**.
-
-Execution følger fortsat:
-
-```text
-AuthorityDecision
-      ↓
-VerifiedAuthorityGrant
-      ↓
-Phase 6 execution boundary
-```
-
-Dette er en fast arkitekturinvariant.
-
----
-
-## 🤖 AI og agent execution
-
-Systemet har to execution modes:
-
-### Interactive
-
-```text
-Human → LibreChat → Agent → EIRA Control Plane
-```
-
-### Autonomous
-
-```text
-Trigger → Assignment → Phase 7 Queue → Worker → Agent
-```
-
-Autonome workers kalder model providers og tools direkte via EIRA execution path. LibreChat bruges ikke som worker loop.
-
----
-
-## ⚙️ Task Executors
-
-DOR kan dirigere tasks til passende executors ud fra Actor-/agent-typen. Den konkrete execution skal fortsat passere de eksisterende governance, work-product og sandbox boundaries.
-
----
-
-## 📊 Monitoring & Observability
-
-* **Logging:** Struktureret logging.
-* **Metrics:** Performance og resource tracking.
-* **Tracing:** Distributed tracing på tværs af services.
-* **Audit:** Agent-, assignment-, epistemic- og execution-hændelser skal kunne spores.
+Yderligere: [docs/PHASE4_ARCHITECTURE.md](docs/PHASE4_ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
 ## 📜 Changelog
 
-* **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface; Agent/Assignment/Worker, epistemic knowledge and verification boundaries documented.
+* **1.2.0** (2026-08-18) – README aligned to implemented control plane modules; SECURITY.md; P4-01 ledger overview; legacy API warning.
+* **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface.
 * **1.0.0** (2026-08-03) – Initial DOR specification and architecture.
-
----
-
-## 📄 Licens
-
-DOR er licenseret under **MIT License**. Se [LICENSE](LICENSE) for detaljer.
