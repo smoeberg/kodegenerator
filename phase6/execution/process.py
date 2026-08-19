@@ -41,15 +41,14 @@ class BubblewrapProcessAdapter:
             if not os.path.isabs(path): raise InvalidExecutionSpec("sandbox filesystem paths must be absolute")
             if not os.path.exists(path): raise InvalidExecutionSpec(f"sandbox filesystem path does not exist: {path}")
         tmp_root=Path(tempfile.gettempdir()).resolve()
-        var_tmp_root=Path(os.sep)/"var"/"tmp"
-        var_tmp_root=var_tmp_root.resolve()
+        var_tmp_root=(Path(os.sep)/"var"/"tmp").resolve()
         for path in spec.writable_paths:
             source=Path(path)
             if source.is_symlink(): raise InvalidExecutionSpec("writable sandbox paths must not be symlinks")
             resolved=source.resolve(strict=True)
             if resolved == Path(os.sep): raise InvalidExecutionSpec("root cannot be writable")
             allowed_roots=(tmp_root,var_tmp_root)
-            if not any(resolved==root or root in resolved.parents for root in allowed_roots): raise InvalidExecutionSpec("writable sandbox paths must be under the system temporary directory")
+            if not any(resolved==root or root in resolved.parents for root in allowed_roots): raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
             if not resolved.is_dir(): raise InvalidExecutionSpec("writable sandbox paths must be directories")
     def _build_command(self,spec):
         sandbox_tmp=str(Path(tempfile.gettempdir()).resolve())
