@@ -74,7 +74,7 @@ def credentials():
         resource=RESOURCE,
         context_packet_id=CONTEXT,
         requested_at="2026-08-10T00:00:00+00:00",
-        parameters=(),
+        parameters=(("fingerprint", "fp-1"),),
         organization_id=ORGANIZATION_ID,
     )
     decision = auth.evaluate(ar)
