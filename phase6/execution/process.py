@@ -146,7 +146,7 @@ class BubblewrapProcessAdapter:
 
     @staticmethod
     def _safe_environment(spec):
-        return {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "PYTHONNOUSERSITE": "1", **dict(spec.environment)}
+        return {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "PYTHONNOUSERSITE": "1", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", **dict(spec.environment)}
 
 
 def _apply_limits(limits):
