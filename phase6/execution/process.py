@@ -63,7 +63,7 @@ class BubblewrapProcessAdapter:
                     text=False,
                     env=self._safe_environment(spec),
                     start_new_session=True,
-                    preexec_fn=lambda: _apply_limits(limits),
+                    preexec_fn=lambda: _apply_launcher_limits(limits),
                 )
                 try:
                     process.communicate(timeout=spec.limits.wall_time_seconds)
@@ -139,9 +139,6 @@ class BubblewrapProcessAdapter:
             "--proc", "/proc",
             "--tmpfs", sandbox_tmp,
         ]
-        # --tmpfs replaces /tmp, so every dynamic bind target below must first
-        # exist inside that new mount namespace.  Without this, bwrap exits 1
-        # before the trusted process is ever started.
         for path in spec.writable_paths:
             target = str(Path(path).resolve())
             command.extend(("--dir", target))
@@ -151,7 +148,25 @@ class BubblewrapProcessAdapter:
         for path in spec.writable_paths:
             target = str(Path(path).resolve())
             command.extend(("--bind", target, target))
-        command.extend(("--chdir", spec.working_directory or os.sep, "--", *spec.argv))
+        # RLIMIT_NPROC cannot be applied to the host-side bwrap launcher: doing
+        # so can prevent bwrap itself from creating its PID-namespace helpers.
+        # Apply the exact requested bound in the sandbox via a small /bin/sh
+        # wrapper.  The original executable and arguments are passed as "$0"
+        # and "$@", so no user-controlled text is shell-evaluated.
+        process_limit = max(1, int(spec.limits.process_count))
+        command.extend(
+            (
+                "--chdir",
+                spec.working_directory or os.sep,
+                "--",
+                "/bin/sh",
+                "-c",
+                'ulimit -u "$1" || exit 125; shift; exec "$@"',
+                "sandbox-process-limit",
+                str(process_limit + 1),
+                *spec.argv,
+            )
+        )
         return command
 
     @staticmethod
@@ -160,14 +175,19 @@ class BubblewrapProcessAdapter:
 
 
 def _apply_limits(limits):
+    """Apply the exact hard limits requested by the execution contract."""
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
-    # RLIMIT_NPROC applies to the caller's UID before bubblewrap creates its
-    # isolated process.  The launcher itself therefore consumes one process
-    # from the limit.  Reserve that launcher slot while keeping the requested
-    # workload process_count as the actual workload bound.
-    process_limit = max(2, limits.process_count + 1)
-    resource.setrlimit(resource.RLIMIT_NPROC, (process_limit, process_limit))
+    resource.setrlimit(resource.RLIMIT_NPROC, (limits.process_count, limits.process_count))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_size_bytes, limits.file_size_bytes))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_file_count, limits.open_file_count))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def _apply_launcher_limits(limits):
+    """Apply host-side limits without constraining bubblewrap's own helpers."""
+    resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
+    resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
     resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_size_bytes, limits.file_size_bytes))
     resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_file_count, limits.open_file_count))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
