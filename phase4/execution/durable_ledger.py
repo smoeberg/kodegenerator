@@ -24,10 +24,7 @@ DEFAULT_CLAIM_LEASE_SECONDS = 300
 
 
 class ExecutionReplayLedgerModel(Base):
-    """Durable claim + outcome row keyed by execution_id."""
-
     __tablename__ = "execution_replay_ledger"
-
     execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     grant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -41,51 +38,16 @@ class ExecutionReplayLedgerModel(Base):
 
 
 def _result_to_json(result: ExecutionResult) -> dict[str, Any]:
-    return {
-        "execution_id": result.execution_id,
-        "request_id": result.request_id,
-        "authority_policy_id": result.authority_policy_id,
-        "authority_policy_version": result.authority_policy_version,
-        "agent_identity": result.agent_identity,
-        "action": result.action,
-        "resource": result.resource,
-        "context_packet_id": result.context_packet_id,
-        "status": result.status.value,
-        "adapter_id": result.adapter_id,
-        "output": [list(pair) for pair in result.output],
-        "error": result.error,
-        "executed_at": result.executed_at,
-    }
+    return {"execution_id": result.execution_id, "request_id": result.request_id, "authority_policy_id": result.authority_policy_id, "authority_policy_version": result.authority_policy_version, "agent_identity": result.agent_identity, "action": result.action, "resource": result.resource, "context_packet_id": result.context_packet_id, "status": result.status.value, "adapter_id": result.adapter_id, "output": [list(pair) for pair in result.output], "error": result.error, "executed_at": result.executed_at}
 
 
 def _result_from_json(payload: dict[str, Any] | None) -> ExecutionResult | None:
     if not payload:
         return None
-    return ExecutionResult(
-        execution_id=payload["execution_id"],
-        request_id=payload["request_id"],
-        authority_policy_id=payload["authority_policy_id"],
-        authority_policy_version=payload["authority_policy_version"],
-        agent_identity=payload["agent_identity"],
-        action=payload["action"],
-        resource=payload["resource"],
-        context_packet_id=payload["context_packet_id"],
-        status=ExecutionStatus(payload["status"]),
-        adapter_id=payload["adapter_id"],
-        output=tuple(tuple(pair) for pair in payload.get("output") or ()),
-        error=payload.get("error"),
-        executed_at=payload["executed_at"],
-    )
+    return ExecutionResult(execution_id=payload["execution_id"], request_id=payload["request_id"], authority_policy_id=payload["authority_policy_id"], authority_policy_version=payload["authority_policy_version"], agent_identity=payload["agent_identity"], action=payload["action"], resource=payload["resource"], context_packet_id=payload["context_packet_id"], status=ExecutionStatus(payload["status"]), adapter_id=payload["adapter_id"], output=tuple(tuple(pair) for pair in payload.get("output") or ()), error=payload.get("error"), executed_at=payload["executed_at"])
 
 
 def _db_aware_utc(value: datetime | None) -> datetime | None:
-    """Normalize ORM timestamps to UTC.
-
-    Some SQLAlchemy backends, notably SQLite, return DateTime(timezone=True)
-    values without tzinfo. Those values were written by this ledger as UTC, so
-    they must be interpreted as UTC at the persistence boundary rather than
-    being treated as invalid application timestamps.
-    """
     if value is None:
         return None
     if value.tzinfo is None or value.utcoffset() is None:
@@ -94,15 +56,7 @@ def _db_aware_utc(value: datetime | None) -> datetime | None:
 
 
 def _to_record(row: ExecutionReplayLedgerModel) -> LedgerRecord:
-    return LedgerRecord(
-        execution_id=row.execution_id,
-        status=LedgerStatus(row.status),
-        result=_result_from_json(row.result_json),
-        grant_id=row.grant_id,
-        request_id=row.request_id,
-        lease_expires_at=_db_aware_utc(row.lease_expires_at),
-        fencing_token=row.fencing_token,
-    )
+    return LedgerRecord(execution_id=row.execution_id, status=LedgerStatus(row.status), result=_result_from_json(row.result_json), grant_id=row.grant_id, request_id=row.request_id, lease_expires_at=_db_aware_utc(row.lease_expires_at), fencing_token=row.fencing_token)
 
 
 def _new_token() -> str:
@@ -116,9 +70,14 @@ def _aware_utc(value: datetime | None = None) -> datetime:
     return instant.astimezone(timezone.utc)
 
 
-class SqlAlchemyReplayLedger:
-    """Crash-safe replay ledger backed by a shared SQLAlchemy session factory."""
+def _storage_utc(session: Session, value: datetime) -> datetime:
+    """SQLite DateTime drops tzinfo; store UTC-naive there to avoid ORM mixed-tz comparisons."""
+    if session.bind is not None and session.bind.dialect.name == "sqlite":
+        return value.replace(tzinfo=None)
+    return value
 
+
+class SqlAlchemyReplayLedger:
     def __init__(self, session_factory: Callable[[], Session], *, claim_lease_seconds: int = DEFAULT_CLAIM_LEASE_SECONDS) -> None:
         if type(claim_lease_seconds) is not int or claim_lease_seconds < 1:
             raise ValueError("claim_lease_seconds must be a positive int")
@@ -131,87 +90,36 @@ class SqlAlchemyReplayLedger:
         instant = _aware_utc(now)
         lease = instant + timedelta(seconds=self.claim_lease_seconds)
         token = _new_token()
-
         with self.session_factory() as session:
+            stored_instant = _storage_utc(session, instant)
+            stored_lease = _storage_utc(session, lease)
             row = session.get(ExecutionReplayLedgerModel, execution_id)
             if row is None:
-                session.add(ExecutionReplayLedgerModel(
-                    execution_id=execution_id,
-                    status=LedgerStatus.PENDING.value,
-                    grant_id=grant_id,
-                    request_id=request_id,
-                    result_json=None,
-                    started_at=instant,
-                    completed_at=None,
-                    lease_expires_at=lease,
-                    fencing_token=token,
-                    error_text=None,
-                ))
+                session.add(ExecutionReplayLedgerModel(execution_id=execution_id, status=LedgerStatus.PENDING.value, grant_id=grant_id, request_id=request_id, result_json=None, started_at=stored_instant, completed_at=None, lease_expires_at=stored_lease, fencing_token=token, error_text=None))
                 try:
                     session.commit()
                 except IntegrityError:
                     session.rollback()
                     return self._outcome_after_conflict(session, execution_id)
-                return ClaimOutcome(ClaimOutcomeKind.ACQUIRED, LedgerRecord(
-                    execution_id=execution_id,
-                    status=LedgerStatus.PENDING,
-                    grant_id=grant_id,
-                    request_id=request_id,
-                    lease_expires_at=lease,
-                    fencing_token=token,
-                ))
-
+                return ClaimOutcome(ClaimOutcomeKind.ACQUIRED, LedgerRecord(execution_id, LedgerStatus.PENDING, None, grant_id, request_id, lease, token))
             if row.status == LedgerStatus.SUCCEEDED.value:
                 return ClaimOutcome(ClaimOutcomeKind.ALREADY_SUCCEEDED, _to_record(row))
-
             if row.status == LedgerStatus.PENDING.value:
                 expiry = _db_aware_utc(row.lease_expires_at)
                 if expiry is not None and expiry > instant:
                     return ClaimOutcome(ClaimOutcomeKind.IN_FLIGHT, _to_record(row))
-                result = session.execute(
-                    update(ExecutionReplayLedgerModel)
-                    .where(
-                        ExecutionReplayLedgerModel.execution_id == execution_id,
-                        ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value,
-                        or_(ExecutionReplayLedgerModel.lease_expires_at.is_(None), ExecutionReplayLedgerModel.lease_expires_at <= instant),
-                    )
-                    .values(
-                        grant_id=grant_id,
-                        request_id=request_id,
-                        result_json=None,
-                        started_at=instant,
-                        completed_at=None,
-                        lease_expires_at=lease,
-                        fencing_token=token,
-                        error_text=None,
-                    )
-                )
+                old_token = row.fencing_token
+                result = session.execute(update(ExecutionReplayLedgerModel).where(ExecutionReplayLedgerModel.execution_id == execution_id, ExecutionReplayLedgerModel.status == LedgerStatus.PENDING.value, ExecutionReplayLedgerModel.fencing_token == old_token).values(grant_id=grant_id, request_id=request_id, result_json=None, started_at=stored_instant, completed_at=None, lease_expires_at=stored_lease, fencing_token=token, error_text=None))
                 session.commit()
                 if result.rowcount == 1:
                     return ClaimOutcome(ClaimOutcomeKind.ACQUIRED, LedgerRecord(execution_id, LedgerStatus.PENDING, None, grant_id, request_id, lease, token))
                 return self._outcome_after_conflict(session, execution_id)
-
             if row.status in {LedgerStatus.FAILED.value, LedgerStatus.ABANDONED.value}:
-                result = session.execute(
-                    update(ExecutionReplayLedgerModel)
-                    .where(ExecutionReplayLedgerModel.execution_id == execution_id, ExecutionReplayLedgerModel.status == row.status)
-                    .values(
-                        status=LedgerStatus.PENDING.value,
-                        grant_id=grant_id,
-                        request_id=request_id,
-                        result_json=None,
-                        started_at=instant,
-                        completed_at=None,
-                        lease_expires_at=lease,
-                        fencing_token=token,
-                        error_text=None,
-                    )
-                )
+                result = session.execute(update(ExecutionReplayLedgerModel).where(ExecutionReplayLedgerModel.execution_id == execution_id, ExecutionReplayLedgerModel.status == row.status).values(status=LedgerStatus.PENDING.value, grant_id=grant_id, request_id=request_id, result_json=None, started_at=stored_instant, completed_at=None, lease_expires_at=stored_lease, fencing_token=token, error_text=None))
                 session.commit()
                 if result.rowcount == 1:
                     return ClaimOutcome(ClaimOutcomeKind.ACQUIRED, LedgerRecord(execution_id, LedgerStatus.PENDING, None, grant_id, request_id, lease, token))
                 return self._outcome_after_conflict(session, execution_id)
-
             raise RuntimeError(f"unknown ledger status {row.status!r}")
 
     def _outcome_after_conflict(self, session: Session, execution_id: str) -> ClaimOutcome:
@@ -237,7 +145,7 @@ class SqlAlchemyReplayLedger:
             row = self._pending(session, execution_id, fencing_token)
             row.status = LedgerStatus.SUCCEEDED.value
             row.result_json = _result_to_json(result)
-            row.completed_at = datetime.now(timezone.utc)
+            row.completed_at = _storage_utc(session, datetime.now(timezone.utc))
             row.lease_expires_at = None
             row.fencing_token = None
             row.error_text = None
@@ -250,9 +158,8 @@ class SqlAlchemyReplayLedger:
             row = self._pending(session, execution_id, fencing_token)
             row.status = LedgerStatus.FAILED.value
             row.result_json = _result_to_json(result)
-            row.completed_at = datetime.now(timezone.utc)
+            row.completed_at = _storage_utc(session, datetime.now(timezone.utc))
             row.lease_expires_at = None
-            row.fencing_token = None
             row.fencing_token = None
             row.error_text = result.error
             session.commit()
@@ -265,7 +172,7 @@ class SqlAlchemyReplayLedger:
             if not fencing_token or row.fencing_token != fencing_token:
                 raise RuntimeError(f"fencing token mismatch for {execution_id!r}")
             row.status = LedgerStatus.ABANDONED.value
-            row.completed_at = datetime.now(timezone.utc)
+            row.completed_at = _storage_utc(session, datetime.now(timezone.utc))
             row.result_json = None
             row.lease_expires_at = None
             row.fencing_token = None
