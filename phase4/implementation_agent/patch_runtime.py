@@ -7,13 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from phase4.authority import (
-    AuthorityDecision,
-    AuthorityEngine,
-    AuthorityPolicy,
-    AuthorityRule,
-    Decision,
-)
+from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
 from phase4.execution.models import ExecutionRequest, GovernedDispatch
@@ -21,19 +15,10 @@ from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import PatchProposalNotFoundError
-from .patch_adapter import (
-    PatchExecutionAdapter,
-    PatchExecutionRequestNotFoundError,
-    ToolRunner,
-    WorkspacePatchExecutor,
-)
-from .patch_models import (
-    IMPLEMENTATION_APPLY_ACTION,
-    PatchExecutionRecord,
-    PatchExecutionRequest,
-    TrustedToolSpec,
-)
+from .patch_adapter import PatchExecutionAdapter, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
+from .patch_models import IMPLEMENTATION_APPLY_ACTION, PatchExecutionRecord, PatchExecutionRequest, TrustedToolSpec
 from .runtime import ImplementationAgentRuntime
+from .sandbox_tool_runner import BubblewrapToolRunner
 
 
 class GovernedPatchRuntimeError(RuntimeError):
@@ -117,7 +102,8 @@ class GovernedPatchExecutionRuntime:
             raise ValueError("governed patch execution requires trusted tools")
         self._proposal_runtime = proposal_runtime
         self._tools = tools
-        self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
+        effective_tool_runner = tool_runner if tool_runner is not None else BubblewrapToolRunner()
+        self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=effective_tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
         self._authority = AuthorityEngine(self._policy_for())
         self._adapter = PatchExecutionAdapter(adapter_id="adapter.implementation.governed-patch", workspace=self._workspace)
         self._governed_adapter = _GovernedPatchAdapter(self._adapter)
