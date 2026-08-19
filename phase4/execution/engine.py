@@ -34,7 +34,7 @@ class ExecutionEngine:
         # deliberately rejected even when it appears internally valid: callers
         # must cross the explicit provenance-bearing grant boundary.
         if not isinstance(authority, VerifiedAuthorityGrant):
-            return self._rejected(request, "execution requires a verified authority grant")
+            return self._rejected(request, "missing authority: execution requires a verified authority grant")
         grant = authority
         if not grant.binds(request): return self._rejected(request, "authority grant is not bound to the execution request")
         if grant.decision != Decision.ALLOW.value: return self._rejected(request, "authority decision is not ALLOW; execution denied")
