@@ -40,19 +40,23 @@ class BubblewrapProcessAdapter:
         for path in (*spec.read_only_paths,*spec.writable_paths):
             if not os.path.isabs(path): raise InvalidExecutionSpec("sandbox filesystem paths must be absolute")
             if not os.path.exists(path): raise InvalidExecutionSpec(f"sandbox filesystem path does not exist: {path}")
+        tmp_root=Path(tempfile.gettempdir()).resolve()
+        var_tmp_root=Path(os.sep)/"var"/"tmp"
+        var_tmp_root=var_tmp_root.resolve()
         for path in spec.writable_paths:
             source=Path(path)
             if source.is_symlink(): raise InvalidExecutionSpec("writable sandbox paths must not be symlinks")
             resolved=source.resolve(strict=True)
-            if resolved == Path("/"): raise InvalidExecutionSpec("root cannot be writable")
-            allowed_roots=(Path("/tmp").resolve(),Path("/var/tmp").resolve())
-            if not any(resolved==root or root in resolved.parents for root in allowed_roots): raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
+            if resolved == Path(os.sep): raise InvalidExecutionSpec("root cannot be writable")
+            allowed_roots=(tmp_root,var_tmp_root)
+            if not any(resolved==root or root in resolved.parents for root in allowed_roots): raise InvalidExecutionSpec("writable sandbox paths must be under the system temporary directory")
             if not resolved.is_dir(): raise InvalidExecutionSpec("writable sandbox paths must be directories")
     def _build_command(self,spec):
-        command=[self._bubblewrap_path or "bwrap","--die-with-parent","--new-session","--unshare-user","--unshare-pid","--unshare-uts","--unshare-ipc","--unshare-net","--ro-bind","/","/","--dev","/dev","--proc","/proc","--tmpfs","/tmp"]
+        sandbox_tmp=str(Path(tempfile.gettempdir()).resolve())
+        command=[self._bubblewrap_path or "bwrap","--die-with-parent","--new-session","--unshare-user","--unshare-pid","--unshare-uts","--unshare-ipc","--unshare-net","--ro-bind",os.sep,os.sep,"--dev","/dev","--proc","/proc","--tmpfs",sandbox_tmp]
         for path in spec.read_only_paths: command.extend(("--ro-bind",str(Path(path).resolve()),str(Path(path).resolve())))
         for path in spec.writable_paths: command.extend(("--bind",str(Path(path).resolve()),str(Path(path).resolve())))
-        return command+["--chdir","/","--",*spec.argv]
+        return command+["--chdir",os.sep,"--",*spec.argv]
     @staticmethod
     def _safe_environment(spec): return {"PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","LANG":"C.UTF-8","PYTHONNOUSERSITE":"1",**dict(spec.environment)}
 def _apply_limits(limits):
