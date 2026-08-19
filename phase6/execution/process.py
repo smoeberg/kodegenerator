@@ -142,6 +142,7 @@ class BubblewrapProcessAdapter:
             raise InvalidExecutionSpec(f"executable is not allowlisted: {spec.argv[0]}")
         if spec.network_allowlist:
             raise InvalidExecutionSpec("network allowlists are not supported by the isolated process backend")
+
         for path in (*spec.read_only_paths, *spec.writable_paths):
             if not os.path.isabs(path):
                 raise InvalidExecutionSpec("sandbox filesystem paths must be absolute")
@@ -149,18 +150,18 @@ class BubblewrapProcessAdapter:
                 raise InvalidExecutionSpec(f"sandbox filesystem path does not exist: {path}")
 
         for path in spec.writable_paths:
-            resolved = Path(path).resolve(strict=True)
-            if resolved == Path("/"):
-                raise InvalidExecutionSpec("sandbox root cannot be writable")
-            # Generated-code workspaces are created as private temporary
-            # directories. Refusing writable mounts outside the temporary
-            # filesystem prevents a caller from turning an explicit writable
-            # mount into a host filesystem escape.
+            # Check the mount source before resolving it. Resolving first would
+            # hide a symlink and could turn an apparently safe /tmp path into a
+            # host path outside the permitted temporary roots.
+            source = Path(path)
+            if source.is_symlink():
+                raise InvalidExecutionSpec("writable sandbox paths must not be symlinks")
+            resolved = source.resolve(strict=True)
             allowed_roots = (Path("/tmp").resolve(), Path("/var/tmp").resolve())
             if not any(resolved == root or root in resolved.parents for root in allowed_roots):
                 raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
-            if resolved.is_symlink():
-                raise InvalidExecutionSpec("writable sandbox paths must not be symlinks")
+            if not resolved.is_dir():
+                raise InvalidExecutionSpec("writable sandbox paths must be directories")
 
     def _build_command(self, spec: ExecutionSpec) -> list[str]:
         command = [
