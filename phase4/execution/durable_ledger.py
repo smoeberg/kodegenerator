@@ -78,6 +78,21 @@ def _result_from_json(payload: dict[str, Any] | None) -> ExecutionResult | None:
     )
 
 
+def _db_aware_utc(value: datetime | None) -> datetime | None:
+    """Normalize ORM timestamps to UTC.
+
+    Some SQLAlchemy backends, notably SQLite, return DateTime(timezone=True)
+    values without tzinfo. Those values were written by this ledger as UTC, so
+    they must be interpreted as UTC at the persistence boundary rather than
+    being treated as invalid application timestamps.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _to_record(row: ExecutionReplayLedgerModel) -> LedgerRecord:
     return LedgerRecord(
         execution_id=row.execution_id,
@@ -85,7 +100,7 @@ def _to_record(row: ExecutionReplayLedgerModel) -> LedgerRecord:
         result=_result_from_json(row.result_json),
         grant_id=row.grant_id,
         request_id=row.request_id,
-        lease_expires_at=row.lease_expires_at,
+        lease_expires_at=_db_aware_utc(row.lease_expires_at),
         fencing_token=row.fencing_token,
     )
 
@@ -150,8 +165,8 @@ class SqlAlchemyReplayLedger:
                 return ClaimOutcome(ClaimOutcomeKind.ALREADY_SUCCEEDED, _to_record(row))
 
             if row.status == LedgerStatus.PENDING.value:
-                expiry = row.lease_expires_at
-                if expiry is not None and _aware_utc(expiry) > instant:
+                expiry = _db_aware_utc(row.lease_expires_at)
+                if expiry is not None and expiry > instant:
                     return ClaimOutcome(ClaimOutcomeKind.IN_FLIGHT, _to_record(row))
                 result = session.execute(
                     update(ExecutionReplayLedgerModel)
@@ -237,6 +252,7 @@ class SqlAlchemyReplayLedger:
             row.result_json = _result_to_json(result)
             row.completed_at = datetime.now(timezone.utc)
             row.lease_expires_at = None
+            row.fencing_token = None
             row.fencing_token = None
             row.error_text = result.error
             session.commit()
