@@ -7,265 +7,88 @@ from typing import Dict, Tuple
 
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision, Decision
-
 from .adapters import ExecutionAdapter
-from .models import (
-    ExecutionRequest,
-    ExecutionResult,
-    ExecutionStatus,
-    GovernedDispatch,
-    execution_id_for,
-)
+from .models import ExecutionRequest, ExecutionResult, ExecutionStatus, GovernedDispatch, execution_id_for
+from .replay_ledger import ClaimOutcomeKind, ExecutionReplayLedger, InMemoryReplayLedger
 
-
-class ExecutionError(Exception):
-    """Base class for AI-4 execution errors."""
-
-
-class ExecutionRejected(ExecutionError):
-    """Raised by callers for malformed execution input when desired."""
-
+class ExecutionError(Exception): pass
+class ExecutionRejected(ExecutionError): pass
 
 class ExecutionEngine:
-    """Execute only work covered by a verified AI-3 authority grant."""
-
-    def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = ()) -> None:
+    def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = (), ledger: ExecutionReplayLedger | None = None) -> None:
         self._adapters: Dict[str, ExecutionAdapter] = {}
-        self._ledger: ExecutionReplayLedger = ledger or InMemoryReplayLedger()
+        self._ledger = ledger or InMemoryReplayLedger()
         self._audit: list[ExecutionResult] = []
         self._lock = RLock()
-        for adapter in adapters:
-            self.register_adapter(adapter)
+        for adapter in adapters: self.register_adapter(adapter)
 
     def register_adapter(self, adapter: ExecutionAdapter) -> None:
-        adapter_id = adapter.adapter_id
-        action = adapter.action
-        if not adapter_id.strip() or not action.strip():
-            raise ValueError("adapter_id and action must be non-empty")
+        if not adapter.adapter_id.strip() or not adapter.action.strip(): raise ValueError("adapter_id and action must be non-empty")
         with self._lock:
-            if action in self._adapters:
-                raise ValueError(f"an adapter is already registered for action {action!r}")
-            self._adapters[action] = adapter
+            if adapter.action in self._adapters: raise ValueError(f"an adapter is already registered for action {adapter.action!r}")
+            self._adapters[adapter.action] = adapter
 
-    def execute(
-        self,
-        request: ExecutionRequest,
-        authority: AuthorityDecision | VerifiedAuthorityGrant | None,
-    ) -> ExecutionResult:
-        """Execute only work covered by a verified AI-3 grant."""
-        if authority is None:
-            return self._rejected(request, "missing authority decision")
-
+    def execute(self, request: ExecutionRequest, authority: AuthorityDecision | VerifiedAuthorityGrant | None) -> ExecutionResult:
+        if not isinstance(request, ExecutionRequest): return self._rejected(request, "unsupported execution request")
+        decision: AuthorityDecision | None = None
         if isinstance(authority, VerifiedAuthorityGrant):
             grant = authority
-            decision = None
         elif isinstance(authority, AuthorityDecision):
-            # Provenance is checked independently of ALLOW/DENY. A genuine AI-3
-            # DENY must reach the normal authorization branch so callers receive
-            # the semantic "not ALLOW" rejection rather than a provenance error.
-            if getattr(authority, "_provenance_token", None) is None:
-                return self._rejected(
-                    request,
-                    "authority decision provenance is invalid or untrusted",
-                    decision=authority,
-                )
+            if getattr(authority, "_provenance_token", None) is None or not authority.provenance_verified:
+                return self._rejected(request, "authority decision provenance is invalid or untrusted", decision=authority)
             decision = authority
-            if decision.decision is not Decision.ALLOW:
-                return self._rejected(
-                    request,
-                    "authority decision is not ALLOW; execution denied",
-                    decision=decision,
-                )
-            try:
-                grant = VerifiedAuthorityGrant.from_decision(decision)
-            except ValueError:
-                return self._rejected(
-                    request,
-                    "authority decision provenance is invalid or untrusted",
-                    decision=decision,
-                )
-        else:
-            return self._rejected(request, "unsupported authority credential")
+            if decision.decision is not Decision.ALLOW: return self._rejected(request, "authority decision is not ALLOW; execution denied", decision=decision)
+            try: grant = VerifiedAuthorityGrant.from_decision(decision)
+            except ValueError: return self._rejected(request, "authority decision provenance is invalid or untrusted", decision=decision)
+        else: return self._rejected(request, "missing authority decision")
 
-        if not grant.binds(request):
-            return self._rejected(
-                request,
-                "authority grant is not bound to the execution request",
-                decision=decision,
-            )
-
-        if grant.decision != Decision.ALLOW.value:
-            return self._rejected(
-                request,
-                "authority decision is not ALLOW; execution denied",
-                decision=decision,
-            )
-
+        if not grant.binds(request): return self._rejected(request, "authority grant is not bound to the execution request", decision=decision)
+        if grant.decision != Decision.ALLOW.value: return self._rejected(request, "authority decision is not ALLOW; execution denied", decision=decision)
         if decision is None:
-            decision = AuthorityDecision(
-                request_id=grant.request_id,
-                decision=Decision.ALLOW,
-                agent_identity=grant.agent_identity,
-                action=grant.action,
-                resource=grant.resource,
-                context_packet_id=grant.context_packet_id,
-                policy_id=grant.policy_id,
-                policy_version=grant.policy_version,
-                matched_rule_ids=grant.matched_rule_ids,
-                reason="verified AI-3 authority grant",
-                evaluated_at="verified-grant",
-            )
+            decision = AuthorityDecision(request_id=grant.request_id, decision=Decision.ALLOW, agent_identity=grant.agent_identity, action=grant.action, resource=grant.resource, context_packet_id=grant.context_packet_id, policy_id=grant.policy_id, policy_version=grant.policy_version, matched_rule_ids=grant.matched_rule_ids, reason="verified AI-3 authority grant", evaluated_at="verified-grant", parameters=grant.parameters, organization_id=grant.organization_id, actor_id=grant.actor_id, capability=grant.capability)
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
-
-        with self._lock:
-            previous = self._results.get(execution_id)
-            if previous is not None:
-                replay = ExecutionResult(
-                    execution_id=previous.execution_id,
-                    request_id=previous.request_id,
-                    authority_policy_id=previous.authority_policy_id,
-                    authority_policy_version=previous.authority_policy_version,
-                    agent_identity=previous.agent_identity,
-                    action=previous.action,
-                    resource=previous.resource,
-                    context_packet_id=previous.context_packet_id,
-                    status=ExecutionStatus.REPLAYED,
-                    adapter_id=previous.adapter_id,
-                    output=previous.output,
-                    error="idempotent replay; adapter was not invoked again",
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
-                self._audit.append(replay)
-                return replay
-
-        claim = self._ledger.try_claim(
-            execution_id,
-            grant_id=grant.grant_id,
-            request_id=request.request_id,
-        )
-
+        claim = self._ledger.try_claim(execution_id, grant_id=grant.grant_id, request_id=request.request_id)
         if claim.kind is ClaimOutcomeKind.ALREADY_SUCCEEDED:
-            previous = claim.record.result if claim.record is not None else None
-            if previous is None:
-                return self._rejected(
-                    request,
-                    f"no execution adapter registered for action {request.action!r}",
-                    decision=decision,
-                )
-            replay = ExecutionResult(
-                execution_id=previous.execution_id,
-                request_id=previous.request_id,
-                authority_policy_id=previous.authority_policy_id,
-                authority_policy_version=previous.authority_policy_version,
-                agent_identity=previous.agent_identity,
-                action=previous.action,
-                resource=previous.resource,
-                context_packet_id=previous.context_packet_id,
-                status=ExecutionStatus.REPLAYED,
-                adapter_id=previous.adapter_id,
-                output=previous.output,
-                error="idempotent replay; adapter was not invoked again",
-                executed_at=datetime.now(timezone.utc).isoformat(),
-            )
-            with self._lock:
-                self._audit.append(replay)
-            return replay
-
-        if claim.kind is ClaimOutcomeKind.IN_FLIGHT:
-            return self._rejected(
-                request,
-                "execution already in flight for this execution_id",
-                decision=decision,
-            )
-
-        fencing_token = claim.record.fencing_token if claim.record is not None else None
-        if not fencing_token:
-            return self._rejected(
-                request,
-                "acquired claim missing fencing token",
-                decision=decision,
-            )
-
-        adapter = self._adapters.get(request.action)
+            previous=claim.record.result if claim.record else None
+            if previous is None: return self._rejected(request,"successful replay has no stored result",decision=decision)
+            return self._replay(previous)
+        if claim.kind is ClaimOutcomeKind.IN_FLIGHT: return self._rejected(request,"execution already in flight for this execution_id",decision=decision)
+        token=claim.record.fencing_token if claim.record else None
+        if not token: return self._rejected(request,"acquired claim missing fencing token",decision=decision)
+        adapter=self._adapters.get(request.action)
         if adapter is None:
+            result=self._failed(request,execution_id,decision,"no execution adapter registered for action")
+        else:
             try:
-                adapter_result = adapter.execute(request, dispatch=dispatch)
-                if adapter_result is None:
-                    return self._rejected(
-                        request,
-                        "adapter rejected execution without a verified governed dispatch",
-                        decision=decision,
-                    )
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.SUCCEEDED,
-                    adapter_id=adapter.adapter_id,
-                    output=adapter_result.output,
-                    error=None,
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
+                adapter_result=adapter.execute(request, dispatch=dispatch)
+                if adapter_result is None: result=self._failed(request,execution_id,decision,"adapter rejected execution without a verified governed dispatch")
+                else: result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id,authority_policy_version=decision.policy_version,agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.SUCCEEDED,adapter_id=adapter.adapter_id,output=adapter_result.output,error=None,executed_at=datetime.now(timezone.utc).isoformat())
             except Exception as exc:
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.FAILED,
-                    adapter_id=adapter.adapter_id,
-                    output=(),
-                    error=f"{type(exc).__name__}: {exc}",
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
+                result=self._failed(request,execution_id,decision,f"{type(exc).__name__}: {exc}")
+        try:
+            if result.status is ExecutionStatus.SUCCEEDED: self._ledger.complete_succeeded(execution_id,result,fencing_token=token)
+            else: self._ledger.complete_failed(execution_id,result,fencing_token=token)
+        except Exception:
+            try: self._ledger.abandon(execution_id,fencing_token=token)
+            except Exception: pass
+            raise
+        with self._lock: self._audit.append(result)
+        return result
 
-        with self._lock:
-            self._audit.append(result)
+    def _replay(self, previous: ExecutionResult) -> ExecutionResult:
+        replay=ExecutionResult(execution_id=previous.execution_id,request_id=previous.request_id,authority_policy_id=previous.authority_policy_id,authority_policy_version=previous.authority_policy_version,agent_identity=previous.agent_identity,action=previous.action,resource=previous.resource,context_packet_id=previous.context_packet_id,status=ExecutionStatus.REPLAYED,adapter_id=previous.adapter_id,output=previous.output,error="idempotent replay; adapter was not invoked again",executed_at=datetime.now(timezone.utc).isoformat())
+        with self._lock: self._audit.append(replay)
+        return replay
+
+    def _failed(self, request, execution_id, decision, error):
+        return ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id,authority_policy_version=decision.policy_version,agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.FAILED,adapter_id=getattr(self._adapters.get(request.action),"adapter_id","none"),output=(),error=error,executed_at=datetime.now(timezone.utc).isoformat())
+
+    def _rejected(self, request, reason, *, decision=None):
+        execution_id=execution_id_for(request,decision) if decision is not None else "rejected:"+getattr(request,"request_id","unknown")
+        result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id if decision else "none",authority_policy_version=decision.policy_version if decision else "none",agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.REJECTED,adapter_id="none",output=(),error=reason,executed_at=datetime.now(timezone.utc).isoformat())
+        with self._lock: self._audit.append(result)
         return result
 
     def audit_trail(self) -> Tuple[ExecutionResult, ...]:
-        with self._lock:
-            return tuple(self._audit)
-
-    def _rejected(
-        self,
-        request: ExecutionRequest,
-        reason: str,
-        *,
-        decision: AuthorityDecision | None = None,
-    ) -> ExecutionResult:
-        policy_id = decision.policy_id if decision is not None else "none"
-        policy_version = decision.policy_version if decision is not None else "none"
-        execution_id = (
-            execution_id_for(request, decision)
-            if decision is not None
-            else "rejected:" + request.request_id
-        )
-        result = ExecutionResult(
-            execution_id=execution_id,
-            request_id=request.request_id,
-            authority_policy_id=policy_id,
-            authority_policy_version=policy_version,
-            agent_identity=request.agent_identity,
-            action=request.action,
-            resource=request.resource,
-            context_packet_id=request.context_packet_id,
-            status=ExecutionStatus.REJECTED,
-            adapter_id="none",
-            output=(),
-            error=reason,
-            executed_at=datetime.now(timezone.utc).isoformat(),
-        )
-        with self._lock:
-            self._audit.append(result)
-        return result
+        with self._lock: return tuple(self._audit)
