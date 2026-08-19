@@ -2,7 +2,7 @@ name: DOR CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/p4-governed-patch-record]
   pull_request:
     branches: [main]
 
