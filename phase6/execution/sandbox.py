@@ -30,7 +30,6 @@ class ExecutionOutcome(str, Enum):
 @dataclass(frozen=True)
 class ExecutionLimits:
     """Hard resource limits supplied by trusted runtime code."""
-
     wall_time_seconds: float = 30.0
     cpu_time_seconds: float = 10.0
     memory_bytes: int = 256 * 1024 * 1024
@@ -44,9 +43,7 @@ class ExecutionLimits:
             raise ValueError("wall_time_seconds must be positive")
         if self.cpu_time_seconds <= 0:
             raise ValueError("cpu_time_seconds must be positive")
-        for name in (
-            "memory_bytes", "process_count", "output_bytes", "file_size_bytes", "open_file_count"
-        ):
+        for name in ("memory_bytes", "process_count", "output_bytes", "file_size_bytes", "open_file_count"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.cpu_time_seconds > self.wall_time_seconds:
@@ -58,7 +55,6 @@ class ExecutionLimits:
 @dataclass(frozen=True)
 class ExecutionSecurityContext:
     """Immutable authority context passed into an isolated executor."""
-
     organization_id: str
     principal_id: str
     actor_id: str
@@ -82,7 +78,6 @@ class ExecutionSecurityContext:
 @dataclass(frozen=True)
 class ExecutionSpec:
     """Fully bounded execution request crossing into the sandbox."""
-
     execution_id: str
     adapter_id: str
     argv: Tuple[str, ...]
@@ -128,7 +123,6 @@ class ExecutionSpec:
 @dataclass(frozen=True)
 class ExecutionResult:
     """Bounded result returned from an isolated executor."""
-
     execution_id: str
     adapter_id: str
     outcome: ExecutionOutcome
@@ -147,14 +141,11 @@ class ExecutionResult:
 
 class SandboxAdapter(Protocol):
     adapter_id: str
-
-    def execute(self, spec: ExecutionSpec) -> ExecutionResult:
-        """Execute exactly the supplied bounded specification."""
+    def execute(self, spec: ExecutionSpec) -> ExecutionResult: ...
 
 
 class Sandbox(Protocol):
-    def execute(self, spec: ExecutionSpec) -> ExecutionResult:
-        """Resolve an allowlisted adapter and execute the specification."""
+    def execute(self, spec: ExecutionSpec) -> ExecutionResult: ...
 
 
 class SandboxRegistry:
@@ -165,6 +156,10 @@ class SandboxRegistry:
         self._audit = audit_sink
         for adapter_id, adapter in (adapters or {}).items():
             self.register(adapter_id, adapter)
+
+    @property
+    def adapter_ids(self) -> tuple[str, ...]:
+        return tuple(self._adapters)
 
     def register(self, adapter_id: str, adapter: SandboxAdapter) -> None:
         if not adapter_id.strip():
@@ -186,9 +181,12 @@ class SandboxRegistry:
         adapter = self.resolve(spec.adapter_id)
         try:
             result = adapter.execute(spec)
-        except Exception as exc:
-            self._emit(spec, "execution.failed", str(exc))
+        except Exception:
+            self._emit(spec, "execution.failed", "failed")
             raise
+        if len(result.output.encode("utf-8")) > spec.limits.output_bytes:
+            self._emit(spec, "execution.failed", "output_limit")
+            raise InvalidExecutionSpec("adapter returned output above configured limit")
         self._emit(spec, "execution.finished", result.outcome.value)
         return result
 
@@ -201,6 +199,7 @@ class SandboxRegistry:
                 execution_id=spec.execution_id,
                 adapter_id=spec.adapter_id,
                 event_type=event_type,
+                outcome=detail,
                 detail=detail,
             )
         )
