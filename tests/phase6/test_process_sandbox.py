@@ -13,7 +13,14 @@ from phase6.execution.sandbox import (
 )
 
 
-BWRAP = "/usr/bin/bwrap"
+import shutil
+
+pytestmark = pytest.mark.skipif(
+    not shutil.which("bwrap") or not os.access(shutil.which("bwrap"), os.X_OK),
+    reason="Bubblewrap (bwrap) is not available on this system"
+)
+
+BWRAP = shutil.which("bwrap") or "/usr/bin/bwrap"
 PYTHON = "/usr/bin/python3"
 
 
