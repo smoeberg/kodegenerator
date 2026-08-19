@@ -237,10 +237,11 @@ class GovernedPatchExecutionRuntime:
                 raise GovernedPatchAuthorityError(authority)
 
             grant = VerifiedAuthorityGrant.from_decision(authority)
-            execution = self._execution.execute(
-                request.execution_request(idempotency_key=idempotency_key),
-                grant,
+            execution_request = request.execution_request(
+                idempotency_key=idempotency_key,
+                request_id=authority.request_id,
             )
+            execution = self._execution.execute(execution_request, grant)
             outcome = self._outcomes.process(execution)
             if execution.status is ExecutionStatus.REJECTED or outcome.status in {
                 OutcomeStatus.REJECTED,
