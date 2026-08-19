@@ -10,13 +10,12 @@ from threading import RLock
 from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
-from phase4.execution.adapters import AdapterResult
 from phase4.execution.models import ExecutionRequest, GovernedDispatch
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import PatchProposalNotFoundError
-from .patch_adapter import PatchExecutionAdapter, PatchExecutionFailed, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
+from .patch_adapter import PatchExecutionAdapter, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
 from .patch_models import IMPLEMENTATION_APPLY_ACTION, PatchExecutionRecord, PatchExecutionRequest, TrustedToolSpec
 from .runtime import ImplementationAgentRuntime
 from .sandbox_tool_runner import BubblewrapToolRunner
@@ -64,11 +63,16 @@ class GovernedPatchRun:
 
 
 class _GovernedPatchAdapter:
-    """Execution seam that binds AI-4 to the exact registered patch request."""
+    """Execution seam that makes the patch adapter dispatch-bound.
+
+    The legacy PatchExecutionAdapter remains responsible for the immutable
+    request/record/workspace contract. This proxy owns only the AI-4 governed
+    dispatch boundary; the underlying adapter resolves the registered request
+    from the execution fingerprint and produces the normalized AdapterResult.
+    """
 
     def __init__(self, adapter: PatchExecutionAdapter) -> None:
         self._adapter = adapter
-        self._requests: dict[str, PatchExecutionRequest] = {}
 
     @property
     def adapter_id(self) -> str:
@@ -80,36 +84,18 @@ class _GovernedPatchAdapter:
 
     def register_request(self, request: PatchExecutionRequest) -> None:
         self._adapter.register_request(request)
-        self._requests[request.request_fingerprint] = request
 
     def execute(
         self,
         request: ExecutionRequest,
         *,
         dispatch: GovernedDispatch | None = None,
-    ) -> AdapterResult | None:
+    ):
         if not isinstance(dispatch, GovernedDispatch):
             return None
         if not dispatch.is_verified or dispatch.request is not request:
             return None
-        fingerprint = dict(request.parameters).get("patch_execution_request_fingerprint")
-        if not fingerprint:
-            raise PatchExecutionRequestNotFoundError("execution request does not identify a registered patch request")
-        patch_request = self._requests.get(fingerprint)
-        if patch_request is None:
-            raise PatchExecutionRequestNotFoundError("patch execution request is not registered")
-        if patch_request.organization_id != request.organization_id:
-            raise PatchExecutionRequestNotFoundError("patch execution request organization does not match execution request")
-        if patch_request.resource != request.resource or patch_request.context_packet_id != request.context_packet_id:
-            raise PatchExecutionRequestNotFoundError("patch execution request context does not match execution request")
-        if patch_request.agent_identity != request.agent_identity:
-            raise PatchExecutionRequestNotFoundError("patch execution request agent does not match execution request")
-        if patch_request.request_fingerprint != fingerprint:
-            raise PatchExecutionRequestNotFoundError("patch execution request fingerprint mismatch")
-        record = self._adapter.execute(patch_request)
-        if record.status.value != "succeeded":
-            raise PatchExecutionFailed(record)
-        return AdapterResult.from_mapping({"record_id": record.record_id, "status": record.status.value})
+        return self._adapter.execute(request)
 
     def get_record(self, request_fingerprint: str) -> PatchExecutionRecord:
         return self._adapter.get_record(request_fingerprint)
@@ -164,7 +150,6 @@ class GovernedPatchExecutionRuntime:
             else:
                 request = PatchExecutionRequest(proposal=proposal, baseline=self._workspace.observe(proposal), tools=self._tools)
                 self._commands[idempotency_key] = (proposal_id, request)
-                self._adapter.register_request(request)
                 self._governed_adapter.register_request(request)
             authority = self._authority.evaluate(request.authority_request())
             if not authority.allowed:
