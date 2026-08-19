@@ -40,10 +40,9 @@ def test_empty_claim_acquires_pending():
 
 def test_succeeded_locks_and_replays():
     ledger = InMemoryReplayLedger()
-    claim = ledger.try_claim("exec-1")
-    token = claim.record.fencing_token
+    ledger.try_claim("exec-1")
     result = _result("exec-1", ExecutionStatus.SUCCEEDED)
-    ledger.complete_succeeded("exec-1", result, fencing_token=token)
+    ledger.complete_succeeded("exec-1", result)
 
     again = ledger.try_claim("exec-1")
     assert again.kind is ClaimOutcomeKind.ALREADY_SUCCEEDED
@@ -53,12 +52,8 @@ def test_succeeded_locks_and_replays():
 
 def test_failed_is_retryable():
     ledger = InMemoryReplayLedger()
-    claim = ledger.try_claim("exec-1")
-    ledger.complete_failed(
-        "exec-1",
-        _result("exec-1", ExecutionStatus.FAILED),
-        fencing_token=claim.record.fencing_token,
-    )
+    ledger.try_claim("exec-1")
+    ledger.complete_failed("exec-1", _result("exec-1", ExecutionStatus.FAILED))
 
     reclaim = ledger.try_claim("exec-1")
     assert reclaim.kind is ClaimOutcomeKind.ACQUIRED
@@ -74,38 +69,28 @@ def test_concurrent_pending_is_in_flight():
     assert second.kind is ClaimOutcomeKind.IN_FLIGHT
 
 
-def test_abandon_releases_pending_for_retry():
+def test_abandon_retains_row_and_allows_retry():
     ledger = InMemoryReplayLedger()
-    claim = ledger.try_claim("exec-1")
-    ledger.abandon("exec-1", fencing_token=claim.record.fencing_token)
-    assert ledger.get("exec-1") is None
+    ledger.try_claim("exec-1")
+    ledger.abandon("exec-1")
+    record = ledger.get("exec-1")
+    assert record is not None
+    assert record.status is LedgerStatus.ABANDONED
     assert ledger.try_claim("exec-1").kind is ClaimOutcomeKind.ACQUIRED
 
 
 def test_complete_succeeded_requires_pending():
     ledger = InMemoryReplayLedger()
     with pytest.raises(RuntimeError, match="pending"):
-        ledger.complete_succeeded(
-            "missing",
-            _result("missing", ExecutionStatus.SUCCEEDED),
-            fencing_token="dead",
-        )
+        ledger.complete_succeeded("missing", _result("missing", ExecutionStatus.SUCCEEDED))
 
 
 def test_complete_failed_requires_pending():
     ledger = InMemoryReplayLedger()
-    claim = ledger.try_claim("exec-1")
-    ledger.complete_succeeded(
-        "exec-1",
-        _result("exec-1", ExecutionStatus.SUCCEEDED),
-        fencing_token=claim.record.fencing_token,
-    )
+    ledger.try_claim("exec-1")
+    ledger.complete_succeeded("exec-1", _result("exec-1", ExecutionStatus.SUCCEEDED))
     with pytest.raises(RuntimeError, match="pending"):
-        ledger.complete_failed(
-            "exec-1",
-            _result("exec-1", ExecutionStatus.FAILED),
-            fencing_token=claim.record.fencing_token,
-        )
+        ledger.complete_failed("exec-1", _result("exec-1", ExecutionStatus.FAILED))
 
 
 def test_empty_execution_id_rejected():
