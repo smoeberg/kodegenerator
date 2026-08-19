@@ -109,6 +109,33 @@ class GovernedDispatch:
 
 
 @dataclass(frozen=True)
+class GovernedDispatch:
+    """Execution capability carrying a verified AI-3 grant and exact request."""
+
+    request: ExecutionRequest
+    grant: VerifiedAuthorityGrant
+    _dispatch_token: object | None = field(default=None, init=False, repr=False, compare=False)
+
+    @classmethod
+    def issue(cls, request: ExecutionRequest, grant: VerifiedAuthorityGrant) -> "GovernedDispatch":
+        if not isinstance(request, ExecutionRequest):
+            raise TypeError("request must be an ExecutionRequest")
+        if not isinstance(grant, VerifiedAuthorityGrant) or not grant.binds(request):
+            raise ValueError("grant is not valid for this execution request")
+        dispatch = cls(request=request, grant=grant)
+        object.__setattr__(dispatch, "_dispatch_token", object())
+        return dispatch
+
+    @property
+    def is_verified(self) -> bool:
+        return (
+            self._dispatch_token is not None
+            and self.grant.verified
+            and self.grant.binds(self.request)
+        )
+
+
+@dataclass(frozen=True)
 class ExecutionResult:
     """Immutable result and audit record produced by AI-4."""
 

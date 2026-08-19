@@ -47,7 +47,11 @@ services:
 
   dor-worker:
     build: .
+<<<<<<< HEAD
     command: ["python", "-m", "runtime.dor_runtime"]
+=======
+    command: ["python", "-m", "workers.runtime_worker"]
+>>>>>>> origin/agent/phase7-production-runtime
     environment:
       DOR_ENV: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dor}

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """Tamper-evident authority credentials for the Phase 4 execution boundary."""
 from __future__ import annotations
 
@@ -10,11 +11,18 @@ import hmac
 import json
 import os
 import secrets
+=======
+"""Verified authority credentials for the Phase 4 execution boundary."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+>>>>>>> origin/agent/phase7-production-runtime
 from typing import Any
 
 from .models import AuthorityDecision
 
 
+<<<<<<< HEAD
 DEFAULT_GRANT_TTL_SECONDS = 300
 _PROVENANCE_VERSION = "p4-authority-grant-v1"
 _ISSUER_ID = "phase4.ai-3"
@@ -130,6 +138,15 @@ class VerifiedAuthorityGrant:
     Public fields are audit data, not proof. Verification requires the private
     issuer signature, checks its lifetime, and authenticates every bound field.
     Copying or mutating a grant therefore invalidates it before adapter dispatch.
+=======
+@dataclass(frozen=True)
+class VerifiedAuthorityGrant:
+    """Non-forgeable-in-contract authority credential issued from AI-3 provenance.
+
+    The private issuer token is deliberately not part of the public constructor.
+    A hand-constructed grant therefore cannot become verified merely by copying
+    the fields of an existing authority decision.
+>>>>>>> origin/agent/phase7-production-runtime
     """
 
     request_id: str
@@ -141,6 +158,7 @@ class VerifiedAuthorityGrant:
     policy_version: str
     matched_rule_ids: tuple[str, ...]
     decision: str
+<<<<<<< HEAD
     parameters: tuple[tuple[str, str], ...] = ()
     organization_id: str | None = None
     actor_id: str | None = None
@@ -170,6 +188,15 @@ class VerifiedAuthorityGrant:
 
         issued = _aware_utc(now)
         expires = issued + timedelta(seconds=ttl_seconds)
+=======
+    _issuer_token: object | None = field(default=None, init=False, repr=False, compare=False)
+
+    @classmethod
+    def from_decision(cls, decision: AuthorityDecision) -> "VerifiedAuthorityGrant":
+        token = getattr(decision, "_provenance_token", None)
+        if token is None or decision.decision.value != "allow":
+            raise ValueError("authority decision has no verified AI-3 provenance")
+>>>>>>> origin/agent/phase7-production-runtime
         grant = cls(
             request_id=decision.request_id,
             agent_identity=decision.agent_identity,
@@ -180,6 +207,7 @@ class VerifiedAuthorityGrant:
             policy_version=decision.policy_version,
             matched_rule_ids=decision.matched_rule_ids,
             decision=decision.decision.value,
+<<<<<<< HEAD
             parameters=decision.parameters,
             organization_id=decision.organization_id,
             actor_id=decision.actor_id,
@@ -238,13 +266,29 @@ class VerifiedAuthorityGrant:
     def binds(self, request: Any, *, at: datetime | None = None) -> bool:
         return (
             self.verify(at=at)
+=======
+        )
+        object.__setattr__(grant, "_issuer_token", token)
+        return grant
+
+    @property
+    def verified(self) -> bool:
+        return self._issuer_token is not None
+
+    def binds(self, request: Any) -> bool:
+        return (
+            self.verified
+>>>>>>> origin/agent/phase7-production-runtime
             and self.request_id == request.request_id
             and self.agent_identity == request.agent_identity
             and self.action == request.action
             and self.resource == request.resource
             and self.context_packet_id == request.context_packet_id
+<<<<<<< HEAD
             and self.parameters == tuple(request.parameters)
             and self.organization_id == getattr(request, "organization_id", None)
             and self.actor_id == getattr(request, "actor_id", None)
             and self.capability == getattr(request, "capability", None)
+=======
+>>>>>>> origin/agent/phase7-production-runtime
         )
