@@ -86,7 +86,10 @@ class BubblewrapProcessAdapter:
                 return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.FAILED, output, "execution output exceeded configured limit", process.returncode)
         if process.returncode == 0:
             return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.SUCCEEDED, output, exit_code=0)
-        return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.FAILED, output, f"sandbox exited with code {process.returncode}", process.returncode)
+        detail = f"sandbox exited with code {process.returncode}"
+        if output:
+            detail = f"{detail}: {output.strip()}"
+        return ExecutionResult(spec.execution_id, self.adapter_id, ExecutionOutcome.FAILED, output, detail, process.returncode)
 
     def _validate_spec(self, spec):
         executable = str(Path(spec.argv[0]).resolve())
