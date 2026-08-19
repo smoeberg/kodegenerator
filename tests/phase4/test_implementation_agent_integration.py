@@ -1,24 +1,8 @@
 """One complete Phase 4B-1 reference flow through AI-1 to AI-5."""
 
-<<<<<<< HEAD
-from phase4.agent_registry import (
-    AgentRegistry,
-    AgentRole,
-    AgentVersion,
-    Capability,
-)
-from phase4.authority.grants import VerifiedAuthorityGrant
-from phase4.authority import (
-    AuthorityEngine,
-    AuthorityPolicy,
-    AuthorityRule,
-    Decision,
-)
-=======
 from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
 from phase4.authority import AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
->>>>>>> origin/phase4/p4-08-02-safe-patch-apply-v3
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionStatus
 from phase4.implementation_agent import IMPLEMENTATION_ACTION, ChangeBudget, ImplementationExecutionAdapter, ImplementationRequest
@@ -65,26 +49,10 @@ def test_registered_agent_produces_governed_patch_outcome_through_ai1_to_ai5():
 -    return left - right
 +    return left + right
 """
-<<<<<<< HEAD
-    provider = DeterministicFakeImplementationProvider(
-        {implementation_request.request_fingerprint: diff}
-    )
-    implementation_adapter = ImplementationExecutionAdapter(
-        adapter_id="adapter.implementation.reference",
-        provider=provider,
-        requests=(implementation_request,),
-    )
-    from phase4.authority.grants import VerifiedAuthorityGrant
-    execution_result = ExecutionEngine((implementation_adapter,)).execute(
-        implementation_request.execution_request(idempotency_key="REQ-CALC-1"),
-        VerifiedAuthorityGrant.from_decision(authority),
-    )
-=======
     provider = DeterministicFakeImplementationProvider({implementation_request.request_fingerprint: diff})
     implementation_adapter = ImplementationExecutionAdapter(adapter_id="adapter.implementation.reference", provider=provider, requests=(implementation_request,))
     grant = VerifiedAuthorityGrant.from_decision(authority)
     execution_result = ExecutionEngine((implementation_adapter,)).execute(implementation_request.execution_request(idempotency_key="REQ-CALC-1"), grant)
->>>>>>> origin/phase4/p4-08-02-safe-patch-apply-v3
     outcome = OutcomeEngine().process(execution_result)
 
     assert agent.has_capability(IMPLEMENTATION_ACTION)

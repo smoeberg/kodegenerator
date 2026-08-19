@@ -63,16 +63,12 @@ class GovernedPatchRun:
 
 
 class _GovernedPatchAdapter:
-<<<<<<< HEAD
-    """Execution seam that makes the patch adapter dispatch-bound."""
-=======
     """Execution seam that makes the patch adapter dispatch-bound.
 
     The legacy PatchExecutionAdapter remains responsible for the immutable
     request/record/workspace contract. This proxy owns the AI-4 governed-dispatch
     boundary so ExecutionEngine can never reach it with an ungoverned call.
     """
->>>>>>> origin/agent/phase7-production-runtime
 
     def __init__(self, adapter: PatchExecutionAdapter) -> None:
         self._adapter = adapter
@@ -88,16 +84,12 @@ class _GovernedPatchAdapter:
     def register_request(self, request: PatchExecutionRequest) -> None:
         self._adapter.register_request(request)
 
-<<<<<<< HEAD
-    def execute(self, request: ExecutionRequest, *, dispatch: GovernedDispatch | None = None):
-=======
     def execute(
         self,
         request: ExecutionRequest,
         *,
         dispatch: GovernedDispatch | None = None,
     ):
->>>>>>> origin/agent/phase7-production-runtime
         if not isinstance(dispatch, GovernedDispatch):
             return None
         if not dispatch.is_verified or dispatch.request is not request:
@@ -123,14 +115,10 @@ class GovernedPatchExecutionRuntime:
         effective_tool_runner = tool_runner if tool_runner is not None else BubblewrapToolRunner()
         self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=effective_tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
         self._authority = AuthorityEngine(self._policy_for())
-<<<<<<< HEAD
-        self._adapter = PatchExecutionAdapter(adapter_id="adapter.implementation.governed-patch", workspace=self._workspace)
-=======
         self._adapter = PatchExecutionAdapter(
             adapter_id="adapter.implementation.governed-patch",
             workspace=self._workspace,
         )
->>>>>>> origin/agent/phase7-production-runtime
         self._governed_adapter = _GovernedPatchAdapter(self._adapter)
         self._execution = ExecutionEngine((self._governed_adapter,))
         self._outcomes = OutcomeEngine()

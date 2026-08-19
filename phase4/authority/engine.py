@@ -28,12 +28,7 @@ class AuthorityEngine:
     - any matching DENY wins over ALLOW;
     - the engine never executes commands or mutates agent identity/context;
     - every evaluation produces an immutable decision suitable for audit;
-<<<<<<< HEAD
-    - only decisions issued here carry provenance that can become an execution grant;
-    - optional ``AuthorityAuditSink`` observes decisions without granting power.
-=======
     - only decisions issued here carry provenance that can become an execution grant.
->>>>>>> origin/agent/phase7-production-runtime
     """
 
     def __init__(
@@ -89,15 +84,10 @@ class AuthorityEngine:
             actor_id=request.actor_id,
             capability=request.capability,
         )
-<<<<<<< HEAD
-        # AI-4 validates this tamper-evident provenance before any dispatch.
-        _attach_decision_provenance(result)
-=======
         # The token is an object-identity capability owned by this authority
         # engine. It is intentionally not representable in AuthorityDecision's
         # public constructor and cannot be recreated from copied fields.
         object.__setattr__(result, "_provenance_token", object())
->>>>>>> origin/agent/phase7-production-runtime
         self._audit.append(result)
         self._audit_sink.record(result)
         return result

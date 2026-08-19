@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-"""P4-01 durable execution replay ledger.
-=======
 """Create the durable P4-01 execution replay ledger.
->>>>>>> origin/security/p0-p1-hardening
 
 Revision ID: 009_p4_01_execution_replay_ledger
 Revises: 008_phase7_runtime_queue
@@ -27,23 +23,6 @@ def upgrade() -> None:
         sa.Column("result_json", sa.JSON(), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-<<<<<<< HEAD
-        sa.Column("error_text", sa.Text(), nullable=True),
-        sa.PrimaryKeyConstraint("execution_id"),
-    )
-    op.create_index(
-        "ix_execution_replay_ledger_status",
-        "execution_replay_ledger",
-        ["status"],
-    )
-
-
-def downgrade() -> None:
-    op.drop_index(
-        "ix_execution_replay_ledger_status",
-        table_name="execution_replay_ledger",
-    )
-=======
         sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("fencing_token", sa.String(length=64), nullable=True),
         sa.Column("error_text", sa.Text(), nullable=True),
@@ -60,5 +39,4 @@ def downgrade() -> None:
     op.drop_index("ix_execution_replay_ledger_request_id", table_name="execution_replay_ledger")
     op.drop_index("ix_execution_replay_ledger_lease_expires_at", table_name="execution_replay_ledger")
     op.drop_index("ix_execution_replay_ledger_status", table_name="execution_replay_ledger")
->>>>>>> origin/security/p0-p1-hardening
     op.drop_table("execution_replay_ledger")

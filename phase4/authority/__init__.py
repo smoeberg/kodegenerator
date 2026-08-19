@@ -15,11 +15,8 @@ from .models import (
     AuthorityRule,
     Decision,
 )
-<<<<<<< HEAD
-=======
 from .grants import VerifiedAuthorityGrant
 from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
->>>>>>> origin/agent/phase7-production-runtime
 
 __all__ = [
     "AuthorityDecision",

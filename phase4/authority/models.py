@@ -65,10 +65,6 @@ class AuthorityRequest:
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
         canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
-<<<<<<< HEAD
-        canonical_parameters = sorted((str(k), str(v)) for k, v in (parameters or {}).items())
-=======
->>>>>>> origin/agent/phase7-production-runtime
         identity_payload = {
             "agent_identity": agent_identity,
             "action": action,
@@ -164,16 +160,7 @@ class AuthorityDecision:
     matched_rule_ids: Tuple[str, ...]
     reason: str
     evaluated_at: str
-<<<<<<< HEAD
-    parameters: Tuple[Tuple[str, str], ...] = ()
-    organization_id: Optional[str] = None
-    actor_id: Optional[str] = None
-    capability: Optional[str] = None
-    _provenance_issuer: str = field(default="", init=False, repr=False, compare=False)
-    _provenance_signature: str = field(default="", init=False, repr=False, compare=False)
-=======
     _provenance_token: object | None = field(default=None, init=False, repr=False, compare=False)
->>>>>>> origin/agent/phase7-production-runtime
 
     def __post_init__(self) -> None:
         if not self.request_id.strip() or not self.agent_identity.strip():
@@ -194,11 +181,4 @@ class AuthorityDecision:
 
     @property
     def provenance_verified(self) -> bool:
-<<<<<<< HEAD
-        """Verify the issuer signature against the decision's current fields."""
-        from .grants import _decision_has_valid_provenance
-
-        return _decision_has_valid_provenance(self)
-=======
         return self._provenance_token is not None
->>>>>>> origin/agent/phase7-production-runtime
