@@ -8,7 +8,6 @@ from typing import List, Mapping, Tuple
 from .audit import AuthorityAuditSink, _as_sink
 from .grants import VerifiedAuthorityGrant, _attach_decision_provenance
 from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
-from .grants import VerifiedAuthorityGrant
 
 
 class AuthorityError(Exception):
@@ -20,23 +19,9 @@ class PolicyValidationError(AuthorityError):
 
 
 class AuthorityEngine:
-    """Evaluate explicit authority policies without executing any action.
+    """Evaluate explicit authority policies without executing any action."""
 
-    Security contract:
-    - declared capabilities are not authority;
-    - no matching rule means DENY;
-    - any matching DENY wins over ALLOW;
-    - the engine never executes commands or mutates agent identity/context;
-    - every evaluation produces an immutable decision suitable for audit;
-    - only decisions issued here carry provenance that can become an execution grant.
-    """
-
-    def __init__(
-        self,
-        policy: AuthorityPolicy,
-        *,
-        audit_sink: AuthorityAuditSink | None = None,
-    ) -> None:
+    def __init__(self, policy: AuthorityPolicy, *, audit_sink: AuthorityAuditSink | None = None) -> None:
         self._validate_policy(policy)
         self._policy = policy
         self._audit: List[AuthorityDecision] = []
@@ -47,15 +32,12 @@ class AuthorityEngine:
         return self._policy
 
     def evaluate(self, request: AuthorityRequest) -> AuthorityDecision:
-        """Evaluate one request. The engine always returns ALLOW or DENY."""
-        matched: List[AuthorityRule] = [
-            rule for rule in self._policy.rules if self._matches(rule, request)
-        ]
+        if not isinstance(request, AuthorityRequest):
+            raise TypeError("request must be an AuthorityRequest")
+        matched: List[AuthorityRule] = [rule for rule in self._policy.rules if self._matches(rule, request)]
         matched.sort(key=lambda rule: (-rule.priority, rule.rule_id))
-
         denies = [rule for rule in matched if rule.effect is Decision.DENY]
         allows = [rule for rule in matched if rule.effect is Decision.ALLOW]
-
         if denies:
             decision = Decision.DENY
             reason = "explicit deny rule matched; deny takes precedence"
@@ -66,7 +48,6 @@ class AuthorityEngine:
             decision = Decision.DENY
             reason = "no applicable authority rule matched; fail closed"
 
-        evaluated_at = datetime.now(timezone.utc).isoformat()
         result = AuthorityDecision(
             request_id=request.request_id,
             decision=decision,
@@ -78,47 +59,37 @@ class AuthorityEngine:
             policy_version=self._policy.version,
             matched_rule_ids=tuple(rule.rule_id for rule in matched),
             reason=reason,
-            evaluated_at=evaluated_at,
+            evaluated_at=datetime.now(timezone.utc).isoformat(),
             parameters=request.parameters,
             organization_id=request.organization_id,
             actor_id=request.actor_id,
             capability=request.capability,
         )
-        # The token is an object-identity capability owned by this authority
-        # engine. It is intentionally not representable in AuthorityDecision's
-        # public constructor and cannot be recreated from copied fields.
         object.__setattr__(result, "_provenance_token", object())
+        _attach_decision_provenance(result)
         self._audit.append(result)
         self._audit_sink.record(result)
         return result
 
     def issue_grant(self, request: AuthorityRequest) -> VerifiedAuthorityGrant:
-        """Evaluate and issue a verified execution grant for an ALLOW decision."""
         decision = self.evaluate(request)
         if decision.decision is not Decision.ALLOW:
             raise AuthorityError("cannot issue execution grant for denied authority")
         return VerifiedAuthorityGrant.from_decision(decision)
 
     def audit_trail(self) -> Tuple[AuthorityDecision, ...]:
-        """Return an immutable snapshot of all authority decisions."""
         return tuple(self._audit)
 
     @staticmethod
     def _matches(rule: AuthorityRule, request: AuthorityRequest) -> bool:
-        if rule.action != request.action:
-            return False
-        if not fnmatchcase(request.resource, rule.resource_pattern):
+        if rule.action != request.action or not fnmatchcase(request.resource, rule.resource_pattern):
             return False
         if rule.agent_identity is not None and rule.agent_identity != request.agent_identity:
             return False
         if rule.agent_role is not None and rule.agent_role != request.agent_role:
             return False
-
         context: Mapping[str, str] = dict(request.context)
-        for key, expected in rule.required_context:
-            if context.get(key) != expected:
-                return False
-        return True
+        return all(context.get(key) == expected for key, expected in rule.required_context)
 
     @staticmethod
     def _validate_policy(policy: AuthorityPolicy) -> None:
