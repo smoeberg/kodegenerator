@@ -266,6 +266,7 @@ def test_project_auditor_rejects_false_claims_and_reports_global_drift_ai1_to_ai
         )
     ).evaluate(request.authority_request())
 
+    from phase4.authority.grants import VerifiedAuthorityGrant
     execution = ExecutionEngine((adapter,)).execute(
         request.execution_request(idempotency_key="phase4b-2-acceptance"),
         VerifiedAuthorityGrant.from_decision(authority),

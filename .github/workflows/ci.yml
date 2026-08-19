@@ -118,7 +118,7 @@ jobs:
           bandit -r
           ai api dashboard domain execution generation infrastructure monitoring
           phase4 phase6 runtime services
-          -x tests -ll
+          -x tests --severity-level medium
 
       - name: Dependency audit
         run: pip-audit --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-1325

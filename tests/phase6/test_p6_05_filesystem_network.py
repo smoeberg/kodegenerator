@@ -1,8 +1,15 @@
 """P6-05 security contract tests for filesystem and network restrictions."""
 
 from pathlib import Path
+import shutil
+import os
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    not shutil.which("bwrap") or not os.access(shutil.which("bwrap"), os.X_OK),
+    reason="Bubblewrap (bwrap) is not available on this system"
+)
 
 from phase6.execution.process import BubblewrapProcessAdapter
 from phase6.execution.sandbox import (
