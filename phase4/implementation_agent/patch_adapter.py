@@ -371,9 +371,10 @@ class PatchExecutionAdapter:
 def canonical_python_tools(*, timeout_seconds: int = 300, max_output_bytes: int = 256 * 1024) -> tuple[TrustedToolSpec, ...]:
     executable = os.path.abspath(sys.executable)
     sandbox_environment = (("DOR_JWT_SECRET_KEY", secrets.token_urlsafe(32)),)
+    pytest_environment = sandbox_environment + (("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1"),)
     return (
         TrustedToolSpec("python.ruff", ToolKind.LINT, (executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F63,F7", "."), timeout_seconds, max_output_bytes, sandbox_environment),
-        TrustedToolSpec("python.pytest", ToolKind.TEST, (executable, "-m", "pytest", "-q", "test_app.py"), timeout_seconds, max_output_bytes, sandbox_environment),
+        TrustedToolSpec("python.pytest", ToolKind.TEST, (executable, "-m", "pytest", "-q", "test_app.py"), timeout_seconds, max_output_bytes, pytest_environment),
         TrustedToolSpec("python.compileall", ToolKind.BUILD, (executable, "-m", "compileall", "-q", "."), timeout_seconds, max_output_bytes, sandbox_environment),
     )
 
