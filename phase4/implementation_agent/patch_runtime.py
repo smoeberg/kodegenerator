@@ -7,13 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from phase4.authority import (
-    AuthorityDecision,
-    AuthorityEngine,
-    AuthorityPolicy,
-    AuthorityRule,
-    Decision,
-)
+from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
 from phase4.execution.models import ExecutionRequest, GovernedDispatch
@@ -21,18 +15,8 @@ from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import PatchProposalNotFoundError
-from .patch_adapter import (
-    PatchExecutionAdapter,
-    PatchExecutionRequestNotFoundError,
-    ToolRunner,
-    WorkspacePatchExecutor,
-)
-from .patch_models import (
-    IMPLEMENTATION_APPLY_ACTION,
-    PatchExecutionRecord,
-    PatchExecutionRequest,
-    TrustedToolSpec,
-)
+from .patch_adapter import PatchExecutionAdapter, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
+from .patch_models import IMPLEMENTATION_APPLY_ACTION, PatchExecutionRecord, PatchExecutionRequest, TrustedToolSpec
 from .runtime import ImplementationAgentRuntime
 from .sandbox_tool_runner import BubblewrapToolRunner
 
@@ -60,9 +44,7 @@ class GovernedPatchExecutionError(GovernedPatchRuntimeError):
         self.execution = execution
         self.outcome = outcome
         detail = execution.error or outcome.error or "no execution error was recorded"
-        super().__init__(
-            f"governed patch execution produced no usable record: {detail}"
-        )
+        super().__init__(f"governed patch execution produced no usable record: {detail}")
 
 
 @dataclass(frozen=True)
@@ -100,19 +82,12 @@ class _GovernedPatchAdapter:
         self._requests[request.request_fingerprint] = request
         self._adapter.register_request(request)
 
-    def execute(
-        self,
-        request: ExecutionRequest,
-        *,
-        dispatch: GovernedDispatch | None = None,
-    ):
+    def execute(self, request: ExecutionRequest, *, dispatch: GovernedDispatch | None = None):
         if not isinstance(dispatch, GovernedDispatch):
             return None
         if not dispatch.is_verified or not dispatch.grant.binds(request):
             return None
-        fingerprint = dict(request.parameters).get(
-            "patch_execution_request_fingerprint"
-        )
+        fingerprint = dict(request.parameters).get("patch_execution_request_fingerprint")
         if fingerprint is None:
             return None
         registered = self._requests.get(fingerprint)
@@ -121,7 +96,7 @@ class _GovernedPatchAdapter:
         canonical_request = ExecutionRequest.create(
             request_id=request.request_id,
             agent_identity=registered.agent_identity,
-            action=registered.proposal.request.action,
+            action=IMPLEMENTATION_APPLY_ACTION,
             resource=registered.resource,
             context_packet_id=registered.context_packet_id,
             organization_id=registered.organization_id,
@@ -137,45 +112,19 @@ class _GovernedPatchAdapter:
 class GovernedPatchExecutionRuntime:
     """Apply only stored proposals through operator-fixed tools and AI-3 authority."""
 
-    def __init__(
-        self,
-        *,
-        proposal_runtime: ImplementationAgentRuntime,
-        workspace_root: Path,
-        tools: tuple[TrustedToolSpec, ...],
-        tool_runner: ToolRunner | None = None,
-        max_file_bytes: int = 16 * 1024 * 1024,
-        max_workspace_files: int = 20_000,
-        max_workspace_bytes: int = 256 * 1024 * 1024,
-        patch_timeout_seconds: int = 30,
-    ) -> None:
+    def __init__(self, *, proposal_runtime: ImplementationAgentRuntime, workspace_root: Path, tools: tuple[TrustedToolSpec, ...], tool_runner: ToolRunner | None = None, max_file_bytes: int = 16 * 1024 * 1024, max_workspace_files: int = 20_000, max_workspace_bytes: int = 256 * 1024 * 1024, patch_timeout_seconds: int = 30) -> None:
         if not isinstance(proposal_runtime, ImplementationAgentRuntime):
             raise TypeError("proposal_runtime must be an ImplementationAgentRuntime")
-        if not isinstance(tools, tuple) or any(
-            not isinstance(tool, TrustedToolSpec) for tool in tools
-        ):
+        if not isinstance(tools, tuple) or any(not isinstance(tool, TrustedToolSpec) for tool in tools):
             raise TypeError("tools must be a tuple of TrustedToolSpec values")
         if not tools:
             raise ValueError("governed patch execution requires trusted tools")
-
         self._proposal_runtime = proposal_runtime
         self._tools = tools
-        effective_tool_runner = (
-            tool_runner if tool_runner is not None else BubblewrapToolRunner()
-        )
-        self._workspace = WorkspacePatchExecutor(
-            workspace_root,
-            tool_runner=effective_tool_runner,
-            max_file_bytes=max_file_bytes,
-            max_workspace_files=max_workspace_files,
-            max_workspace_bytes=max_workspace_bytes,
-            patch_timeout_seconds=patch_timeout_seconds,
-        )
+        effective_tool_runner = tool_runner if tool_runner is not None else BubblewrapToolRunner()
+        self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=effective_tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
         self._authority = AuthorityEngine(self._policy_for())
-        self._adapter = PatchExecutionAdapter(
-            adapter_id="adapter.implementation.governed-patch",
-            workspace=self._workspace,
-        )
+        self._adapter = PatchExecutionAdapter(adapter_id="adapter.implementation.governed-patch", workspace=self._workspace)
         self._governed_adapter = _GovernedPatchAdapter(self._adapter)
         self._execution = ExecutionEngine((self._governed_adapter,))
         self._outcomes = OutcomeEngine()
@@ -191,79 +140,39 @@ class GovernedPatchExecutionRuntime:
         return self._workspace.root
 
     def run(self, *, proposal_id: str, idempotency_key: str) -> GovernedPatchRun:
-        for name, value in (
-            ("proposal_id", proposal_id),
-            ("idempotency_key", idempotency_key),
-        ):
-            if (
-                not isinstance(value, str)
-                or not value.strip()
-                or value != value.strip()
-            ):
+        for name, value in (("proposal_id", proposal_id), ("idempotency_key", idempotency_key)):
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
                 raise ValueError(f"{name} must be a canonical non-empty string")
-
         proposal = self._proposal_runtime.get_proposal(proposal_id)
         if proposal.request.resource not in self._proposal_runtime.allowed_resources:
-            raise GovernedPatchRuntimeError(
-                "proposal resource is outside the operator-configured runtime scope"
-            )
+            raise GovernedPatchRuntimeError("proposal resource is outside the operator-configured runtime scope")
         agent_identity = str(self._proposal_runtime.agent.identity)
         if proposal.request.agent_identity != agent_identity:
-            raise GovernedPatchRuntimeError(
-                "proposal agent identity does not match the registered runtime agent"
-            )
-
+            raise GovernedPatchRuntimeError("proposal agent identity does not match the registered runtime agent")
         with self._lock:
             bound = self._commands.get(idempotency_key)
             if bound is not None:
                 bound_proposal_id, request = bound
                 if bound_proposal_id != proposal_id:
-                    raise GovernedPatchCommandConflictError(
-                        "idempotency key is already bound to another proposal"
-                    )
+                    raise GovernedPatchCommandConflictError("idempotency key is already bound to another proposal")
             else:
-                request = PatchExecutionRequest(
-                    proposal=proposal,
-                    baseline=self._workspace.observe(proposal),
-                    tools=self._tools,
-                )
+                request = PatchExecutionRequest(proposal=proposal, baseline=self._workspace.observe(proposal), tools=self._tools)
                 self._commands[idempotency_key] = (proposal_id, request)
                 self._governed_adapter.register_request(request)
-
             authority = self._authority.evaluate(request.authority_request())
             if not authority.allowed:
                 raise GovernedPatchAuthorityError(authority)
-
             grant = VerifiedAuthorityGrant.from_decision(authority)
-            execution_request = ExecutionRequest.create(
-                request_id=authority.request_id,
-                agent_identity=request.agent_identity,
-                action=IMPLEMENTATION_APPLY_ACTION,
-                resource=request.resource,
-                context_packet_id=request.context_packet_id,
-                organization_id=request.organization_id,
-                parameters=request.execution_parameters(),
-                idempotency_key=idempotency_key,
-            )
+            execution_request = ExecutionRequest.create(request_id=authority.request_id, agent_identity=request.agent_identity, action=IMPLEMENTATION_APPLY_ACTION, resource=request.resource, context_packet_id=request.context_packet_id, organization_id=request.organization_id, parameters=request.execution_parameters(), idempotency_key=idempotency_key)
             execution = self._execution.execute(execution_request, grant)
             outcome = self._outcomes.process(execution)
-            if execution.status is ExecutionStatus.REJECTED or outcome.status in {
-                OutcomeStatus.REJECTED,
-                OutcomeStatus.UNKNOWN,
-            }:
+            if execution.status is ExecutionStatus.REJECTED or outcome.status in {OutcomeStatus.REJECTED, OutcomeStatus.UNKNOWN}:
                 raise GovernedPatchExecutionError(execution, outcome)
             try:
                 record = self._adapter.get_record(request.request_fingerprint)
             except PatchExecutionRequestNotFoundError as exc:
                 raise GovernedPatchExecutionError(execution, outcome) from exc
-            return GovernedPatchRun(
-                agent_identity=agent_identity,
-                request=request,
-                authority=authority,
-                execution=execution,
-                outcome=outcome,
-                record=record,
-            )
+            return GovernedPatchRun(agent_identity=agent_identity, request=request, authority=authority, execution=execution, outcome=outcome, record=record)
 
     def authority_audit(self) -> tuple[AuthorityDecision, ...]:
         return self._authority.audit_trail()
@@ -273,31 +182,8 @@ class GovernedPatchExecutionRuntime:
 
     def _policy_for(self) -> AuthorityPolicy:
         agent = self._proposal_runtime.agent
-        rules = tuple(
-            AuthorityRule(
-                rule_id="allow-governed-patch-execution-"
-                + hashlib.sha256(resource.encode("utf-8")).hexdigest()[:16],
-                action=IMPLEMENTATION_APPLY_ACTION,
-                resource_pattern=resource,
-                effect=Decision.ALLOW,
-                agent_identity=str(agent.identity),
-                agent_role=agent.role.value,
-            )
-            for resource in self._proposal_runtime.allowed_resources
-        )
-        return AuthorityPolicy(
-            policy_id="policy.implementation-agent.patch-execution",
-            version="1",
-            rules=rules,
-        )
+        rules = tuple(AuthorityRule(rule_id="allow-governed-patch-execution-" + hashlib.sha256(resource.encode("utf-8")).hexdigest()[:16], action=IMPLEMENTATION_APPLY_ACTION, resource_pattern=resource, effect=Decision.ALLOW, agent_identity=str(agent.identity), agent_role=agent.role.value) for resource in self._proposal_runtime.allowed_resources)
+        return AuthorityPolicy(policy_id="policy.implementation-agent.patch-execution", version="1", rules=rules)
 
 
-__all__ = [
-    "GovernedPatchAuthorityError",
-    "GovernedPatchCommandConflictError",
-    "GovernedPatchExecutionError",
-    "GovernedPatchExecutionRuntime",
-    "GovernedPatchRun",
-    "GovernedPatchRuntimeError",
-    "PatchProposalNotFoundError",
-]
+__all__ = ["GovernedPatchAuthorityError", "GovernedPatchCommandConflictError", "GovernedPatchExecutionError", "GovernedPatchExecutionRuntime", "GovernedPatchRun", "GovernedPatchRuntimeError", "PatchProposalNotFoundError"]
