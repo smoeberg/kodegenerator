@@ -82,16 +82,7 @@ class GovernedPatchRun:
 
 
 class _GovernedPatchAdapter:
-    """Execution seam that makes the patch adapter dispatch-bound.
-
-    The public AI-4 engine works with ``ExecutionRequest`` values while the
-    patch adapter is bound to a stored ``PatchExecutionRequest``.  Keep the
-    latter as the canonical source of truth and reconstruct the exact
-    execution request from it at the adapter boundary.  This prevents a
-    second, independently reconstructed request from drifting from the
-    operator-registered patch request before PatchExecutionAdapter validates
-    its binding.
-    """
+    """Execution seam that makes the patch adapter dispatch-bound."""
 
     def __init__(self, adapter: PatchExecutionAdapter) -> None:
         self._adapter = adapter
@@ -127,8 +118,15 @@ class _GovernedPatchAdapter:
         registered = self._requests.get(fingerprint)
         if registered is None:
             return None
-        canonical_request = registered.execution_request(
-            idempotency_key=request.idempotency_key
+        canonical_request = ExecutionRequest.create(
+            request_id=request.request_id,
+            agent_identity=registered.agent_identity,
+            action=registered.proposal.request.action,
+            resource=registered.resource,
+            context_packet_id=registered.context_packet_id,
+            organization_id=registered.organization_id,
+            parameters=registered.execution_parameters(),
+            idempotency_key=request.idempotency_key,
         )
         return self._adapter.execute(canonical_request)
 
@@ -237,9 +235,15 @@ class GovernedPatchExecutionRuntime:
                 raise GovernedPatchAuthorityError(authority)
 
             grant = VerifiedAuthorityGrant.from_decision(authority)
-            execution_request = request.execution_request(
-                idempotency_key=idempotency_key,
+            execution_request = ExecutionRequest.create(
                 request_id=authority.request_id,
+                agent_identity=request.agent_identity,
+                action=IMPLEMENTATION_APPLY_ACTION,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                organization_id=request.organization_id,
+                parameters=request.execution_parameters(),
+                idempotency_key=idempotency_key,
             )
             execution = self._execution.execute(execution_request, grant)
             outcome = self._outcomes.process(execution)
