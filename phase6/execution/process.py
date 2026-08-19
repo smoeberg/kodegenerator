@@ -50,12 +50,17 @@ class BubblewrapProcessAdapter:
             allowed_roots=(tmp_root,var_tmp_root)
             if not any(resolved==root or root in resolved.parents for root in allowed_roots): raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
             if not resolved.is_dir(): raise InvalidExecutionSpec("writable sandbox paths must be directories")
+        if spec.working_directory is not None:
+            working=Path(spec.working_directory).resolve(strict=True)
+            if not working.is_dir(): raise InvalidExecutionSpec("working_directory must be an existing directory")
+            if spec.working_directory not in spec.writable_paths and spec.working_directory not in spec.read_only_paths: raise InvalidExecutionSpec("working_directory must be mounted")
     def _build_command(self,spec):
         sandbox_tmp=str(Path(tempfile.gettempdir()).resolve())
         command=[self._bubblewrap_path or "bwrap","--die-with-parent","--new-session","--unshare-user","--unshare-pid","--unshare-uts","--unshare-ipc","--unshare-net","--ro-bind",os.sep,os.sep,"--dev","/dev","--proc","/proc","--tmpfs",sandbox_tmp]
         for path in spec.read_only_paths: command.extend(("--ro-bind",str(Path(path).resolve()),str(Path(path).resolve())))
         for path in spec.writable_paths: command.extend(("--bind",str(Path(path).resolve()),str(Path(path).resolve())))
-        return command+["--chdir",os.sep,"--",*spec.argv]
+        command.extend(("--chdir",spec.working_directory or os.sep,"--",*spec.argv))
+        return command
     @staticmethod
     def _safe_environment(spec): return {"PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","LANG":"C.UTF-8","PYTHONNOUSERSITE":"1",**dict(spec.environment)}
 def _apply_limits(limits):
