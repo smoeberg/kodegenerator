@@ -2,7 +2,7 @@ name: DOR CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/p4-governed-patch-record]
   pull_request:
     branches: [main]
 
@@ -26,17 +26,29 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Prepare Bubblewrap user namespaces
+        run: |
+          set -euo pipefail
+          if [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            current="$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)"
+            echo "kernel.apparmor_restrict_unprivileged_userns=${current}"
+            if [ "${current}" = "1" ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            fi
+          fi
+
       - name: Verify Bubblewrap runtime
         run: |
           set -euo pipefail
           if command -v bwrap >/dev/null 2>&1; then
             bwrap --version
-            exit 0
+          else
+            echo "Bubblewrap is not preinstalled on this runner; installing it via apt."
+            sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+            sudo apt-get install -y --no-install-recommends bubblewrap
+            bwrap --version
           fi
-          echo "Bubblewrap is not preinstalled on this runner; installing it via apt."
-          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          sudo apt-get install -y --no-install-recommends bubblewrap
-          bwrap --version
+          bwrap --unshare-net --ro-bind / / /bin/true
 
       - name: Install dependencies
         run: |
@@ -70,6 +82,7 @@ jobs:
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
+          TMPDIR: /tmp
         run: >-
           pytest -q
           --cov
@@ -91,6 +104,7 @@ jobs:
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
+          TMPDIR: /tmp
         run: |
           set -euo pipefail
           uvicorn api.main:app --host 127.0.0.1 --port 8000 >/tmp/dor-uvicorn.log 2>&1 &

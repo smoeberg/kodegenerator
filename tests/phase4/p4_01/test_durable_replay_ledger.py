@@ -18,10 +18,7 @@ from phase4.execution import (
     ExecutionStatus,
     StaticExecutionAdapter,
 )
-from phase4.execution.durable_ledger import (
-    ExecutionReplayLedgerModel,
-    SqlAlchemyReplayLedger,
-)
+from phase4.execution.durable_ledger import ExecutionReplayLedgerModel, SqlAlchemyReplayLedger
 from phase4.execution.models import ExecutionResult
 from phase4.execution.replay_ledger import ClaimOutcomeKind, LedgerStatus
 
@@ -52,10 +49,18 @@ def _result(execution_id: str, status: ExecutionStatus) -> ExecutionResult:
     )
 
 
+def _claim(ledger: SqlAlchemyReplayLedger, execution_id: str = "e1") -> str:
+    outcome = ledger.try_claim(execution_id)
+    assert outcome.kind is ClaimOutcomeKind.ACQUIRED
+    assert outcome.record is not None
+    assert outcome.record.fencing_token
+    return outcome.record.fencing_token
+
+
 def test_durable_claim_succeed_and_replay():
     ledger, _ = _make_ledger()
-    assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
-    ledger.complete_succeeded("e1", _result("e1", ExecutionStatus.SUCCEEDED))
+    token = _claim(ledger)
+    ledger.complete_succeeded("e1", _result("e1", ExecutionStatus.SUCCEEDED), fencing_token=token)
     again = ledger.try_claim("e1")
     assert again.kind is ClaimOutcomeKind.ALREADY_SUCCEEDED
     assert again.record is not None
@@ -65,22 +70,24 @@ def test_durable_claim_succeed_and_replay():
 
 def test_durable_failed_is_retryable():
     ledger, _ = _make_ledger()
-    ledger.try_claim("e1")
-    ledger.complete_failed("e1", _result("e1", ExecutionStatus.FAILED))
-    assert ledger.get("e1").status is LedgerStatus.FAILED
+    token = _claim(ledger)
+    ledger.complete_failed("e1", _result("e1", ExecutionStatus.FAILED), fencing_token=token)
+    record = ledger.get("e1")
+    assert record is not None
+    assert record.status is LedgerStatus.FAILED
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
 
 
 def test_durable_pending_is_in_flight():
     ledger, _ = _make_ledger()
-    assert ledger.try_claim("e1").kind is ClaimOutcomeKind.ACQUIRED
+    _claim(ledger)
     assert ledger.try_claim("e1").kind is ClaimOutcomeKind.IN_FLIGHT
 
 
 def test_durable_abandon_retains_row():
     ledger, _ = _make_ledger()
-    ledger.try_claim("e1")
-    ledger.abandon("e1")
+    token = _claim(ledger)
+    ledger.abandon("e1", fencing_token=token)
     record = ledger.get("e1")
     assert record is not None
     assert record.status is LedgerStatus.ABANDONED
@@ -105,6 +112,7 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
         action="demo.read",
         resource="object/1",
         context_packet_id="ctx-1",
+        organization_id="org:durable-replay-test",
     )
     authority_request = AuthorityRequest(
         request_id=req.request_id,
@@ -114,6 +122,7 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
         context_packet_id=req.context_packet_id,
         requested_at="2026-08-18T00:00:00+00:00",
         parameters=(),
+        organization_id=req.organization_id,
     )
     policy = AuthorityPolicy(
         policy_id="policy.demo",
@@ -127,9 +136,7 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
             ),
         ),
     )
-    grant = VerifiedAuthorityGrant.from_decision(
-        AuthorityEngine(policy).evaluate(authority_request)
-    )
+    grant = VerifiedAuthorityGrant.from_decision(AuthorityEngine(policy).evaluate(authority_request))
 
     engine_a = ExecutionEngine(
         (StaticExecutionAdapter("a", "demo.read", handler),),
@@ -154,4 +161,8 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
 def test_complete_without_pending_raises():
     ledger, _ = _make_ledger()
     with pytest.raises(RuntimeError, match="pending"):
-        ledger.complete_succeeded("missing", _result("missing", ExecutionStatus.SUCCEEDED))
+        ledger.complete_succeeded(
+            "missing",
+            _result("missing", ExecutionStatus.SUCCEEDED),
+            fencing_token="missing-token",
+        )

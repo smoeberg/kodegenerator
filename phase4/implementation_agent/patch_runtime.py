@@ -22,7 +22,7 @@ from .sandbox_tool_runner import BubblewrapToolRunner
 
 
 class GovernedPatchRuntimeError(RuntimeError):
-    """Base error for the governed patch-execution runtime."""
+    """Base class for the governed patch-execution runtime."""
 
 
 class GovernedPatchAuthorityError(GovernedPatchRuntimeError):
@@ -43,7 +43,8 @@ class GovernedPatchExecutionError(GovernedPatchRuntimeError):
     def __init__(self, execution: ExecutionResult, outcome: OutcomeRecord) -> None:
         self.execution = execution
         self.outcome = outcome
-        super().__init__("governed patch execution produced no usable record")
+        detail = execution.error or outcome.error or "no execution error was recorded"
+        super().__init__(f"governed patch execution produced no usable record: {detail}")
 
 
 @dataclass(frozen=True)
@@ -63,15 +64,11 @@ class GovernedPatchRun:
 
 
 class _GovernedPatchAdapter:
-    """Execution seam that makes the patch adapter dispatch-bound.
-
-    The legacy PatchExecutionAdapter remains responsible for the immutable
-    request/record/workspace contract. This proxy owns the AI-4 governed-dispatch
-    boundary so ExecutionEngine can never reach it with an ungoverned call.
-    """
+    """Execution seam that makes the patch adapter dispatch-bound."""
 
     def __init__(self, adapter: PatchExecutionAdapter) -> None:
         self._adapter = adapter
+        self._requests: dict[str, PatchExecutionRequest] = {}
 
     @property
     def adapter_id(self) -> str:
@@ -82,19 +79,31 @@ class _GovernedPatchAdapter:
         return self._adapter.action
 
     def register_request(self, request: PatchExecutionRequest) -> None:
+        self._requests[request.request_fingerprint] = request
         self._adapter.register_request(request)
 
-    def execute(
-        self,
-        request: ExecutionRequest,
-        *,
-        dispatch: GovernedDispatch | None = None,
-    ):
+    def execute(self, request: ExecutionRequest, *, dispatch: GovernedDispatch | None = None):
         if not isinstance(dispatch, GovernedDispatch):
             return None
-        if not dispatch.is_verified or dispatch.request is not request:
+        if not dispatch.is_verified or not dispatch.grant.binds(request):
             return None
-        return self._adapter.execute(request)
+        fingerprint = dict(request.parameters).get("patch_execution_request_fingerprint")
+        if fingerprint is None:
+            return None
+        registered = self._requests.get(fingerprint)
+        if registered is None:
+            return None
+        canonical_request = ExecutionRequest.create(
+            request_id=request.request_id,
+            agent_identity=registered.agent_identity,
+            action=IMPLEMENTATION_APPLY_ACTION,
+            resource=registered.resource,
+            context_packet_id=registered.context_packet_id,
+            organization_id=registered.organization_id,
+            parameters=registered.execution_parameters(),
+            idempotency_key=request.idempotency_key,
+        )
+        return self._adapter.execute(canonical_request)
 
     def get_record(self, request_fingerprint: str) -> PatchExecutionRecord:
         return self._adapter.get_record(request_fingerprint)
@@ -115,10 +124,7 @@ class GovernedPatchExecutionRuntime:
         effective_tool_runner = tool_runner if tool_runner is not None else BubblewrapToolRunner()
         self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=effective_tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
         self._authority = AuthorityEngine(self._policy_for())
-        self._adapter = PatchExecutionAdapter(
-            adapter_id="adapter.implementation.governed-patch",
-            workspace=self._workspace,
-        )
+        self._adapter = PatchExecutionAdapter(adapter_id="adapter.implementation.governed-patch", workspace=self._workspace)
         self._governed_adapter = _GovernedPatchAdapter(self._adapter)
         self._execution = ExecutionEngine((self._governed_adapter,))
         self._outcomes = OutcomeEngine()
@@ -152,12 +158,13 @@ class GovernedPatchExecutionRuntime:
             else:
                 request = PatchExecutionRequest(proposal=proposal, baseline=self._workspace.observe(proposal), tools=self._tools)
                 self._commands[idempotency_key] = (proposal_id, request)
-                self._adapter.register_request(request)
+                self._governed_adapter.register_request(request)
             authority = self._authority.evaluate(request.authority_request())
             if not authority.allowed:
                 raise GovernedPatchAuthorityError(authority)
             grant = VerifiedAuthorityGrant.from_decision(authority)
-            execution = self._execution.execute(request.execution_request(idempotency_key=idempotency_key), grant)
+            execution_request = ExecutionRequest.create(request_id=authority.request_id, agent_identity=request.agent_identity, action=IMPLEMENTATION_APPLY_ACTION, resource=request.resource, context_packet_id=request.context_packet_id, organization_id=request.organization_id, parameters=request.execution_parameters(), idempotency_key=idempotency_key)
+            execution = self._execution.execute(execution_request, grant)
             outcome = self._outcomes.process(execution)
             if execution.status is ExecutionStatus.REJECTED or outcome.status in {OutcomeStatus.REJECTED, OutcomeStatus.UNKNOWN}:
                 raise GovernedPatchExecutionError(execution, outcome)

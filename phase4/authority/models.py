@@ -16,7 +16,7 @@ class Decision(str, Enum):
 
 @dataclass(frozen=True)
 class AuthorityRequest:
-    """A concrete authorization question; it does not contain an authority decision."""
+    """Immutable, canonical authorization request."""
 
     request_id: str
     agent_identity: str
@@ -33,7 +33,8 @@ class AuthorityRequest:
 
     def __post_init__(self) -> None:
         for name in ("request_id", "agent_identity", "action", "resource", "context_packet_id", "requested_at"):
-            if not getattr(self, name).strip():
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be non-empty")
         if self.agent_role is not None and not self.agent_role.strip():
             raise ValueError("agent_role must be non-empty when supplied")
@@ -41,12 +42,10 @@ class AuthorityRequest:
             value = getattr(self, name)
             if value is not None and not value.strip():
                 raise ValueError(f"{name} must be non-empty when supplied")
-        context_keys = [key for key, _ in self.context]
-        if len(context_keys) != len(set(context_keys)):
-            raise ValueError("context keys must be unique")
-        parameter_keys = [key for key, _ in self.parameters]
-        if len(parameter_keys) != len(set(parameter_keys)):
-            raise ValueError("parameter keys must be unique")
+        for name, values in (("context", self.context), ("parameters", self.parameters)):
+            keys = [key for key, _ in values]
+            if len(keys) != len(set(keys)):
+                raise ValueError(f"{name} keys must be unique")
 
     @staticmethod
     def create(
@@ -64,22 +63,20 @@ class AuthorityRequest:
         capability: Optional[str] = None,
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
-        canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
+        canonical_context = tuple(sorted((str(k), str(v)) for k, v in (context or {}).items()))
+        canonical_parameters = tuple(sorted((str(k), str(v)) for k, v in (parameters or {}).items()))
         identity_payload = {
             "agent_identity": agent_identity,
             "action": action,
             "resource": resource,
             "context_packet_id": context_packet_id,
             "agent_role": agent_role,
-            "context": canonical_context,
-            "parameters": canonical_parameters,
+            "context": [list(item) for item in canonical_context],
+            "parameters": [list(item) for item in canonical_parameters],
+            "organization_id": organization_id,
+            "actor_id": actor_id,
+            "capability": capability,
         }
-        if organization_id is not None:
-            identity_payload["organization_id"] = organization_id
-        if actor_id is not None:
-            identity_payload["actor_id"] = actor_id
-        if capability is not None:
-            identity_payload["capability"] = capability
         encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
         canonical_request_id = hashlib.sha256(encoded).hexdigest()
         return AuthorityRequest(
@@ -90,8 +87,8 @@ class AuthorityRequest:
             context_packet_id=context_packet_id,
             requested_at=timestamp,
             agent_role=agent_role,
-            context=tuple(canonical_context),
-            parameters=tuple(canonical_parameters),
+            context=canonical_context,
+            parameters=canonical_parameters,
             organization_id=organization_id,
             actor_id=actor_id,
             capability=capability,
@@ -100,8 +97,6 @@ class AuthorityRequest:
 
 @dataclass(frozen=True)
 class AuthorityRule:
-    """One explicit policy rule. Rules never create capabilities or mutate identity."""
-
     rule_id: str
     action: str
     resource_pattern: str
@@ -125,8 +120,6 @@ class AuthorityRule:
 
 @dataclass(frozen=True)
 class AuthorityPolicy:
-    """Immutable policy snapshot evaluated by the authority engine."""
-
     policy_id: str
     version: str
     rules: Tuple[AuthorityRule, ...]
@@ -141,13 +134,7 @@ class AuthorityPolicy:
 
 @dataclass(frozen=True)
 class AuthorityDecision:
-    """Immutable, auditable result of an authority evaluation.
-
-    ``_provenance_token`` is populated only by ``AuthorityEngine``. It is not a
-    public constructor argument and is intentionally excluded from equality and
-    representation so authority provenance cannot be recreated by copying the
-    decision fields.
-    """
+    """Immutable authority result carrying exact request binding and provenance."""
 
     request_id: str
     decision: Decision
@@ -160,13 +147,20 @@ class AuthorityDecision:
     matched_rule_ids: Tuple[str, ...]
     reason: str
     evaluated_at: str
+    parameters: Tuple[Tuple[str, str], ...] = ()
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    capability: Optional[str] = None
     _provenance_token: object | None = field(default=None, init=False, repr=False, compare=False)
+    _provenance_issuer: str = field(default="", init=False, repr=False, compare=False)
+    _provenance_signature: str = field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not self.request_id.strip() or not self.agent_identity.strip():
-            raise ValueError("request_id and agent_identity must be non-empty")
-        if not self.reason.strip():
-            raise ValueError("reason must be non-empty")
+        for name in ("request_id", "agent_identity", "action", "resource", "context_packet_id", "policy_id", "policy_version", "reason", "evaluated_at"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name).strip():
+                raise ValueError(f"{name} must be non-empty")
+        if not isinstance(self.decision, Decision):
+            raise TypeError("decision must be a Decision")
         for name in ("organization_id", "actor_id", "capability"):
             value = getattr(self, name)
             if value is not None and not value.strip():
@@ -181,4 +175,4 @@ class AuthorityDecision:
 
     @property
     def provenance_verified(self) -> bool:
-        return self._provenance_token is not None
+        return self._provenance_token is not None and bool(self._provenance_signature)

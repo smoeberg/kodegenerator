@@ -30,7 +30,6 @@ class ExecutionOutcome(str, Enum):
 @dataclass(frozen=True)
 class ExecutionLimits:
     """Hard resource limits supplied by trusted runtime code."""
-
     wall_time_seconds: float = 30.0
     cpu_time_seconds: float = 10.0
     memory_bytes: int = 256 * 1024 * 1024
@@ -44,9 +43,7 @@ class ExecutionLimits:
             raise ValueError("wall_time_seconds must be positive")
         if self.cpu_time_seconds <= 0:
             raise ValueError("cpu_time_seconds must be positive")
-        for name in (
-            "memory_bytes", "process_count", "output_bytes", "file_size_bytes", "open_file_count"
-        ):
+        for name in ("memory_bytes", "process_count", "output_bytes", "file_size_bytes", "open_file_count"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.cpu_time_seconds > self.wall_time_seconds:
@@ -58,7 +55,6 @@ class ExecutionLimits:
 @dataclass(frozen=True)
 class ExecutionSecurityContext:
     """Immutable authority context passed into an isolated executor."""
-
     organization_id: str
     principal_id: str
     actor_id: str
@@ -82,7 +78,6 @@ class ExecutionSecurityContext:
 @dataclass(frozen=True)
 class ExecutionSpec:
     """Fully bounded execution request crossing into the sandbox."""
-
     execution_id: str
     adapter_id: str
     argv: Tuple[str, ...]
@@ -92,6 +87,7 @@ class ExecutionSpec:
     writable_paths: Tuple[str, ...] = ()
     network_allowlist: Tuple[str, ...] = ()
     environment: Tuple[Tuple[str, str], ...] = ()
+    working_directory: str | None = None
 
     def __post_init__(self) -> None:
         if not self.execution_id.strip():
@@ -104,6 +100,11 @@ class ExecutionSpec:
             raise ValueError("read_only_paths must not contain empty values")
         if any(not path.strip() for path in self.writable_paths):
             raise ValueError("writable_paths must not contain empty values")
+        if self.working_directory is not None:
+            if not self.working_directory.strip() or not self.working_directory.startswith("/"):
+                raise InvalidExecutionSpec("working_directory must be an absolute path")
+            if self.working_directory not in self.writable_paths and self.working_directory not in self.read_only_paths:
+                raise InvalidExecutionSpec("working_directory must be an explicitly mounted sandbox path")
         if any(not host.strip() for host in self.network_allowlist):
             raise ValueError("network_allowlist must not contain empty values")
         keys = [key for key, _ in self.environment]
@@ -122,7 +123,6 @@ class ExecutionSpec:
 @dataclass(frozen=True)
 class ExecutionResult:
     """Bounded result returned from an isolated executor."""
-
     execution_id: str
     adapter_id: str
     outcome: ExecutionOutcome
@@ -141,14 +141,11 @@ class ExecutionResult:
 
 class SandboxAdapter(Protocol):
     adapter_id: str
-
-    def execute(self, spec: ExecutionSpec) -> ExecutionResult:
-        """Execute exactly the supplied bounded specification."""
+    def execute(self, spec: ExecutionSpec) -> ExecutionResult: ...
 
 
 class Sandbox(Protocol):
-    def execute(self, spec: ExecutionSpec) -> ExecutionResult:
-        """Resolve an allowlisted adapter and execute the specification."""
+    def execute(self, spec: ExecutionSpec) -> ExecutionResult: ...
 
 
 class SandboxRegistry:
@@ -159,6 +156,10 @@ class SandboxRegistry:
         self._audit = audit_sink
         for adapter_id, adapter in (adapters or {}).items():
             self.register(adapter_id, adapter)
+
+    @property
+    def adapter_ids(self) -> tuple[str, ...]:
+        return tuple(self._adapters)
 
     def register(self, adapter_id: str, adapter: SandboxAdapter) -> None:
         if not adapter_id.strip():
@@ -180,34 +181,25 @@ class SandboxRegistry:
         adapter = self.resolve(spec.adapter_id)
         try:
             result = adapter.execute(spec)
-        except ValueError as exc:
-            self._emit(spec, "execution.rejected", "rejected", error_code="invalid_execution_spec")
-            raise InvalidExecutionSpec(str(exc)) from exc
-        if result.execution_id != spec.execution_id:
-            self._emit(spec, "execution.rejected", "rejected", error_code="execution_id_mismatch")
-            raise InvalidExecutionSpec("adapter returned a different execution_id")
-        if result.adapter_id != spec.adapter_id:
-            self._emit(spec, "execution.rejected", "rejected", error_code="adapter_id_mismatch")
-            raise InvalidExecutionSpec("adapter returned a different adapter_id")
+        except Exception:
+            self._emit(spec, "execution.failed", "failed")
+            raise
         if len(result.output.encode("utf-8")) > spec.limits.output_bytes:
-            self._emit(spec, "execution.rejected", "rejected", error_code="output_limit")
+            self._emit(spec, "execution.failed", "output_limit")
             raise InvalidExecutionSpec("adapter returned output above configured limit")
-        self._emit(spec, "execution.finished", result.outcome.value, exit_code=result.exit_code)
+        self._emit(spec, "execution.finished", result.outcome.value)
         return result
 
-    def _emit(self, spec: ExecutionSpec, event_type: str, outcome: str, *, error_code: str | None = None, exit_code: int | None = None) -> None:
+    def _emit(self, spec: ExecutionSpec, event_type: str, detail: str) -> None:
         if self._audit is None:
             return
-        self._audit.emit(ExecutionAuditEvent(
-            event_type=event_type,
-            execution_id=spec.execution_id,
-            adapter_id=spec.adapter_id,
-            outcome=outcome,
-            timestamp=utc_timestamp(),
-            error_code=error_code,
-            exit_code=exit_code,
-        ))
-
-    @property
-    def adapter_ids(self) -> Tuple[str, ...]:
-        return tuple(sorted(self._adapters))
+        self._audit.emit(
+            ExecutionAuditEvent(
+                timestamp=utc_timestamp(),
+                execution_id=spec.execution_id,
+                adapter_id=spec.adapter_id,
+                event_type=event_type,
+                outcome=detail,
+                detail=detail,
+            )
+        )

@@ -14,23 +14,18 @@ from phase4.outcome.models import OutcomeStatus
 def test_registered_agent_produces_governed_patch_outcome_through_ai1_to_ai5():
     registry = AgentRegistry()
     agent = registry.register(
-        agent_type="implementation-agent",
-        version=AgentVersion(1, 0, 0),
-        role=AgentRole.EXECUTOR,
-        capabilities=(Capability.create(IMPLEMENTATION_ACTION, AgentVersion(1, 0, 0)),),
-        actor="phase4b-bootstrap",
+        agent_type="implementation-agent", version=AgentVersion(1, 0, 0), role=AgentRole.EXECUTOR,
+        capabilities=(Capability.create(IMPLEMENTATION_ACTION, AgentVersion(1, 0, 0)),), actor="phase4b-bootstrap",
     )
     context_packet = ContextPacketEngine().build(
         ContextRequest(agent_identity=str(agent.identity), purpose=IMPLEMENTATION_ACTION, requested_keys=("src/calculator.py", "acceptance"), max_items=2, max_bytes=4_096),
-        (
-            ContextItem(source="repository", key="src/calculator.py", value="def add(left, right):\n    return left - right\n", provenance="git:39a44a7:src/calculator.py"),
-            ContextItem(source="requirements", key="acceptance", value="add(2, 3) returns 5", provenance="requirement:REQ-CALC-1"),
-        ),
+        (ContextItem(source="repository", key="src/calculator.py", value="def add(left, right):\n    return left - right\n", provenance="git:39a44a7:src/calculator.py"), ContextItem(source="requirements", key="acceptance", value="add(2, 3) returns 5", provenance="requirement:REQ-CALC-1")),
     )
     implementation_request = ImplementationRequest(
         agent_identity=str(agent.identity), agent_role=agent.role.value, resource="repository:smoeberg/kodegenerator",
         context_packet=context_packet, instruction="Correct add so it returns the sum of its arguments.",
         allowed_paths=("src/calculator.py",), budget=ChangeBudget(max_files=1, max_changed_lines=2),
+        organization_id="org:phase4b-reference",
     )
     authority_request = implementation_request.authority_request()
     authority = AuthorityEngine(AuthorityPolicy(
@@ -54,7 +49,6 @@ def test_registered_agent_produces_governed_patch_outcome_through_ai1_to_ai5():
     grant = VerifiedAuthorityGrant.from_decision(authority)
     execution_result = ExecutionEngine((implementation_adapter,)).execute(implementation_request.execution_request(idempotency_key="REQ-CALC-1"), grant)
     outcome = OutcomeEngine().process(execution_result)
-
     assert agent.has_capability(IMPLEMENTATION_ACTION)
     assert authority.allowed is True
     assert grant.verified is True

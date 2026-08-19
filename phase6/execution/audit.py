@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Mapping, Protocol
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,7 @@ class ExecutionAuditEvent:
     adapter_id: str
     outcome: str
     timestamp: str
+    detail: str | None = None
     error_code: str | None = None
     exit_code: int | None = None
 
@@ -25,6 +26,8 @@ class ExecutionAuditEvent:
             raise ValueError("audit identity fields must be non-empty")
         if len(self.execution_id) > 256 or len(self.adapter_id) > 128 or len(self.outcome) > 64:
             raise ValueError("audit fields exceed configured bounds")
+        if self.detail is not None and len(self.detail) > 64:
+            raise ValueError("audit detail exceeds configured bounds")
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -33,8 +36,7 @@ class ExecutionAuditEvent:
 class AuditSink(Protocol):
     """Destination for trusted, structured execution audit events."""
 
-    def emit(self, event: ExecutionAuditEvent) -> None:
-        """Persist or forward an audit event."""
+    def emit(self, event: ExecutionAuditEvent) -> None: ...
 
 
 class StructuredAuditLogger:

@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from phase4.authority.engine import AuthorityEngine
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import (
     AuthorityPolicy,
     AuthorityRequest,
@@ -19,6 +20,8 @@ from phase4.execution import (
     execution_id_for,
 )
 
+ORGANIZATION_ID = "org:execution-engine-tests"
+
 
 def decision_for(
     request: ExecutionRequest,
@@ -33,6 +36,8 @@ def decision_for(
         resource=request.resource,
         context_packet_id=request.context_packet_id,
         requested_at="2026-08-08T12:00:00+00:00",
+        parameters=request.parameters,
+        organization_id=request.organization_id,
     )
     policy = AuthorityPolicy(
         policy_id="policy.demo",
@@ -49,6 +54,10 @@ def decision_for(
     return AuthorityEngine(policy).evaluate(authority_request)
 
 
+def grant_for(request: ExecutionRequest):
+    return VerifiedAuthorityGrant.from_decision(decision_for(request))
+
+
 def request(**overrides) -> ExecutionRequest:
     values = dict(
         request_id="req-001",
@@ -57,6 +66,7 @@ def request(**overrides) -> ExecutionRequest:
         resource="object/42",
         context_packet_id="ctx-001",
         parameters=(("limit", "10"),),
+        organization_id=ORGANIZATION_ID,
     )
     values.update(overrides)
     return ExecutionRequest(**values)
@@ -144,8 +154,7 @@ def test_same_authorized_request_is_idempotent():
     counter = {"calls": 0}
     engine = make_engine(counter)
     req = request()
-    decision = decision_for(req)
-    grant = VerifiedAuthorityGrant.from_decision(decision)
+    grant = grant_for(req)
     first = engine.execute(req, grant)
     second = engine.execute(req, grant)
     assert first.status is ExecutionStatus.SUCCEEDED

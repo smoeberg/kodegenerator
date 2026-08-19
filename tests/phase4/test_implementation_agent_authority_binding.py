@@ -7,7 +7,6 @@ from phase4.implementation_agent import PatchCandidate
 
 
 RESOURCE = "repository:smoeberg/kodegenerator"
-
 VALID_DIFF = """diff --git a/src/app.py b/src/app.py
 --- a/src/app.py
 +++ b/src/app.py
@@ -25,10 +24,7 @@ class StaticProvider:
 
 
 def test_implementation_runtime_issues_verified_grant_and_uses_exact_context_binding():
-    runtime = ImplementationAgentRuntime(
-        provider=StaticProvider(),
-        allowed_resources=(RESOURCE,),
-    )
+    runtime = ImplementationAgentRuntime(provider=StaticProvider(), allowed_resources=(RESOURCE,))
     context = (
         ContextItem(
             source="repository",
@@ -39,6 +35,7 @@ def test_implementation_runtime_issues_verified_grant_and_uses_exact_context_bin
     )
 
     run = runtime.run(
+        organization_id="org-test",
         resource=RESOURCE,
         instruction="Set VALUE to 2.",
         allowed_paths=("src/app.py",),
