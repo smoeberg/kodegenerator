@@ -1,7 +1,6 @@
 """P4-00C RED tests for the two P4-00A authority findings.
 
 These tests intentionally encode the normative post-remediation boundary.
-They must remain RED until VerifiedAuthorityGrant/GovernedDispatch exists.
 They do not mock AI-3 or AI-4 authority seams.
 """
 
@@ -20,6 +19,7 @@ from phase4.context_packet import ContextItem, ContextPacketEngine, ContextReque
 
 
 RESOURCE = "repository:smoeberg/kodegenerator"
+ORGANIZATION_ID = "org:p4-00c-test"
 VALID_DIFF = """diff --git a/src/app.py b/src/app.py
 --- a/src/app.py
 +++ b/src/app.py
@@ -54,16 +54,18 @@ def make_request() -> ImplementationRequest:
         instruction="Set VALUE to 2.",
         allowed_paths=("src/app.py",),
         budget=ChangeBudget(max_files=1, max_changed_lines=2),
+        organization_id=ORGANIZATION_ID,
     )
 
 
 def forged_allow(request: ImplementationRequest) -> AuthorityDecision:
     """A hand-constructed decision with otherwise exact request bindings."""
+    authority_request = request.authority_request()
     return AuthorityDecision(
-        request_id=request.authority_request().request_id,
+        request_id=authority_request.request_id,
         decision=Decision.ALLOW,
         agent_identity=request.agent_identity,
-        action=request.authority_request().action,
+        action=authority_request.action,
         resource=request.resource,
         context_packet_id=request.context_packet_id,
         policy_id="forged.test.policy",
@@ -71,6 +73,10 @@ def forged_allow(request: ImplementationRequest) -> AuthorityDecision:
         matched_rule_ids=("forged.allow",),
         reason="hand-constructed test authority",
         evaluated_at="2026-08-10T00:00:00+00:00",
+        parameters=authority_request.parameters,
+        organization_id=request.organization_id,
+        actor_id=authority_request.actor_id,
+        capability=authority_request.capability,
     )
 
 
@@ -88,56 +94,35 @@ def make_adapter(request: ImplementationRequest):
 
 
 def test_direct_adapter_invocation_without_governed_dispatch_is_rejected():
-    """F-001: trusted adapter must not be an independently callable execution seam."""
     request = make_request()
     adapter, provider = make_adapter(request)
-
-    # This intentionally bypasses ExecutionEngine. Post-remediation the adapter
-    # must require a VerifiedAuthorityGrant/GovernedDispatch rather than accepting
-    # a raw ExecutionRequest as sufficient authority.
     result = adapter.execute(request.execution_request(idempotency_key="direct-1"))
-
     assert result is None, "direct adapter invocation must be structurally impossible"
     assert provider.calls == (), "provider/tool execution must not occur"
 
 
 def test_forged_ai3_allow_is_rejected_by_ai4():
-    """F-002: AI-4 must verify provenance, not merely inspect decision fields."""
     request = make_request()
     adapter, provider = make_adapter(request)
     engine = ExecutionEngine((adapter,))
-
-    forged = forged_allow(request)
-    result = engine.execute(
-        request.execution_request(idempotency_key="forged-1"),
-        forged,
-    )
-
+    result = engine.execute(request.execution_request(idempotency_key="forged-1"), forged_allow(request))
     assert result.status is ExecutionStatus.REJECTED
     assert provider.calls == ()
 
 
 def test_forged_ai3_allow_cannot_create_a_successful_outcome():
-    """A forged authority object must not cross AI-4 into successful execution."""
     request = make_request()
     adapter, provider = make_adapter(request)
     engine = ExecutionEngine((adapter,))
-
-    result = engine.execute(
-        request.execution_request(idempotency_key="forged-2"),
-        forged_allow(request),
-    )
-
+    result = engine.execute(request.execution_request(idempotency_key="forged-2"), forged_allow(request))
     assert result.status is not ExecutionStatus.SUCCEEDED
     assert provider.calls == ()
 
 
 def test_authority_policy_provenance_cannot_be_replaced_by_equivalent_object():
-    """Authority laundering: equivalent-looking decisions are not authoritative."""
     request = make_request()
     adapter, provider = make_adapter(request)
     engine = ExecutionEngine((adapter,))
-
     forged = forged_allow(request)
     equivalent = AuthorityDecision(
         request_id=forged.request_id,
@@ -151,12 +136,11 @@ def test_authority_policy_provenance_cannot_be_replaced_by_equivalent_object():
         matched_rule_ids=forged.matched_rule_ids,
         reason=forged.reason,
         evaluated_at=forged.evaluated_at,
+        parameters=forged.parameters,
+        organization_id=forged.organization_id,
+        actor_id=forged.actor_id,
+        capability=forged.capability,
     )
-
-    result = engine.execute(
-        request.execution_request(idempotency_key="laundered-1"),
-        equivalent,
-    )
-
+    result = engine.execute(request.execution_request(idempotency_key="laundered-1"), equivalent)
     assert result.status is ExecutionStatus.REJECTED
     assert provider.calls == ()
