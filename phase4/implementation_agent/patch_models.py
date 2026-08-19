@@ -237,3 +237,125 @@ class PatchExecutionRequest:
     def execution_request(self, *, idempotency_key: str | None = None) -> ExecutionRequest:
         authority = self.authority_request()
         return ExecutionRequest.create(request_id=authority.request_id, agent_identity=self.agent_identity, action=IMPLEMENTATION_APPLY_ACTION, resource=self.resource, context_packet_id=self.context_packet_id, organization_id=self.organization_id, parameters=self.execution_parameters(), idempotency_key=idempotency_key)
+
+
+@dataclass(frozen=True)
+class LogArtifact:
+    """Bounded log preview plus the digest of the complete captured stream."""
+    stream: str
+    sha256: str
+    byte_count: int
+    content: str
+    truncated: bool
+
+    def __post_init__(self) -> None:
+        if self.stream not in {"stdout", "stderr"}:
+            raise PatchExecutionContractError("log stream must be stdout or stderr")
+        if not _HEX_DIGEST.fullmatch(self.sha256):
+            raise PatchExecutionContractError("log SHA-256 is invalid")
+        if type(self.byte_count) is not int or self.byte_count < 0:
+            raise PatchExecutionContractError("log byte_count is invalid")
+        if not isinstance(self.content, str) or type(self.truncated) is not bool:
+            raise TypeError("log content and truncated flag have invalid types")
+
+    @property
+    def artifact_id(self) -> str:
+        return canonical_digest({"stream": self.stream, "sha256": self.sha256, "byte_count": self.byte_count, "content": self.content, "truncated": self.truncated})
+
+
+@dataclass(frozen=True)
+class PatchArtifact:
+    """Content-addressed candidate workspace state for the touched paths."""
+    proposal_id: str
+    diff_sha256: str
+    baseline_fingerprint: str
+    files: tuple[WorkspaceFileState, ...]
+    artifact_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for name in ("proposal_id", "diff_sha256", "baseline_fingerprint"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _HEX_DIGEST.fullmatch(value):
+                raise PatchExecutionContractError(f"{name} must be a SHA-256 digest")
+        if any(not isinstance(item, WorkspaceFileState) for item in self.files):
+            raise TypeError("artifact files must contain WorkspaceFileState values")
+        files = tuple(sorted(self.files, key=lambda item: item.path))
+        if not files or len(files) != len({item.path for item in files}):
+            raise PatchExecutionContractError("artifact files must be non-empty and unique")
+        object.__setattr__(self, "files", files)
+        object.__setattr__(self, "artifact_id", canonical_digest({"proposal_id": self.proposal_id, "diff_sha256": self.diff_sha256, "baseline_fingerprint": self.baseline_fingerprint, "files": [item.canonical() for item in files]}))
+
+
+@dataclass(frozen=True)
+class ToolEvidence:
+    """Non-authoritative evidence from one fixed trusted tool execution."""
+    tool_id: str
+    kind: ToolKind
+    tool_fingerprint: str
+    artifact_id: str
+    status: ToolStatus
+    exit_code: int | None
+    stdout: LogArtifact
+    stderr: LogArtifact
+    evidence_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tool_id, str) or not self.tool_id.strip():
+            raise PatchExecutionContractError("tool evidence requires a tool_id")
+        if not isinstance(self.kind, ToolKind) or not isinstance(self.status, ToolStatus):
+            raise TypeError("tool evidence enum values are invalid")
+        for name in ("tool_fingerprint", "artifact_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _HEX_DIGEST.fullmatch(value):
+                raise PatchExecutionContractError(f"{name} must be a SHA-256 digest")
+        if self.exit_code is not None and type(self.exit_code) is not int:
+            raise TypeError("exit_code must be an integer or None")
+        if not isinstance(self.stdout, LogArtifact) or not isinstance(self.stderr, LogArtifact):
+            raise TypeError("tool evidence requires immutable stdout/stderr logs")
+        object.__setattr__(self, "evidence_id", canonical_digest({"tool_id": self.tool_id, "kind": self.kind.value, "tool_fingerprint": self.tool_fingerprint, "artifact_id": self.artifact_id, "status": self.status.value, "exit_code": self.exit_code, "stdout_artifact_id": self.stdout.artifact_id, "stderr_artifact_id": self.stderr.artifact_id}))
+
+    @property
+    def passed(self) -> bool:
+        return self.status is ToolStatus.PASSED
+
+
+@dataclass(frozen=True)
+class PatchExecutionRecord:
+    """Immutable patch/apply attempt and its candidate evidence."""
+    request_fingerprint: str
+    proposal_id: str
+    baseline_fingerprint: str
+    status: PatchRecordStatus
+    artifact: PatchArtifact | None
+    evidence: tuple[ToolEvidence, ...]
+    committed: bool
+    rolled_back: bool
+    error: str | None = None
+    record_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for name in ("request_fingerprint", "proposal_id", "baseline_fingerprint"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _HEX_DIGEST.fullmatch(value):
+                raise PatchExecutionContractError(f"{name} must be a SHA-256 digest")
+        if not isinstance(self.status, PatchRecordStatus):
+            raise TypeError("status must be a PatchRecordStatus")
+        if self.artifact is not None and not isinstance(self.artifact, PatchArtifact):
+            raise TypeError("artifact must be a PatchArtifact or None")
+        if any(not isinstance(item, ToolEvidence) for item in self.evidence):
+            raise TypeError("evidence must contain ToolEvidence values")
+        if type(self.committed) is not bool or type(self.rolled_back) is not bool:
+            raise TypeError("committed and rolled_back must be booleans")
+        if self.status is PatchRecordStatus.SUCCEEDED:
+            if self.artifact is None or not self.committed or self.rolled_back:
+                raise PatchExecutionContractError("successful records require a committed artifact")
+            if not self.evidence or any(not item.passed for item in self.evidence):
+                raise PatchExecutionContractError("successful records require passing tool evidence")
+            if self.error is not None:
+                raise PatchExecutionContractError("successful records cannot contain an error")
+        else:
+            if self.committed:
+                raise PatchExecutionContractError("failed records cannot be committed")
+            if not isinstance(self.error, str) or not self.error.strip():
+                raise PatchExecutionContractError("failed records require a non-empty error")
+        object.__setattr__(self, "record_id", canonical_digest({"request_fingerprint": self.request_fingerprint, "proposal_id": self.proposal_id, "baseline_fingerprint": self.baseline_fingerprint, "status": self.status.value, "artifact_id": self.artifact.artifact_id if self.artifact is not None else None, "evidence_ids": [item.evidence_id for item in self.evidence], "committed": self.committed, "rolled_back": self.rolled_back, "error": self.error}))
