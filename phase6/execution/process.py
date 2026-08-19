@@ -162,7 +162,12 @@ class BubblewrapProcessAdapter:
 def _apply_limits(limits):
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
-    resource.setrlimit(resource.RLIMIT_NPROC, (limits.process_count, limits.process_count))
+    # RLIMIT_NPROC applies to the caller's UID before bubblewrap creates its
+    # isolated process.  The launcher itself therefore consumes one process
+    # from the limit.  Reserve that launcher slot while keeping the requested
+    # workload process_count as the actual workload bound.
+    process_limit = max(2, limits.process_count + 1)
+    resource.setrlimit(resource.RLIMIT_NPROC, (process_limit, process_limit))
     resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_size_bytes, limits.file_size_bytes))
     resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_file_count, limits.open_file_count))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
