@@ -41,6 +41,7 @@ class BubblewrapToolRunner:
             file_size_bytes=max(tool.max_output_bytes, 16 * 1024 * 1024),
             open_file_count=64,
         )
+        workspace = str(cwd.resolve())
         spec = ExecutionSpec(
             execution_id=execution_id,
             adapter_id=adapter.adapter_id,
@@ -51,7 +52,8 @@ class BubblewrapToolRunner:
                 actor_id="phase4-patch-runtime",
             ),
             limits=limits,
-            writable_paths=(str(cwd.resolve()),),
+            writable_paths=(workspace,),
+            working_directory=workspace,
             environment=tuple(tool.environment),
         )
         try:
