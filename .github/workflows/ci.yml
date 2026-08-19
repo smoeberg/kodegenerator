@@ -70,6 +70,7 @@ jobs:
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
+          TMPDIR: /tmp
         run: >-
           pytest -q
           --cov
@@ -91,6 +92,7 @@ jobs:
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
+          TMPDIR: /tmp
         run: |
           set -euo pipefail
           uvicorn api.main:app --host 127.0.0.1 --port 8000 >/tmp/dor-uvicorn.log 2>&1 &
