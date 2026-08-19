@@ -30,22 +30,15 @@ class ExecutionEngine:
 
     def execute(self, request: ExecutionRequest, authority: AuthorityDecision | VerifiedAuthorityGrant | None) -> ExecutionResult:
         if not isinstance(request, ExecutionRequest): return self._rejected(request, "unsupported execution request")
-        decision: AuthorityDecision | None = None
-        if isinstance(authority, VerifiedAuthorityGrant):
-            grant = authority
-        elif isinstance(authority, AuthorityDecision):
-            if getattr(authority, "_provenance_token", None) is None or not authority.provenance_verified:
-                return self._rejected(request, "authority decision provenance is invalid or untrusted", decision=authority)
-            decision = authority
-            if decision.decision is not Decision.ALLOW: return self._rejected(request, "authority decision is not ALLOW; execution denied", decision=decision)
-            try: grant = VerifiedAuthorityGrant.from_decision(decision)
-            except ValueError: return self._rejected(request, "authority decision provenance is invalid or untrusted", decision=decision)
-        else: return self._rejected(request, "missing authority decision")
-
-        if not grant.binds(request): return self._rejected(request, "authority grant is not bound to the execution request", decision=decision)
-        if grant.decision != Decision.ALLOW.value: return self._rejected(request, "authority decision is not ALLOW; execution denied", decision=decision)
-        if decision is None:
-            decision = AuthorityDecision(request_id=grant.request_id, decision=Decision.ALLOW, agent_identity=grant.agent_identity, action=grant.action, resource=grant.resource, context_packet_id=grant.context_packet_id, policy_id=grant.policy_id, policy_version=grant.policy_version, matched_rule_ids=grant.matched_rule_ids, reason="verified AI-3 authority grant", evaluated_at="verified-grant", parameters=grant.parameters, organization_id=grant.organization_id, actor_id=grant.actor_id, capability=grant.capability)
+        # AI-4 accepts only a verified AI-3 grant. A raw AuthorityDecision is
+        # deliberately rejected even when it appears internally valid: callers
+        # must cross the explicit provenance-bearing grant boundary.
+        if not isinstance(authority, VerifiedAuthorityGrant):
+            return self._rejected(request, "execution requires a verified authority grant")
+        grant = authority
+        if not grant.binds(request): return self._rejected(request, "authority grant is not bound to the execution request")
+        if grant.decision != Decision.ALLOW.value: return self._rejected(request, "authority decision is not ALLOW; execution denied")
+        decision = AuthorityDecision(request_id=grant.request_id, decision=Decision.ALLOW, agent_identity=grant.agent_identity, action=grant.action, resource=grant.resource, context_packet_id=grant.context_packet_id, policy_id=grant.policy_id, policy_version=grant.policy_version, matched_rule_ids=grant.matched_rule_ids, reason="verified AI-3 authority grant", evaluated_at="verified-grant", parameters=grant.parameters, organization_id=grant.organization_id, actor_id=grant.actor_id, capability=grant.capability)
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
         adapter=self._adapters.get(request.action)
