@@ -33,6 +33,7 @@ def _request() -> ExecutionRequest:
         resource="object/1",
         context_packet_id="ctx-1",
         parameters=(("k", "v"),),
+        organization_id="org-demo",
     )
 
 
@@ -45,6 +46,7 @@ def _grant(req: ExecutionRequest) -> VerifiedAuthorityGrant:
         context_packet_id=req.context_packet_id,
         requested_at="2026-08-18T00:00:00+00:00",
         parameters=req.parameters,
+        organization_id=req.organization_id,
     )
     policy = AuthorityPolicy(
         policy_id="policy.demo",
@@ -90,7 +92,6 @@ def test_engine_rejects_second_call_while_pending_within_lease():
     grant = _grant(req)
     eid = execution_id_for(req, _decision_for_id(req, grant))
 
-    # Simulate worker that claimed but has not completed yet
     assert ledger.try_claim(eid).kind is ClaimOutcomeKind.ACQUIRED
 
     calls = {"n": 0}
@@ -118,7 +119,6 @@ def test_engine_reclaims_after_lease_expiry_and_runs_adapter_once():
     decision = _decision_for_id(req, grant)
     eid = execution_id_for(req, decision)
 
-    # Crash-shaped pending: claimed in the past, never completed
     past = datetime.now(timezone.utc) - timedelta(seconds=lease + 5)
     seeded = ledger.try_claim(eid, now=past)
     assert seeded.kind is ClaimOutcomeKind.ACQUIRED
@@ -193,7 +193,6 @@ def test_concurrent_engine_execute_after_expired_seed_single_adapter_call():
 
     assert calls["n"] == 1
     assert ExecutionStatus.SUCCEEDED in statuses
-    # Loser is either REPLAYED (winner finished) or REJECTED in-flight (winner still pending)
     assert set(statuses) <= {
         ExecutionStatus.SUCCEEDED,
         ExecutionStatus.REPLAYED,
