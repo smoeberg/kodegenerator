@@ -18,6 +18,7 @@ ACTION = "project.audit"
 RESOURCE = "org-a/project-1"
 AGENT = "agent-1"
 CONTEXT = "context-1"
+ORGANIZATION_ID = "org-a"
 
 
 class CountingAdapter:
@@ -59,6 +60,7 @@ def request(**changes) -> ExecutionRequest:
         context_packet_id=CONTEXT,
         parameters={"fingerprint": "fp-1"},
         idempotency_key="idem-1",
+        organization_id=ORGANIZATION_ID,
     )
     return replace(base, **changes)
 
@@ -72,6 +74,8 @@ def credentials():
         resource=RESOURCE,
         context_packet_id=CONTEXT,
         requested_at="2026-08-10T00:00:00+00:00",
+        parameters=(),
+        organization_id=ORGANIZATION_ID,
     )
     decision = auth.evaluate(ar)
     grant = VerifiedAuthorityGrant.from_decision(decision)
@@ -90,6 +94,7 @@ def test_forged_grant_is_rejected():
         policy_version="1",
         matched_rule_ids=("allow-1",),
         decision="allow",
+        organization_id=ORGANIZATION_ID,
     )
     result = engine.execute(request(), forged)
     assert result.status is ExecutionStatus.REJECTED
