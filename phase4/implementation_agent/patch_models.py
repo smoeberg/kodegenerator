@@ -64,7 +64,6 @@ def validate_repository_path(path: str) -> str:
 
 @dataclass(frozen=True, order=True)
 class WorkspaceFileState:
-    """Content identity for one touched path at one workspace state."""
     path: str
     exists: bool
     sha256: str | None
@@ -93,9 +92,18 @@ def workspace_fingerprint(states: tuple[WorkspaceFileState, ...]) -> str:
     return canonical_digest([state.canonical() for state in states])
 
 
+def _sha256_file(path: Path) -> str:
+    if not path.is_file():
+        raise OSError("path is not a regular file")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class TrustedToolSpec:
-    """Operator-owned fixed command; API and agents can reference no argv values."""
     tool_id: str
     kind: ToolKind
     command: tuple[str, ...]
@@ -155,16 +163,6 @@ class TrustedToolSpec:
 
 def toolchain_fingerprint(tools: tuple[TrustedToolSpec, ...]) -> str:
     return canonical_digest([tool.canonical() for tool in tools])
-
-
-def _sha256_file(path: Path) -> str:
-    if not path.is_file():
-        raise OSError("path is not a regular file")
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -232,7 +230,7 @@ class PatchExecutionRequest:
         return {"patch_execution_request_fingerprint": self.request_fingerprint, "organization_id": self.organization_id}
 
     def authority_request(self) -> AuthorityRequest:
-        return AuthorityRequest.create(agent_identity=self.agent_identity, agent_role=self.agent_role, action=IMPLEMENTATION_APPLY_ACTION, resource=self.resource, context_packet_id=self.context_packet_id, context=self.authority_context(), parameters=self.execution_parameters())
+        return AuthorityRequest.create(agent_identity=self.agent_identity, agent_role=self.agent_role, action=IMPLEMENTATION_APPLY_ACTION, resource=self.resource, context_packet_id=self.context_packet_id, context=self.authority_context(), parameters=self.execution_parameters(), organization_id=self.organization_id)
 
     def execution_request(self, *, idempotency_key: str | None = None) -> ExecutionRequest:
         authority = self.authority_request()
@@ -359,3 +357,16 @@ class PatchExecutionRecord:
             if not isinstance(self.error, str) or not self.error.strip():
                 raise PatchExecutionContractError("failed records require a non-empty error")
         object.__setattr__(self, "record_id", canonical_digest({"request_fingerprint": self.request_fingerprint, "proposal_id": self.proposal_id, "baseline_fingerprint": self.baseline_fingerprint, "status": self.status.value, "artifact_id": self.artifact.artifact_id if self.artifact is not None else None, "evidence_ids": [item.evidence_id for item in self.evidence], "committed": self.committed, "rolled_back": self.rolled_back, "error": self.error}))
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status is PatchRecordStatus.SUCCEEDED
+
+    @property
+    def failed(self) -> bool:
+        return self.status is PatchRecordStatus.FAILED
+
+
+__all__ = [
+    "IMPLEMENTATION_APPLY_ACTION", "PatchArtifact", "PatchExecutionContractError", "PatchExecutionRecord", "PatchExecutionRequest", "PatchRecordStatus", "ToolEvidence", "ToolKind", "ToolStatus", "TrustedToolSpec", "WorkspaceFileState", "canonical_digest", "toolchain_fingerprint", "validate_repository_path", "workspace_fingerprint",
+]
