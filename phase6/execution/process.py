@@ -160,9 +160,8 @@ def _apply_limits(limits):
 
 
 def _apply_launcher_limits(limits):
-    """Apply host-side limits without constraining bubblewrap's own helpers."""
+    """Apply host-side limits without constraining bubblewrap or its runtime mappings."""
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
-    resource.setrlimit(resource.RLIMIT_AS, (limits.memory_bytes, limits.memory_bytes))
     resource.setrlimit(resource.RLIMIT_FSIZE, (limits.file_size_bytes, limits.file_size_bytes))
     resource.setrlimit(resource.RLIMIT_NOFILE, (limits.open_file_count, limits.open_file_count))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
