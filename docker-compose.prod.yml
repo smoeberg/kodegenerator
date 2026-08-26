@@ -1,0 +1,15 @@
+services:
+  api:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+  worker-pool:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+  redis:
+    restart: unless-stopped
+  tui:
+    restart: unless-stopped
