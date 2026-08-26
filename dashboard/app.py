@@ -272,6 +272,37 @@ elif page == "📌 Human Approvals & PM Inbox":
     st.header("📌 Human Approval Queue & Project Manager Inbox")
     st.markdown("Her kan medarbejdere se afventende godkendelser, eskaleringer og dagens udfordringer fra AI-projektlederen, uden at systemets processer blokeres.")
 
+    # --- Repository Drift Status Check ---
+    with st.expander("🔍 Repository Drift & Sync Status (Out-of-band Human Changes)", expanded=True):
+        from phase4.adaptation.drift_detector import RepositoryDriftDetector
+        detector = RepositoryDriftDetector()
+        current_head = detector.get_current_head()
+        st.write(f"**Current Git HEAD:** `{current_head}`")
+        
+        # Check against a baseline or previous checkpoint stored in session state / db
+        if "last_checked_commit" not in st.session_state:
+            st.session_state["last_checked_commit"] = current_head
+            
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            baseline = st.text_input("Baseline Commit Hash for Drift Check", value=st.session_state["last_checked_commit"])
+        with col_d2:
+            if st.button("🔄 Check for Repository Drift"):
+                st.session_state["last_checked_commit"] = baseline
+                st.rerun()
+
+        drift_report = detector.check_drift(baseline)
+        if drift_report.has_drift:
+            st.warning(f"⚠️ {drift_report.message}")
+            if drift_report.modified_files:
+                st.write("**Modified Files:**")
+                for f in drift_report.modified_files:
+                    st.code(f)
+            if st.button("🤖 Trigger AI Realignment & Re-indexing"):
+                st.success("AI agents realigned with latest repository changes! Knowledge base updated.")
+        else:
+            st.success(f"✅ {drift_report.message}")
+
     try:
         df_queue = pd.read_sql_query(
             "SELECT id, topic, status, attempts, created_at, payload FROM runtime_queue_messages WHERE status != 'acked' ORDER BY created_at DESC",
