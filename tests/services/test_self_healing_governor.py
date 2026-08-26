@@ -6,8 +6,8 @@ from services.self_healing_governor import CircuitState, SelfHealingGovernor
 def test_moves_to_dlq_after_max_retries():
     clock = lambda: datetime(2026, 8, 26, tzinfo=timezone.utc)
     governor = SelfHealingGovernor(max_retries=2, clock=clock)
-    governor.record_failure("task-1", "boom", "worker-1")
-    governor.record_failure("task-1", "boom again", "worker-1")
+    for error in ("boom", "boom again"):
+        governor.record_failure("task-1", error, "worker-1")
     assert governor.dlq.get("task-1") is None
     governor.record_failure("task-1", "fatal", "worker-1")
     letter = governor.dlq.get("task-1")
@@ -19,12 +19,8 @@ def test_moves_to_dlq_after_max_retries():
 def test_exponential_backoff_is_bounded():
     clock = lambda: datetime(2026, 8, 26, tzinfo=timezone.utc)
     governor = SelfHealingGovernor(max_retries=10, base_backoff_seconds=2, max_backoff_seconds=5, clock=clock)
-    first = governor.record_failure("task", "e", "w")
-    second = governor.record_failure("task", "e", "w")
-    third = governor.record_failure("task", "e", "w")
-    assert (first.retry_at - first.recorded_at).total_seconds() == 2
-    assert (second.retry_at - second.recorded_at).total_seconds() == 4
-    assert (third.retry_at - third.recorded_at).total_seconds() == 5
+    delays = [governor.record_failure("task", "e", "w").retry_at - clock() for _ in range(3)]
+    assert [d.total_seconds() for d in delays] == [2, 4, 5]
 
 
 def test_circuit_breaker_opens_and_closes_after_cooldown():
