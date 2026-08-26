@@ -52,9 +52,9 @@ class SwarmSupervisor:
     def stop(self) -> None:
         self._stop_event.set()
         with self._lock:
-            workers = list(self._workers)
-        for slot in workers:
-            self._stop_worker(slot.worker)
+            workers = [slot.worker for slot in self._workers]
+        for worker in workers:
+            self._stop_worker(worker)
 
     def join(self, timeout: Optional[float] = None) -> None:
         monitor = self._monitor
@@ -77,7 +77,7 @@ class SwarmSupervisor:
         with self._lock:
             total = self._completed
             for slot in self._workers:
-                total += self._worker_completed(slot.worker) - slot.completed_baseline
+                total += max(0, self._worker_completed(slot.worker) - slot.completed_baseline)
             return max(0, total)
 
     @property
@@ -104,6 +104,7 @@ class SwarmSupervisor:
         finally:
             with self._lock:
                 self._completed += max(0, self._worker_completed(worker) - slot.completed_baseline)
+                slot.completed_baseline = self._worker_completed(worker)
 
     def _health_loop(self) -> None:
         while not self._stop_event.wait(self.health_interval):
