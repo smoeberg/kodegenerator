@@ -1,30 +1,85 @@
 services:
-  dor-api:
-    build: .
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: sqlite:///./dor_runtime.db
-      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
-      DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:-}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     volumes:
-      - ./data:/app/data
+      - sqlite-data:/data
     depends_on:
-      - otel-collector
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
 
-  prometheus:
-    image: prometheus/prometheus:latest
-    ports:
-      - "9090:9090"
+  worker-pool:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - sqlite-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
 
-  otel-collector:
-    image: otel/opentelemetry-collector:latest
-    ports:
-      - "4317:4317"
-      - "4318:4318"
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ./monitoring/otel-collector-config.yml:/etc/otel-collector-config.yml
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  tui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "services.tui"]
+    volumes:
+      - sqlite-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  sqlite-data:
+  redis-data:
