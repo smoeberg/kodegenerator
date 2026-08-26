@@ -68,7 +68,11 @@ def test_restarts_crashed_worker_thread():
 
 
 def test_clean_shutdown_leaves_no_worker_or_supervisor_threads():
-    supervisor = SwarmSupervisor(lambda agent_id, capabilities: FakeWorker(agent_id, capabilities), [["code"], ["test"]], health_interval=0.01)
+    supervisor = SwarmSupervisor(
+        lambda agent_id, capabilities: FakeWorker(agent_id, capabilities),
+        [["code"], ["test"]],
+        health_interval=0.01,
+    )
     supervisor.start()
     assert wait_until(lambda: supervisor.active_workers == 2)
     supervisor.stop()
