@@ -58,23 +58,19 @@ def get_password_hash(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a PBKDF2 hash."""
     try:
         scheme, iterations, salt_hex, digest_hex = hashed_password.split("$", 3)
         if scheme != "pbkdf2_sha256":
             return False
-        digest = hashlib.pbkdf2_hmac(
-            "sha256",
-            plain_password.encode("utf-8"),
-            bytes.fromhex(salt_hex),
-            int(iterations),
-        )
+        digest = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations))
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
 
 
 def bootstrap_configured_admin() -> None:
-    """Create the explicitly configured bootstrap user, if credentials are supplied."""
+    """Synchronize the explicitly configured bootstrap user from environment settings."""
     username = os.getenv("DOR_ADMIN_USERNAME", "admin").strip()
     password = os.getenv("DOR_ADMIN_PASSWORD")
     if not username or not password:
@@ -89,11 +85,13 @@ def bootstrap_configured_admin() -> None:
 
 
 def get_user(db: dict, username: str) -> Optional[UserInDB]:
+    """Look up a user by username."""
     user_dict = db.get(username)
     return UserInDB(**user_dict) if user_dict else None
 
 
 def authenticate_user(db: dict, username: str, password: str) -> Optional[UserInDB]:
+    """Authenticate a user against the supplied database."""
     user = get_user(db, username)
     if not user or not verify_password(password, user.hashed_password):
         return None
@@ -101,6 +99,7 @@ def authenticate_user(db: dict, username: str, password: str) -> Optional[UserIn
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT access token."""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode["exp"] = expire
@@ -108,11 +107,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    """Decode a bearer token and return its active user."""
+    credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -120,7 +116,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             raise credentials_exception
     except JWTError as exc:
         raise credentials_exception from exc
-
     user = get_user(fake_users_db, username=username)
     if user is None:
         raise credentials_exception
@@ -128,18 +123,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 
 
 async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    """Reject disabled users."""
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
 
 async def get_current_actor(current_user: User = Depends(get_current_active_user)):
+    """Map the authenticated user to the domain actor model."""
     from domain.actor import Actor, ActorType
-    return Actor(
-        id=current_user.username,
-        identity=current_user.full_name or current_user.username,
-        type=ActorType.HUMAN,
-    )
+    return Actor(id=current_user.username, identity=current_user.full_name or current_user.username, type=ActorType.HUMAN)
 
 
 bootstrap_configured_admin()
