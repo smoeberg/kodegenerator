@@ -1,5 +1,6 @@
 """Phase 4 AI-3 Authority Engine public contract."""
 
+from .adapter import CouncilDecisionAdapter, DecisionReadiness, RiskLevel
 from .audit import (
     AuthorityAuditSink,
     NullAuthorityAuditSink,
@@ -7,7 +8,7 @@ from .audit import (
     composite_audit_sink,
 )
 from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
-from .grants import VerifiedAuthorityGrant
+from .grants import DEFAULT_GRANT_TTL_SECONDS, VerifiedAuthorityGrant
 from .models import (
     AuthorityDecision,
     AuthorityPolicy,
@@ -15,8 +16,6 @@ from .models import (
     AuthorityRule,
     Decision,
 )
-from .grants import VerifiedAuthorityGrant
-from .engine import AuthorityEngine, AuthorityError, PolicyValidationError
 
 __all__ = [
     "AuthorityDecision",
@@ -25,6 +24,7 @@ __all__ = [
     "AuthorityRule",
     "Decision",
     "VerifiedAuthorityGrant",
+    "DEFAULT_GRANT_TTL_SECONDS",
     "AuthorityEngine",
     "AuthorityError",
     "PolicyValidationError",
@@ -32,6 +32,9 @@ __all__ = [
     "NullAuthorityAuditSink",
     "RecordingAuthorityAuditSink",
     "composite_audit_sink",
+    "CouncilDecisionAdapter",
+    "DecisionReadiness",
+    "RiskLevel",
 ]
 
 __version__ = "4.0.1"
