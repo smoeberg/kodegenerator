@@ -25,6 +25,8 @@ class SwarmSupervisor:
             raise ValueError("health_interval must be positive")
         self.worker_factory = worker_factory
         self.worker_capabilities = [tuple(c) for c in worker_capabilities]
+        if not self.worker_capabilities:
+            raise ValueError("at least one worker capability set is required")
         self.health_interval = health_interval
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -120,9 +122,11 @@ class SwarmSupervisor:
     def _stop_worker(worker: Any) -> None:
         if worker is None:
             return
-        stop = getattr(worker, "stop", None)
-        if callable(stop):
-            stop()
+        for name in ("stop", "shutdown", "close"):
+            method = getattr(worker, name, None)
+            if callable(method):
+                method()
+                return
 
     @staticmethod
     def _worker_completed(worker: Any) -> int:
