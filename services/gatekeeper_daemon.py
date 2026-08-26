@@ -83,6 +83,15 @@ class GatekeeperResult:
     
     # Audit
     audit_fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status == GatekeeperStatus.PASSED:
+            if not self.has_valid_grant:
+                raise ValueError("PASSED status requires valid authority grant")
+            if not self.ast_validation_passed:
+                raise ValueError("PASSED status requires AST validation to pass")
+            if not self.tests_passed:
+                raise ValueError("PASSED status requires tests to pass")
     
     def __post_init__(self) -> None:
         """Validate result consistency."""
@@ -202,15 +211,16 @@ class GatekeeperDaemon:
         details: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Create immutable audit entry."""
-        entry = {
+        base_entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "action": action,
             "branch": branch_name,
             "status": status.value,
             "details": details,
         }
-        entry["fingerprint"] = self._compute_fingerprint(entry)
-        entry["signature"] = self._sign_audit_entry(entry)
+        entry = dict(base_entry)
+        entry["fingerprint"] = self._compute_fingerprint(base_entry)
+        entry["signature"] = self._sign_audit_entry(base_entry)
         return entry
     
     def _run_command(
@@ -259,7 +269,10 @@ class GatekeeperDaemon:
             ["git", "branch", "--list", branch_name],
             timeout=30,
         )
-        return success and branch_name in stdout
+        if not success or not stdout.strip():
+            return False
+        branches = [b.strip().lstrip("* ") for b in stdout.strip().splitlines()]
+        return branch_name in branches
     
     def _checkout_branch(self, branch_name: str) -> bool:
         """Checkout a branch."""
@@ -511,6 +524,7 @@ class GatekeeperDaemon:
             has_valid_grant=False,
             merge_success=False,
             branch_deleted=False,
+            audit_fingerprint=audit_start["fingerprint"],
         )
         
         errors = []
@@ -539,7 +553,11 @@ class GatekeeperDaemon:
                     status=GatekeeperStatus.FAILED,
                     details={"errors": errors, "result_id": result_id},
                 )
-                return result
+                return GatekeeperResult(
+                    **{**result.__dict__,
+                       "audit_fingerprint": audit_fail["fingerprint"],
+                    }
+                )
             
             # Step 2: Verify authority grant (Fail-Closed)
             has_grant, grant, grant_errors = self._verify_authority_grant(
@@ -563,7 +581,11 @@ class GatekeeperDaemon:
                     status=GatekeeperStatus.FAILED,
                     details={"errors": errors, "result_id": result_id, "error_type": GatekeeperError.MISSING_GRANT.value},
                 )
-                return result
+                return GatekeeperResult(
+                    **{**result.__dict__,
+                       "audit_fingerprint": audit_fail["fingerprint"],
+                    }
+                )
             
             result = GatekeeperResult(
                 **{**result.__dict__,
@@ -591,7 +613,11 @@ class GatekeeperDaemon:
                     status=GatekeeperStatus.FAILED,
                     details={"errors": errors, "result_id": result_id, "error_type": GatekeeperError.AST_VALIDATION_FAILED.value},
                 )
-                return result
+                return GatekeeperResult(
+                    **{**result.__dict__,
+                       "audit_fingerprint": audit_fail["fingerprint"],
+                    }
+                )
             
             result = GatekeeperResult(
                 **{**result.__dict__,
@@ -617,7 +643,11 @@ class GatekeeperDaemon:
                     status=GatekeeperStatus.FAILED,
                     details={"errors": errors, "result_id": result_id, "error_type": GatekeeperError.TESTS_FAILED.value},
                 )
-                return result
+                return GatekeeperResult(
+                    **{**result.__dict__,
+                       "audit_fingerprint": audit_fail["fingerprint"],
+                    }
+                )
             
             result = GatekeeperResult(
                 **{**result.__dict__,

@@ -917,7 +917,7 @@ class TestGatekeeperDaemonBranchOperations:
         repo_path.mkdir()
         
         import subprocess
-        subprocess.run(["git", "init"], cwd=repo_path, capture_output=True, check=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, capture_output=True, check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_path, capture_output=True, check=True)
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_path, capture_output=True, check=True)
         
