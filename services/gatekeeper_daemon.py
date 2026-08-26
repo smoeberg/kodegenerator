@@ -32,6 +32,7 @@ import uuid
 from domain.architecture_contract_v1 import ArchitectureContractV1
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision
+from services.security_sentinel import SecuritySentinel, SecurityReport, ScanContext
 
 if TYPE_CHECKING:
     from phase4.verification.engine import VerificationEngine
@@ -151,6 +152,8 @@ class GatekeeperDaemon:
         verification_engine: Optional["VerificationEngine"] = None,
         max_patch_size_bytes: int = 1024 * 1024,  # 1MB
         sandbox_timeout_seconds: int = 300,
+        security_sentinel: Optional[SecuritySentinel] = None,
+        allowed_paths: Optional[List[str]] = None,
     ):
         """
         Initialize the gatekeeper daemon.
@@ -169,6 +172,10 @@ class GatekeeperDaemon:
         self._verification_engine = verification_engine
         self.max_patch_size_bytes = max_patch_size_bytes
         self.sandbox_timeout_seconds = sandbox_timeout_seconds
+        self._security_sentinel = security_sentinel or SecuritySentinel(
+            repository_root=repository_root,
+            allowed_paths=allowed_paths or ["src", "services", "domain", "tests", "phase"],
+        )
         
         # Ensure repository exists
         if not self.repository_root.exists():
@@ -422,6 +429,67 @@ class GatekeeperDaemon:
         
         return True, errors
     
+    def _scan_security(
+        self,
+        branch_name: str,
+    ) -> Tuple[bool, List[str], Optional[SecurityReport]]:
+        """
+        Scan the branch for security issues using SecuritySentinel.
+        
+        Returns:
+            Tuple of (is_clean, list of errors, security report)
+        """
+        errors = []
+        
+        try:
+            # Checkout the branch to scan its files
+            if not self._checkout_branch(branch_name):
+                errors.append(f"Failed to checkout branch for security scan: {branch_name}")
+                return False, errors, None
+            
+            # Get the diff/patch for the branch
+            success, stdout, stderr = self._run_command(
+                ["git", "diff", f"{self.target_branch}...{branch_name}", "--no-color"],
+                timeout=30,
+            )
+            
+            if not success:
+                errors.append(f"Failed to get diff for security scan: {stderr}")
+                return False, errors, None
+            
+            patch_text = stdout
+            
+            if not patch_text.strip():
+                # No changes, security scan passes
+                return True, errors, None
+            
+            # Create scan context
+            context = ScanContext(
+                repository_root=self.repository_root,
+                allowed_paths=self._security_sentinel.allowed_paths,
+                branch_name=branch_name,
+                target_branch=self.target_branch,
+            )
+            
+            # Scan the patch
+            report = self._security_sentinel.scan_patch(patch_text, context)
+            
+            # Check if merge should be blocked
+            is_safe, blocking_findings = self._security_sentinel.check_merge_safety(report)
+            
+            if not is_safe:
+                for finding in blocking_findings:
+                    errors.append(
+                        f"Security BLOCKED: {finding.severity.value} - {finding.rule} "
+                        f"in {finding.file_path}:{finding.line_number or 0}"
+                    )
+            
+            return is_safe, errors, report
+            
+        except Exception as e:
+            errors.append(f"Security scan error: {e}")
+            return False, errors, None
+
     def _verify_authority_grant(
         self,
         branch_name: str,
@@ -559,7 +627,30 @@ class GatekeeperDaemon:
                     }
                 )
             
-            # Step 2: Verify authority grant (Fail-Closed)
+            # Step 2: Security scan (Fail-Closed)
+            security_clean, security_errors, security_report = self._scan_security(branch_name)
+            
+            if not security_clean:
+                errors.extend(security_errors)
+                result = GatekeeperResult(
+                    **{**result.__dict__,
+                       "status": GatekeeperStatus.BLOCKED,
+                       "test_errors": tuple(security_errors),
+                    }
+                )
+                audit_fail = self._create_audit_entry(
+                    action="evaluate_blocked",
+                    branch_name=branch_name,
+                    status=GatekeeperStatus.BLOCKED,
+                    details={"errors": errors, "result_id": result_id, "error_type": "security_blocked", "security_report": security_report.dict() if security_report else {}},
+                )
+                return GatekeeperResult(
+                    **{**result.__dict__,
+                       "audit_fingerprint": audit_fail["fingerprint"],
+                    }
+                )
+            
+            # Step 3: Verify authority grant (Fail-Closed)
             has_grant, grant, grant_errors = self._verify_authority_grant(
                 branch_name,
                 expected_action="merge",
@@ -594,7 +685,7 @@ class GatekeeperDaemon:
                 }
             )
             
-            # Step 3: Validate AST constraints (Fail-Closed)
+            # Step 4: Validate AST constraints (Fail-Closed)
             ast_valid, ast_errors = self._validate_ast_constraints(branch_name)
             
             if not ast_valid:
@@ -625,7 +716,7 @@ class GatekeeperDaemon:
                 }
             )
             
-            # Step 4: Run tests in sandbox (Fail-Closed)
+            # Step 5: Run tests in sandbox (Fail-Closed)
             tests_passed, test_errors = self._run_tests_in_sandbox(branch_name)
             
             if not tests_passed:
@@ -655,7 +746,7 @@ class GatekeeperDaemon:
                 }
             )
             
-            # Step 5: Attempt merge (Fail-Closed)
+            # Step 6: Attempt merge (Fail-Closed)
             merge_success, merge_errors = self._merge_branch(branch_name, target)
             
             if not merge_success:
@@ -681,7 +772,7 @@ class GatekeeperDaemon:
                 }
             )
             
-            # Step 6: Delete feature branch
+            # Step 7: Delete feature branch
             branch_deleted = self._delete_branch(branch_name)
             
             result = GatekeeperResult(
