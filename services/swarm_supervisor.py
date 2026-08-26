@@ -15,10 +15,11 @@ class _WorkerSlot:
     worker: Any = None
     thread: Optional[threading.Thread] = None
     completed_baseline: int = 0
+    draining: bool = False
 
 
 class SwarmSupervisor:
-    """Owns worker lifecycles and restarts workers whose threads exit."""
+    """Owns worker lifecycles, crash recovery, and graceful scaling."""
 
     def __init__(self, worker_factory: Callable[..., Any], worker_capabilities: Iterable[Iterable[str]], *, health_interval: float = 0.25) -> None:
         if health_interval <= 0:
@@ -49,6 +50,34 @@ class SwarmSupervisor:
             self._monitor = threading.Thread(target=self._health_loop, name="swarm-supervisor", daemon=True)
             self._monitor.start()
 
+    def scale_to(self, capabilities: Iterable[Iterable[str]]) -> None:
+        """Adjust pool size; removed workers are asked to drain and stop."""
+        desired = [tuple(c) for c in capabilities]
+        with self._lock:
+            if self._monitor is None or not self._monitor.is_alive():
+                self.worker_capabilities = desired
+                return
+            active = [s for s in self._workers if s.thread and s.thread.is_alive() and not s.draining]
+            used: set[int] = set()
+            for caps in desired:
+                match = next((s for s in active if s.index not in used and s.capabilities == caps), None)
+                if match is None:
+                    continue
+                used.add(match.index)
+            for slot in active:
+                if slot.index not in used:
+                    slot.draining = True
+                    self._stop_worker(slot.worker)
+            next_index = max((s.index for s in self._workers), default=-1) + 1
+            for caps in desired:
+                if any(s.index in used and s.capabilities == caps for s in active):
+                    continue
+                slot = _WorkerSlot(next_index, caps)
+                next_index += 1
+                self._workers.append(slot)
+                self._start_slot(slot)
+            self.worker_capabilities = desired
+
     def stop(self) -> None:
         self._stop_event.set()
         with self._lock:
@@ -70,7 +99,7 @@ class SwarmSupervisor:
     @property
     def active_workers(self) -> int:
         with self._lock:
-            return sum(bool(s.thread and s.thread.is_alive()) for s in self._workers)
+            return sum(bool(s.thread and s.thread.is_alive() and not s.draining) for s in self._workers)
 
     @property
     def total_tasks_completed(self) -> int:
@@ -110,7 +139,7 @@ class SwarmSupervisor:
         while not self._stop_event.wait(self.health_interval):
             with self._lock:
                 for slot in self._workers:
-                    if slot.thread and not slot.thread.is_alive() and not self._stop_event.is_set():
+                    if slot.thread and not slot.thread.is_alive() and not slot.draining and not self._stop_event.is_set():
                         self._start_slot(slot)
 
     def _make_worker(self, capabilities: tuple[str, ...], index: int) -> Any:
