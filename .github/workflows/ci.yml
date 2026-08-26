@@ -80,6 +80,8 @@ jobs:
         env:
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
+          DOR_ADMIN_USERNAME: admin
+          DOR_ENV: test
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
           TMPDIR: /tmp
@@ -102,6 +104,8 @@ jobs:
         env:
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
+          DOR_ADMIN_USERNAME: admin
+          DOR_ENV: test
           DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
           PYTHONPATH: .
           TMPDIR: /tmp
