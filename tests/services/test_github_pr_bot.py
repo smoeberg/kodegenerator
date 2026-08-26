@@ -223,9 +223,9 @@ class TestGitHubAuthenticator:
         assert headers["X-Custom-Header"] == "custom-value"
         assert "Authorization" in headers
     
-    @patch("services.github_pr_bot.serialization.load_pem_private_key")
+    @patch("services.github_pr_auth.serialization.load_pem_private_key")
     @patch("jwt.encode")
-    @patch("services.github_pr_bot.requests.post")
+    @patch("services.github_pr_auth.requests.post")
     def test_get_access_token_with_app_auth(self, mock_post, mock_jwt_encode, mock_load_key, mock_app_config):
         # Mock private key loading
         mock_key = MagicMock()
@@ -1070,7 +1070,7 @@ class TestGitHubPRBotAPIClient:
             auth_config=mock_token_config,
         )
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_get_success(self, mock_request, bot):
         """Test successful GET API request."""
         mock_response = MagicMock()
@@ -1086,7 +1086,7 @@ class TestGitHubPRBotAPIClient:
         
         assert result == {"id": 123, "name": "test"}
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_post_success(self, mock_request, bot):
         """Test successful POST API request."""
         mock_response = MagicMock()
@@ -1103,7 +1103,7 @@ class TestGitHubPRBotAPIClient:
         
         assert result == {"id": 123, "number": 1}
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_rate_limit_exceeded(self, mock_request, bot):
         """Test rate limit exceeded handling."""
         mock_response = MagicMock()
@@ -1115,7 +1115,7 @@ class TestGitHubPRBotAPIClient:
         with pytest.raises(RateLimitError):
             bot._api_request("GET", "/repos/test-owner/test-repo")
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_authentication_error(self, mock_request, bot):
         """Test authentication error handling."""
         mock_response = MagicMock()
@@ -1127,7 +1127,7 @@ class TestGitHubPRBotAPIClient:
         with pytest.raises(AuthenticationError):
             bot._api_request("GET", "/repos/test-owner/test-repo")
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_not_found(self, mock_request, bot):
         """Test not found error handling."""
         mock_response = MagicMock()
@@ -1139,7 +1139,7 @@ class TestGitHubPRBotAPIClient:
         with pytest.raises(GitHubAPIError):
             bot._api_request("GET", "/repos/test-owner/test-repo/nonexistent")
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_api_request_retry_on_timeout(self, mock_request, bot):
         """Test retry on timeout."""
         # First call times out, second succeeds
@@ -1161,7 +1161,7 @@ class TestGitHubPRBotAPIClient:
         assert result == {"id": 123}
         assert mock_request.call_count == 2
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_get_repo_info(self, mock_request, bot):
         """Test getting repository info."""
         mock_response = MagicMock()
@@ -1180,7 +1180,7 @@ class TestGitHubPRBotAPIClient:
         assert info["name"] == "test-repo"
         assert info["full_name"] == "test-owner/test-repo"
     
-    @patch("services.github_pr_bot.requests.request")
+    @patch("services.github_pr_api.requests.request")
     def test_get_default_branch(self, mock_request, bot):
         """Test getting default branch."""
         mock_response = MagicMock()
