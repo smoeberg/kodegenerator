@@ -242,6 +242,7 @@ def propose_patch(
         )
         run = implementation_runtime.run(
             resource=request.resource,
+            organization_id=request.organization_id,
             instruction=request.instruction,
             allowed_paths=tuple(request.allowed_paths),
             context_items=context_items,

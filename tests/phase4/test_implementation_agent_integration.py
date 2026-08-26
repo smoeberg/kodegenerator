@@ -28,7 +28,7 @@ def test_registered_agent_produces_governed_patch_outcome_through_ai1_to_ai5():
         ),
     )
     implementation_request = ImplementationRequest(
-        agent_identity=str(agent.identity), agent_role=agent.role.value, resource="repository:smoeberg/kodegenerator",
+        agent_identity=str(agent.identity), agent_role=agent.role.value, organization_id="org-smoeberg", resource="repository:smoeberg/kodegenerator",
         context_packet=context_packet, instruction="Correct add so it returns the sum of its arguments.",
         allowed_paths=("src/calculator.py",), budget=ChangeBudget(max_files=1, max_changed_lines=2),
     )

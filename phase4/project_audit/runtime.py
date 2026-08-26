@@ -9,7 +9,7 @@ from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capabi
 from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
-from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.execution import ExecutionEngine, ExecutionReplayLedger, ExecutionResult, ExecutionStatus
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
@@ -44,7 +44,8 @@ class ProjectAuditRun:
 class ProjectAuditRuntime:
     """Collect, authorize, execute, and record one read-only project audit."""
 
-    def __init__(self, root: Path, *, max_files: int = 5_000, max_bytes: int = 16 * 1024 * 1024) -> None:
+    def __init__(self, root: Path, *, max_files: int = 5_000, max_bytes: int = 16 * 1024 * 1024, ledger: ExecutionReplayLedger | None = None) -> None:
+        self._ledger = ledger
         self._manifest_builder = GitRepositoryManifestBuilder(root)
         self._collector = ProjectEvidenceCollector(
             self._manifest_builder.root,
@@ -64,6 +65,7 @@ class ProjectAuditRuntime:
         revision: str = "HEAD",
         objectives: tuple[str, ...] = DEFAULT_AUDIT_OBJECTIVES,
         target_maturity: MaturityLevel = MaturityLevel.PRODUCTION_READY,
+        organization_id: str = "system-audit",
     ) -> ProjectAuditRun:
         if any(character in repository for character in "*?["):
             raise ValueError("repository authority resource must not contain glob characters")
@@ -127,6 +129,7 @@ class ProjectAuditRuntime:
             context_packet=context,
             evidence_bundle=evidence_bundle,
             objectives=objectives,
+            organization_id=organization_id,
             target_maturity=target_maturity,
         )
 
@@ -170,7 +173,7 @@ class ProjectAuditRuntime:
             provider=provider,
             requests=(request,),
         )
-        execution = ExecutionEngine((adapter,)).execute(execution_request, grant)
+        execution = ExecutionEngine((adapter,), ledger=self._ledger).execute(execution_request, grant)
         outcome = OutcomeEngine().process(execution)
         if execution.status is not ExecutionStatus.SUCCEEDED:
             raise ProjectAuditRuntimeError(execution.error or "AI-4 project audit did not succeed")

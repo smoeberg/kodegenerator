@@ -29,7 +29,7 @@ from phase4.context_packet import (
     ContextPacketEngine,
     ContextRequest,
 )
-from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.execution import ExecutionEngine, ExecutionReplayLedger, ExecutionResult, ExecutionStatus
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
@@ -107,6 +107,7 @@ class ImplementationAgentRuntime:
         max_changed_lines: int = 1_000,
         max_context_items: int = 200,
         max_context_bytes: int = 512 * 1024,
+        ledger: ExecutionReplayLedger | None = None,
     ) -> None:
         provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip():
@@ -149,7 +150,7 @@ class ImplementationAgentRuntime:
             adapter_id=f"adapter.implementation.runtime:{provider_id}",
             provider=provider,
         )
-        self._execution = ExecutionEngine((self._adapter,))
+        self._execution = ExecutionEngine((self._adapter,), ledger=ledger)
         self._outcomes = OutcomeEngine()
         self._registered_requests: set[str] = set()
         self._commands: dict[str, str] = {}
@@ -167,6 +168,7 @@ class ImplementationAgentRuntime:
         self,
         *,
         resource: str,
+        organization_id: str,
         instruction: str,
         allowed_paths: tuple[str, ...],
         context_items: Iterable[ContextItem],
@@ -180,6 +182,12 @@ class ImplementationAgentRuntime:
             or any(character in resource for character in "*?[")
         ):
             raise ValueError("resource must be a canonical exact string without globs")
+        if (
+            not isinstance(organization_id, str)
+            or not organization_id.strip()
+            or organization_id != organization_id.strip()
+        ):
+            raise ValueError("organization_id must be a canonical non-empty string")
         if not isinstance(budget, ChangeBudget):
             raise TypeError("budget must be a ChangeBudget")
         if budget.max_files > self._max_files:
@@ -219,6 +227,7 @@ class ImplementationAgentRuntime:
             )
 
         request = ImplementationRequest(
+            organization_id=organization_id,
             agent_identity=str(self._agent.identity),
             agent_role=self._agent.role.value,
             resource=resource,

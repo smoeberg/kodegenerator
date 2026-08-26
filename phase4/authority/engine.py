@@ -8,7 +8,6 @@ from typing import List, Mapping, Tuple
 from .audit import AuthorityAuditSink, _as_sink
 from .grants import VerifiedAuthorityGrant, _attach_decision_provenance
 from .models import AuthorityDecision, AuthorityPolicy, AuthorityRequest, AuthorityRule, Decision
-from .grants import VerifiedAuthorityGrant
 
 
 class AuthorityError(Exception):
@@ -28,7 +27,8 @@ class AuthorityEngine:
     - any matching DENY wins over ALLOW;
     - the engine never executes commands or mutates agent identity/context;
     - every evaluation produces an immutable decision suitable for audit;
-    - only decisions issued here carry provenance that can become an execution grant.
+    - only decisions issued here carry provenance that can become an execution grant;
+    - optional ``AuthorityAuditSink`` observes decisions without granting power.
     """
 
     def __init__(
@@ -84,10 +84,8 @@ class AuthorityEngine:
             actor_id=request.actor_id,
             capability=request.capability,
         )
-        # The token is an object-identity capability owned by this authority
-        # engine. It is intentionally not representable in AuthorityDecision's
-        # public constructor and cannot be recreated from copied fields.
-        object.__setattr__(result, "_provenance_token", object())
+        # AI-4 validates this tamper-evident provenance before any dispatch.
+        _attach_decision_provenance(result)
         self._audit.append(result)
         self._audit_sink.record(result)
         return result

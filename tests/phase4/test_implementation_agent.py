@@ -60,6 +60,7 @@ def make_request(
     return ImplementationRequest(
         agent_identity=agent_identity,
         agent_role="executor",
+        organization_id="org-smoeberg",
         resource="repository:smoeberg/kodegenerator",
         context_packet=context_packet,
         instruction=instruction,

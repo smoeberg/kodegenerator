@@ -70,6 +70,7 @@ def _items(value: str = "VALUE = 1\n") -> tuple[ContextItem, ...]:
 def _run(runtime: ImplementationAgentRuntime, **overrides):
     values = {
         "resource": RESOURCE,
+        "organization_id": "org-smoeberg",
         "instruction": "Set VALUE to 2.",
         "allowed_paths": ("src/app.py",),
         "context_items": _items(),
@@ -91,6 +92,7 @@ def _request() -> ImplementationRequest:
     return ImplementationRequest(
         agent_identity="agent.implementation",
         agent_role="executor",
+        organization_id="org-smoeberg",
         resource=RESOURCE,
         context_packet=packet,
         instruction="Set VALUE to 2.",

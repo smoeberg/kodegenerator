@@ -49,6 +49,7 @@ def make_request() -> ImplementationRequest:
     return ImplementationRequest(
         agent_identity=agent_identity,
         agent_role="executor",
+        organization_id="org-smoeberg",
         resource=RESOURCE,
         context_packet=context,
         instruction="Set VALUE to 2.",

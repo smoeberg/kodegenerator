@@ -4,6 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from phase4.execution import SqlAlchemyReplayLedger
 from phase4.implementation_agent import (
     GovernedPatchExecutionRuntime,
     ImplementationAgentRuntime,
@@ -16,6 +17,16 @@ from runtime.core import DORRuntime
 
 class ImplementationAgentConfigurationError(RuntimeError):
     """The operational implementation-agent provider is not configured."""
+
+
+def _durable_ledger() -> SqlAlchemyReplayLedger:
+    """Build the DB-backed replay ledger from the shared runtime database.
+
+    Wires Phase-4 execution to a durable ledger so replay safety (fencing
+    tokens, lease expiry) survives process restarts instead of being limited
+    to the in-memory ledger.
+    """
+    return SqlAlchemyReplayLedger(get_dor().database.session_factory)
 
 
 @lru_cache(maxsize=1)
@@ -90,6 +101,7 @@ def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
             max_context_bytes=_positive_int_environment(
                 "DOR_IMPLEMENTATION_MAX_CONTEXT_BYTES", 512 * 1024
             ),
+            ledger=_durable_ledger(),
         )
     except (TypeError, ValueError) as exc:
         raise ImplementationAgentConfigurationError(
@@ -158,6 +170,7 @@ def get_governed_patch_runtime() -> GovernedPatchExecutionRuntime:
             patch_timeout_seconds=_positive_int_environment(
                 "DOR_PATCH_APPLY_TIMEOUT_SECONDS", 30
             ),
+            ledger=_durable_ledger(),
         )
     except (PatchWorkspaceError, TypeError, ValueError) as exc:
         raise ImplementationAgentConfigurationError(

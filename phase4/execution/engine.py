@@ -16,6 +16,12 @@ from .models import (
     GovernedDispatch,
     execution_id_for,
 )
+from .replay_ledger import (
+    ClaimOutcomeKind,
+    ExecutionReplayLedger,
+    InMemoryReplayLedger,
+    StaleClaimTokenError,
+)
 
 
 class ExecutionError(Exception):
@@ -29,7 +35,12 @@ class ExecutionRejected(ExecutionError):
 class ExecutionEngine:
     """Execute only work covered by a verified AI-3 authority grant."""
 
-    def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = ()) -> None:
+    def __init__(
+        self,
+        adapters: Tuple[ExecutionAdapter, ...] = (),
+        *,
+        ledger: ExecutionReplayLedger | None = None,
+    ) -> None:
         self._adapters: Dict[str, ExecutionAdapter] = {}
         self._ledger: ExecutionReplayLedger = ledger or InMemoryReplayLedger()
         self._audit: list[ExecutionResult] = []
@@ -50,94 +61,52 @@ class ExecutionEngine:
     def execute(
         self,
         request: ExecutionRequest,
-        authority: AuthorityDecision | VerifiedAuthorityGrant | None,
+        authority: VerifiedAuthorityGrant | AuthorityDecision | None,
     ) -> ExecutionResult:
-        """Execute only work covered by a verified AI-3 grant."""
         if authority is None:
             return self._rejected(request, "missing authority decision")
 
-        if isinstance(authority, VerifiedAuthorityGrant):
-            grant = authority
-            decision = None
-        elif isinstance(authority, AuthorityDecision):
-            # Provenance is checked independently of ALLOW/DENY. A genuine AI-3
-            # DENY must reach the normal authorization branch so callers receive
-            # the semantic "not ALLOW" rejection rather than a provenance error.
-            if getattr(authority, "_provenance_token", None) is None:
-                return self._rejected(
-                    request,
-                    "authority decision provenance is invalid or untrusted",
-                    decision=authority,
-                )
-            decision = authority
-            if decision.decision is not Decision.ALLOW:
-                return self._rejected(
-                    request,
-                    "authority decision is not ALLOW; execution denied",
-                    decision=decision,
-                )
-            try:
-                grant = VerifiedAuthorityGrant.from_decision(decision)
-            except ValueError:
-                return self._rejected(
-                    request,
-                    "authority decision provenance is invalid or untrusted",
-                    decision=decision,
-                )
-        else:
-            return self._rejected(request, "unsupported authority credential")
+        if not isinstance(authority, VerifiedAuthorityGrant):
+            return self._rejected(
+                request,
+                "execution requires a VerifiedAuthorityGrant; raw authority decisions are not executable",
+            )
+
+        grant = authority
+        if not grant.verified:
+            return self._rejected(request, "authority grant provenance is invalid or untrusted")
 
         if not grant.binds(request):
             return self._rejected(
                 request,
                 "authority grant is not bound to the execution request",
-                decision=decision,
             )
 
         if grant.decision != Decision.ALLOW.value:
             return self._rejected(
                 request,
                 "authority decision is not ALLOW; execution denied",
-                decision=decision,
             )
 
-        if decision is None:
-            decision = AuthorityDecision(
-                request_id=grant.request_id,
-                decision=Decision.ALLOW,
-                agent_identity=grant.agent_identity,
-                action=grant.action,
-                resource=grant.resource,
-                context_packet_id=grant.context_packet_id,
-                policy_id=grant.policy_id,
-                policy_version=grant.policy_version,
-                matched_rule_ids=grant.matched_rule_ids,
-                reason="verified AI-3 authority grant",
-                evaluated_at="verified-grant",
-            )
+        decision = AuthorityDecision(
+            request_id=grant.request_id,
+            decision=Decision.ALLOW,
+            agent_identity=grant.agent_identity,
+            action=grant.action,
+            resource=grant.resource,
+            context_packet_id=grant.context_packet_id,
+            policy_id=grant.policy_id,
+            policy_version=grant.policy_version,
+            matched_rule_ids=grant.matched_rule_ids,
+            reason="verified AI-3 authority grant",
+            evaluated_at="verified-grant",
+            parameters=grant.parameters,
+            organization_id=grant.organization_id,
+            actor_id=grant.actor_id,
+            capability=grant.capability,
+        )
         dispatch = GovernedDispatch.issue(request, grant)
         execution_id = execution_id_for(request, decision)
-
-        with self._lock:
-            previous = self._results.get(execution_id)
-            if previous is not None:
-                replay = ExecutionResult(
-                    execution_id=previous.execution_id,
-                    request_id=previous.request_id,
-                    authority_policy_id=previous.authority_policy_id,
-                    authority_policy_version=previous.authority_policy_version,
-                    agent_identity=previous.agent_identity,
-                    action=previous.action,
-                    resource=previous.resource,
-                    context_packet_id=previous.context_packet_id,
-                    status=ExecutionStatus.REPLAYED,
-                    adapter_id=previous.adapter_id,
-                    output=previous.output,
-                    error="idempotent replay; adapter was not invoked again",
-                    executed_at=datetime.now(timezone.utc).isoformat(),
-                )
-                self._audit.append(replay)
-                return replay
 
         claim = self._ledger.try_claim(
             execution_id,
@@ -150,7 +119,7 @@ class ExecutionEngine:
             if previous is None:
                 return self._rejected(
                     request,
-                    f"no execution adapter registered for action {request.action!r}",
+                    "replay ledger has succeeded claim without stored result",
                     decision=decision,
                 )
             replay = ExecutionResult(
@@ -190,43 +159,83 @@ class ExecutionEngine:
         adapter = self._adapters.get(request.action)
         if adapter is None:
             try:
-                adapter_result = adapter.execute(request, dispatch=dispatch)
-                if adapter_result is None:
-                    return self._rejected(
-                        request,
-                        "adapter rejected execution without a verified governed dispatch",
-                        decision=decision,
-                    )
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.SUCCEEDED,
-                    adapter_id=adapter.adapter_id,
-                    output=adapter_result.output,
-                    error=None,
-                    executed_at=datetime.now(timezone.utc).isoformat(),
+                self._ledger.abandon(execution_id, fencing_token=fencing_token)
+            except StaleClaimTokenError:
+                pass
+            return self._rejected(
+                request,
+                f"no execution adapter registered for action {request.action!r}",
+                decision=decision,
+            )
+
+        try:
+            adapter_result = adapter.execute(request, dispatch=dispatch)
+            if adapter_result is None:
+                try:
+                    self._ledger.abandon(execution_id, fencing_token=fencing_token)
+                except StaleClaimTokenError:
+                    pass
+                return self._rejected(
+                    request,
+                    "adapter rejected execution without a verified governed dispatch",
+                    decision=decision,
                 )
-            except Exception as exc:
-                result = ExecutionResult(
-                    execution_id=execution_id,
-                    request_id=request.request_id,
-                    authority_policy_id=decision.policy_id,
-                    authority_policy_version=decision.policy_version,
-                    agent_identity=request.agent_identity,
-                    action=request.action,
-                    resource=request.resource,
-                    context_packet_id=request.context_packet_id,
-                    status=ExecutionStatus.FAILED,
-                    adapter_id=adapter.adapter_id,
-                    output=(),
-                    error=f"{type(exc).__name__}: {exc}",
-                    executed_at=datetime.now(timezone.utc).isoformat(),
+            result = ExecutionResult(
+                execution_id=execution_id,
+                request_id=request.request_id,
+                authority_policy_id=decision.policy_id,
+                authority_policy_version=decision.policy_version,
+                agent_identity=request.agent_identity,
+                action=request.action,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                status=ExecutionStatus.SUCCEEDED,
+                adapter_id=adapter.adapter_id,
+                output=adapter_result.output,
+                error=None,
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            try:
+                self._ledger.complete_succeeded(
+                    execution_id, result, fencing_token=fencing_token
+                )
+            except StaleClaimTokenError:
+                return self._rejected(
+                    request,
+                    "stale claim fencing token; execution was reclaimed",
+                    decision=decision,
+                )
+        except StaleClaimTokenError:
+            return self._rejected(
+                request,
+                "stale claim fencing token; execution was reclaimed",
+                decision=decision,
+            )
+        except Exception as exc:
+            result = ExecutionResult(
+                execution_id=execution_id,
+                request_id=request.request_id,
+                authority_policy_id=decision.policy_id,
+                authority_policy_version=decision.policy_version,
+                agent_identity=request.agent_identity,
+                action=request.action,
+                resource=request.resource,
+                context_packet_id=request.context_packet_id,
+                status=ExecutionStatus.FAILED,
+                adapter_id=adapter.adapter_id,
+                output=(),
+                error=f"{type(exc).__name__}: {exc}",
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            try:
+                self._ledger.complete_failed(
+                    execution_id, result, fencing_token=fencing_token
+                )
+            except StaleClaimTokenError:
+                return self._rejected(
+                    request,
+                    "stale claim fencing token; execution was reclaimed",
+                    decision=decision,
                 )
 
         with self._lock:

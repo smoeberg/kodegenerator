@@ -65,6 +65,7 @@ class AuthorityRequest:
     ) -> "AuthorityRequest":
         timestamp = datetime.now(timezone.utc).isoformat()
         canonical_context = sorted((str(k), str(v)) for k, v in (context or {}).items())
+        canonical_parameters = sorted((str(k), str(v)) for k, v in (parameters or {}).items())
         identity_payload = {
             "agent_identity": agent_identity,
             "action": action,
@@ -141,13 +142,7 @@ class AuthorityPolicy:
 
 @dataclass(frozen=True)
 class AuthorityDecision:
-    """Immutable, auditable result of an authority evaluation.
-
-    ``_provenance_token`` is populated only by ``AuthorityEngine``. It is not a
-    public constructor argument and is intentionally excluded from equality and
-    representation so authority provenance cannot be recreated by copying the
-    decision fields.
-    """
+    """Immutable, auditable result of an authority evaluation."""
 
     request_id: str
     decision: Decision
@@ -160,7 +155,12 @@ class AuthorityDecision:
     matched_rule_ids: Tuple[str, ...]
     reason: str
     evaluated_at: str
-    _provenance_token: object | None = field(default=None, init=False, repr=False, compare=False)
+    parameters: Tuple[Tuple[str, str], ...] = ()
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    capability: Optional[str] = None
+    _provenance_issuer: str = field(default="", init=False, repr=False, compare=False)
+    _provenance_signature: str = field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.request_id.strip() or not self.agent_identity.strip():
@@ -181,4 +181,7 @@ class AuthorityDecision:
 
     @property
     def provenance_verified(self) -> bool:
-        return self._provenance_token is not None
+        """Verify the issuer signature against the decision's current fields."""
+        from .grants import _decision_has_valid_provenance
+
+        return _decision_has_valid_provenance(self)

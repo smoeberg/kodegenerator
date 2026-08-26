@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -139,6 +140,7 @@ def _proposal_runtime(
     )
     run = runtime.run(
         resource=RESOURCE,
+        organization_id="org-a",
         instruction="Apply the bounded change.",
         allowed_paths=allowed_paths,
         context_items=(
@@ -219,6 +221,13 @@ def test_successful_patch_is_authorized_evidenced_committed_and_replayed(tmp_pat
     assert IMPLEMENTATION_APPLY_ACTION in capabilities
 
 
+bwrap_missing = shutil.which("bwrap") is None
+
+
+@pytest.mark.skipif(
+    bwrap_missing,
+    reason="requires the bubblewrap (bwrap) binary to run real subprocess sandbox tooling",
+)
 def test_canonical_python_toolchain_runs_in_validation_workspace(tmp_path):
     root = _workspace(tmp_path)
     (root / "src" / "__init__.py").write_text("", encoding="utf-8")
@@ -420,6 +429,7 @@ def test_command_id_cannot_be_rebound_to_another_proposal(tmp_path):
     proposal_runtime, first, _ = _proposal_runtime(root, provider=provider)
     second_run = proposal_runtime.run(
         resource=RESOURCE,
+        organization_id="org-a",
         instruction="Apply another bounded change.",
         allowed_paths=("src/app.py",),
         context_items=(ContextItem("requirements", "second", "VALUE becomes 3"),),

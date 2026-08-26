@@ -232,7 +232,7 @@ class PatchExecutionRequest:
         return {"patch_execution_request_fingerprint": self.request_fingerprint, "organization_id": self.organization_id}
 
     def authority_request(self) -> AuthorityRequest:
-        return AuthorityRequest.create(agent_identity=self.agent_identity, agent_role=self.agent_role, action=IMPLEMENTATION_APPLY_ACTION, resource=self.resource, context_packet_id=self.context_packet_id, context=self.authority_context(), parameters=self.execution_parameters())
+        return AuthorityRequest.create(agent_identity=self.agent_identity, agent_role=self.agent_role, action=IMPLEMENTATION_APPLY_ACTION, resource=self.resource, context_packet_id=self.context_packet_id, context=self.authority_context(), parameters=self.execution_parameters(), organization_id=self.organization_id)
 
     def execution_request(self, *, idempotency_key: str | None = None) -> ExecutionRequest:
         authority = self.authority_request()

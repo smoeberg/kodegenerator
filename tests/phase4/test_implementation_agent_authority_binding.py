@@ -40,6 +40,7 @@ def test_implementation_runtime_issues_verified_grant_and_uses_exact_context_bin
 
     run = runtime.run(
         resource=RESOURCE,
+        organization_id="org-smoeberg",
         instruction="Set VALUE to 2.",
         allowed_paths=("src/app.py",),
         context_items=context,

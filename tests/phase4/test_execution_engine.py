@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from phase4.authority.engine import AuthorityEngine
+from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import (
     AuthorityPolicy,
     AuthorityRequest,
@@ -33,6 +34,7 @@ def decision_for(
         resource=request.resource,
         context_packet_id=request.context_packet_id,
         requested_at="2026-08-08T12:00:00+00:00",
+        parameters=request.parameters,
     )
     policy = AuthorityPolicy(
         policy_id="policy.demo",
@@ -47,6 +49,15 @@ def decision_for(
         ),
     )
     return AuthorityEngine(policy).evaluate(authority_request)
+
+
+def grant_for(
+    request: ExecutionRequest,
+    *,
+    policy_version: str = "1",
+) -> VerifiedAuthorityGrant:
+    decision = decision_for(request, policy_version=policy_version)
+    return VerifiedAuthorityGrant.from_decision(decision)
 
 
 def request(**overrides) -> ExecutionRequest:
