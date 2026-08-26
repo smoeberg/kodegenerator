@@ -1,4 +1,8 @@
-"""Self-healing governance for the DOR swarm."""
+"""Self-healing governance for the DOR swarm.
+
+Provides bounded exponential retry backoff, diagnostic DLQ handling,
+capability-scoped circuit breakers, and worker quarantine.
+"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
