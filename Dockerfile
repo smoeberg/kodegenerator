@@ -8,8 +8,8 @@ RUN groupadd --system --gid 10001 dor \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY --chown=dor:dor . .
 

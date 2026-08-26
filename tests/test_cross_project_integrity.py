@@ -179,5 +179,6 @@ def test_tracing_is_opt_in_validated_and_idempotent(
 def test_ci_compiles_and_scans_cross_project_packages() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
+    assert "python -m compileall -q ." in workflow
     for package in ("dashboard", "phase4", "services"):
-        assert workflow.count(package) >= 2
+        assert package in workflow

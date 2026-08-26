@@ -21,17 +21,37 @@ import os
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum, auto
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.backends import default_backend
+
+from services.github_pr_contracts import (
+    AppAuthConfig,
+    AuthenticationError,
+    AuthMethod,
+    ChangelogEntry,
+    CommitInfo,
+    GitHubAPIError,
+    GitHubConfig,
+    GitHubPRBotError,
+    PatchInfo,
+    PRAction,
+    PRMetadata,
+    PRResult,
+    PRStatus,
+    RateLimitError,
+    TokenAuthConfig,
+    WebhookEventType,
+    WebhookPayload,
+    WebhookResponse,
+    WebhookVerificationError,
+)
 
 if TYPE_CHECKING:
     from fastapi import Request, Response
@@ -55,230 +75,6 @@ GITHUB_WEBHOOK_DELIVERY_HEADER = "x-github-delivery"
 
 # Default timeout for GitHub API calls
 DEFAULT_TIMEOUT_SECONDS = 30
-
-
-# =============================================================================
-# Enums & Types
-# =============================================================================
-
-class PRStatus(str, Enum):
-    """Status for Pull Request operations."""
-    PENDING = "pending"
-    CREATED = "created"
-    UPDATED = "updated"
-    MERGED = "merged"
-    CLOSED = "closed"
-    FAILED = "failed"
-
-
-class PRAction(str, Enum):
-    """GitHub webhook PR actions."""
-    OPENED = "opened"
-    CLOSED = "closed"
-    MERGED = "merged"
-    REOPENED = "reopened"
-    SYNCHRONIZE = "synchronize"
-    READY_FOR_REVIEW = "ready_for_review"
-    CONVERTED_TO_DRAFT = "converted_to_draft"
-    REVIEW_REQUESTED = "review_requested"
-    REVIEW_REQUEST_REMOVED = "review_request_removed"
-
-
-class WebhookEventType(str, Enum):
-    """GitHub webhook event types."""
-    PULL_REQUEST = "pull_request"
-    PUSH = "push"
-    ISSUE_COMMENT = "issue_comment"
-    PULL_REQUEST_REVIEW_COMMENT = "pull_request_review_comment"
-    PULL_REQUEST_REVIEW = "pull_request_review"
-    STATUS = "status"
-    CHECK_SUITE = "check_suite"
-    CHECK_RUN = "check_run"
-
-
-class AuthMethod(str, Enum):
-    """Authentication methods for GitHub API."""
-    TOKEN = "token"
-    APP = "app"
-
-
-@dataclass(frozen=True)
-class GitHubConfig:
-    """Configuration for GitHub API access."""
-    api_url: str = GITHUB_API_BASE
-    user_agent: str = DEFAULT_USER_AGENT
-    timeout: int = DEFAULT_TIMEOUT_SECONDS
-    retry_count: int = 3
-    retry_delay: float = 1.0
-
-
-@dataclass(frozen=True)
-class TokenAuthConfig:
-    """Configuration for personal access token authentication."""
-    token: str
-    token_type: str = "bearer"
-
-
-@dataclass(frozen=True)
-class AppAuthConfig:
-    """Configuration for GitHub App authentication."""
-    app_id: str
-    private_key: str
-    installation_id: Optional[str] = None
-
-
-# =============================================================================
-# Data Classes
-# =============================================================================
-
-@dataclass(frozen=True)
-class PRMetadata:
-    """Metadata for a Pull Request."""
-    title: str
-    description: str
-    branch: str
-    base_branch: str = "main"
-    labels: List[str] = field(default_factory=list)
-    assignees: List[str] = field(default_factory=list)
-    reviewers: List[str] = field(default_factory=list)
-    draft: bool = False
-
-
-@dataclass(frozen=True)
-class PatchInfo:
-    """Information about a patch to be converted to PR."""
-    patch_content: str
-    patch_id: str
-    author: str
-    summary: str = ""
-    files_changed: List[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-@dataclass(frozen=True)
-class CommitInfo:
-    """Information about a generated commit."""
-    commit_hash: str
-    message: str
-    author_name: str
-    author_email: str
-    timestamp: datetime
-    signed: bool = False
-    signature: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class ChangelogEntry:
-    """A single changelog entry."""
-    version: str
-    timestamp: datetime
-    author: str
-    changes: List[str] = field(default_factory=list)
-    breaking_changes: List[str] = field(default_factory=list)
-    fixes: List[str] = field(default_factory=list)
-    features: List[str] = field(default_factory=list)
-    
-    def to_markdown(self) -> str:
-        """Convert changelog entry to markdown format."""
-        lines = []
-        lines.append(f"## [{self.version}] - {self.timestamp.strftime('%Y-%m-%d')}")
-        lines.append("")
-        
-        if self.breaking_changes:
-            lines.append("### Breaking Changes")
-            for change in self.breaking_changes:
-                lines.append(f"- {change}")
-            lines.append("")
-        
-        if self.features:
-            lines.append("### Features")
-            for feature in self.features:
-                lines.append(f"- {feature}")
-            lines.append("")
-        
-        if self.fixes:
-            lines.append("### Fixes")
-            for fix in self.fixes:
-                lines.append(f"- {fix}")
-            lines.append("")
-        
-        if self.changes:
-            lines.append("### Changes")
-            for change in self.changes:
-                lines.append(f"- {change}")
-            lines.append("")
-        
-        lines.append(f"---")
-        return "\n".join(lines)
-
-
-@dataclass(frozen=True)
-class PRResult:
-    """Result from a Pull Request operation."""
-    pr_number: Optional[int] = None
-    pr_url: Optional[str] = None
-    status: PRStatus = PRStatus.PENDING
-    commit_hash: Optional[str] = None
-    changelog_entry: Optional[ChangelogEntry] = None
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class WebhookPayload:
-    """Parsed GitHub webhook payload."""
-    event_type: WebhookEventType
-    action: Optional[str] = None
-    repository: Dict[str, Any] = field(default_factory=dict)
-    pull_request: Optional[Dict[str, Any]] = None
-    comment: Optional[Dict[str, Any]] = None
-    issue: Optional[Dict[str, Any]] = None
-    sender: Dict[str, Any] = field(default_factory=dict)
-    installation: Optional[Dict[str, Any]] = None
-    raw_payload: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class WebhookResponse:
-    """Response from webhook processing."""
-    status: str
-    message: str
-    actions: List[str] = field(default_factory=list)
-    pr_number: Optional[int] = None
-    comment_id: Optional[int] = None
-
-
-# =============================================================================
-# Exceptions
-# =============================================================================
-
-class GitHubPRBotError(Exception):
-    """Base exception for GitHub PR Bot errors."""
-    pass
-
-
-class GitHubAPIError(GitHubPRBotError):
-    """Exception for GitHub API errors."""
-    def __init__(self, message: str, status_code: int, response: Optional[Dict[str, Any]] = None):
-        self.status_code = status_code
-        self.response = response or {}
-        super().__init__(f"{message} (status: {status_code})")
-
-
-class AuthenticationError(GitHubPRBotError):
-    """Exception for authentication failures."""
-    pass
-
-
-class WebhookVerificationError(GitHubPRBotError):
-    """Exception for webhook signature verification failures."""
-    pass
-
-
-class RateLimitError(GitHubPRBotError):
-    """Exception for GitHub API rate limit exceeded."""
-    pass
 
 
 # =============================================================================

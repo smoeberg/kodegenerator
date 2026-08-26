@@ -47,10 +47,12 @@ class ExecutionWorker:
             return None
 
         execution_id = str(message.payload["execution_id"])
+        if not message.lease_id:
+            raise RuntimeError("claimed queue message is missing its lease fence")
         try:
             result = self.handler(dict(message.payload["payload"]))
-            self.queue.ack(message.id, worker_id)
+            self.queue.ack(message.id, worker_id, message.lease_id)
             return ExecutionResult(execution_id, "succeeded", result=result)
         except Exception as exc:  # noqa: BLE001 - durable retry is intentional
-            self.queue.fail(message.id, worker_id, str(exc))
+            self.queue.fail(message.id, worker_id, message.lease_id, str(exc))
             return ExecutionResult(execution_id, "failed", error=str(exc))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from typing import Any
@@ -15,7 +14,9 @@ os.environ.setdefault("DOR_ADMIN_USERNAME", "admin")
 os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
+from api.auth import create_access_token, fake_users_db, get_password_hash
 from api.endpoints import swarm_websocket as ws_mod
 from api.main import app
 from services.event_bus import (
@@ -113,23 +114,38 @@ def test_event_bus_webhook_fanout() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _auth_token(client: TestClient) -> str:
+    response = client.post(
+        "/auth/token",
+        data={
+            "username": os.environ.get("DOR_ADMIN_USERNAME", "admin"),
+            "password": os.environ["DOR_ADMIN_PASSWORD"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def _create_project(client: TestClient, project_id: str, token: str) -> None:
+    response = client.post(
+        "/api/v1/swarm/projects",
+        json={"project_id": project_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201, response.text
+
+
 def test_websocket_receives_bus_publish(bus: EventBus) -> None:
     client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-ws", token)
     try:
-        with client.websocket_connect("/api/v1/swarm/ws/proj-ws") as websocket:
+        with client.websocket_connect(f"/api/v1/swarm/ws/proj-ws?token={token}") as websocket:
             welcome = json.loads(websocket.receive_text())
             assert welcome["event_type"] == "WS_CONNECTED"
             assert welcome["project_id"] == "proj-ws"
 
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "publish",
-                        "event_type": "TASK_MERGED",
-                        "payload": {"task_id": "T-9"},
-                    }
-                )
-            )
+            bus.publish(project_topic("proj-ws"), "TASK_MERGED", {"task_id": "T-9"})
             found = False
             for _ in range(10):
                 msg = json.loads(websocket.receive_text())
@@ -146,8 +162,10 @@ def test_websocket_receives_bus_publish(bus: EventBus) -> None:
 
 def test_websocket_ping_pong(bus: EventBus) -> None:
     client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-ping", token)
     try:
-        with client.websocket_connect("/api/v1/swarm/ws/proj-ping") as websocket:
+        with client.websocket_connect(f"/api/v1/swarm/ws/proj-ping?token={token}") as websocket:
             websocket.receive_text()  # welcome
             websocket.send_text(json.dumps({"type": "ping"}))
             pong = json.loads(websocket.receive_text())
@@ -157,10 +175,12 @@ def test_websocket_ping_pong(bus: EventBus) -> None:
             raise
 
 
-def test_websocket_client_publish_echo(bus: EventBus) -> None:
+def test_websocket_client_publish_is_rejected(bus: EventBus) -> None:
     client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-pub", token)
     try:
-        with client.websocket_connect("/api/v1/swarm/ws/proj-pub") as websocket:
+        with client.websocket_connect(f"/api/v1/swarm/ws/proj-pub?token={token}") as websocket:
             websocket.receive_text()
             websocket.send_text(
                 json.dumps(
@@ -172,8 +192,11 @@ def test_websocket_client_publish_echo(bus: EventBus) -> None:
                 )
             )
             msg = json.loads(websocket.receive_text())
-            assert msg["event_type"] == "CLIENT_NOTE"
-            assert msg["payload"]["text"] == "hello"
+            assert msg == {
+                "event_type": "ERROR",
+                "message": "unsupported_client_message",
+            }
+            assert bus.recent(topic=project_topic("proj-pub")) == []
     except Exception as exc:
         if type(exc).__name__ != "CancelledError":
             raise
@@ -181,7 +204,13 @@ def test_websocket_client_publish_echo(bus: EventBus) -> None:
 
 def test_sse_stream_connected_frame(bus: EventBus) -> None:
     client = TestClient(app)
-    with client.stream("GET", "/api/v1/swarm/events/proj-sse") as response:
+    token = _auth_token(client)
+    _create_project(client, "proj-sse", token)
+    with client.stream(
+        "GET",
+        "/api/v1/swarm/events/proj-sse",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as response:
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
         buf = b""
@@ -194,12 +223,74 @@ def test_sse_stream_connected_frame(bus: EventBus) -> None:
 
 def test_connection_count_tracks_sockets(bus: EventBus) -> None:
     client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-cnt", token)
     assert ws_mod.connection_count("proj-cnt") == 0
     try:
-        with client.websocket_connect("/api/v1/swarm/ws/proj-cnt") as websocket:
+        with client.websocket_connect(f"/api/v1/swarm/ws/proj-cnt?token={token}") as websocket:
             websocket.receive_text()
             assert ws_mod.connection_count("proj-cnt") >= 1
     except Exception as exc:
         if type(exc).__name__ != "CancelledError":
             raise
     assert ws_mod.connection_count("proj-cnt") == 0
+
+
+def test_websocket_rejects_missing_and_invalid_tokens(bus: EventBus) -> None:
+    client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-auth", token)
+
+    with pytest.raises(WebSocketDisconnect) as missing:
+        with client.websocket_connect("/api/v1/swarm/ws/proj-auth"):
+            pass
+    assert missing.value.code == 1008
+
+    with pytest.raises(WebSocketDisconnect) as invalid:
+        with client.websocket_connect("/api/v1/swarm/ws/proj-auth?token=invalid"):
+            pass
+    assert invalid.value.code == 1008
+
+
+def test_websocket_rejects_user_without_project_access(bus: EventBus) -> None:
+    client = TestClient(app)
+    owner_token = _auth_token(client)
+    _create_project(client, "proj-private", owner_token)
+    fake_users_db["other-user"] = {
+        "username": "other-user",
+        "email": None,
+        "full_name": "Other User",
+        "disabled": False,
+        "hashed_password": get_password_hash("unused"),
+    }
+    other_token = create_access_token({"sub": "other-user"})
+
+    with pytest.raises(WebSocketDisconnect) as denied:
+        with client.websocket_connect(
+            f"/api/v1/swarm/ws/proj-private?token={other_token}"
+        ):
+            pass
+    assert denied.value.code == 1008
+
+
+def test_sse_requires_authentication_and_project_access(bus: EventBus) -> None:
+    client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-sse-private", token)
+
+    response = client.get("/api/v1/swarm/events/proj-sse-private")
+    assert response.status_code in (401, 403)
+
+    fake_users_db["other-user"] = {
+        "username": "other-user",
+        "email": None,
+        "full_name": "Other User",
+        "disabled": False,
+        "hashed_password": get_password_hash("unused"),
+    }
+    other_token = create_access_token({"sub": "other-user"})
+    response = client.get(
+        "/api/v1/swarm/events/proj-sse-private",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert response.status_code == 403

@@ -53,20 +53,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install --require-hashes -r requirements.lock
 
       - name: Compile Python sources
-        run: >-
-          python -m compileall -q
-          ai api alembic artifacts dashboard domain execution generation infrastructure monitoring
-          phase4 phase5 phase6 runtime services templates main.py seed_data.py
+        run: python -m compileall -q .
 
       - name: Verify Alembic has exactly one canonical head
         run: |
           set -euo pipefail
           heads="$(alembic heads)"
           printf '%s\n' "$heads"
-          printf '%s\n' "$heads" | grep -Eq '^009_p4_01_execution_replay_ledger[[:space:]]+\(head\)$'
+          printf '%s\n' "$heads" | grep -Eq '^010_runtime_queue_fencing[[:space:]]+\(head\)$'
           test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
 
       - name: Verify clean database migration
@@ -141,7 +138,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install --require-hashes -r requirements.lock
           pip install bandit pip-audit
 
       - name: Bandit

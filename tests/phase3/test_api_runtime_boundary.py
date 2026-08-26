@@ -1,7 +1,6 @@
 """Integration boundary checks for the canonical runtime API."""
 
 import importlib
-from pathlib import Path
 
 
 def test_api_main_imports_with_canonical_runtime(monkeypatch):
@@ -49,6 +48,28 @@ def test_api_main_exposes_no_legacy_dor_runtime_db_modules(monkeypatch):
         if "dor_runtime_db" in mod_name:
             del sys.modules[mod_name]
 
-    import api.main
-    for mod_name in sys.modules.keys():
+    import api.main  # noqa: F401
+    for mod_name in sys.modules:
         assert "dor_runtime_db" not in mod_name, f"Legacy module {mod_name} imported by API runtime"
+
+
+def test_api_main_mounts_only_canonical_router_whitelist(monkeypatch):
+    monkeypatch.setenv("DOR_JWT_SECRET_KEY", "phase3-test-secret")
+    monkeypatch.setenv("DOR_ADMIN_PASSWORD", "phase3-test-password")
+
+    import api.main
+
+    paths = set(api.main.app.openapi()["paths"])
+    assert "/api/v1/control-plane/projects" in paths
+    assert "/implementation-agent/proposals" in paths
+    assert "/api/v1/swarm/events/{project_id}" in paths
+    from api.endpoints import swarm_websocket
+
+    assert any(
+        getattr(route, "path", None) == "/api/v1/swarm/ws/{project_id}"
+        for route in swarm_websocket.router.routes
+    )
+    assert "/tasks/" not in paths
+    assert "/actors/digital-employee" not in paths
+    assert "/organizations/" not in paths
+    assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == 6

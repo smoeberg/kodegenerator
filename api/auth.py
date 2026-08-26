@@ -106,20 +106,36 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    """Decode a bearer token and return its active user."""
-    credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
+def authenticate_access_token(token: str) -> User:
+    """Validate a JWT and resolve its subject to a configured user.
+
+    This synchronous primitive is shared by HTTP, SSE, and WebSocket
+    authentication so every transport enforces the same signature, expiry,
+    subject, user-existence, and disabled-user checks.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
-        if not username:
+        if not isinstance(username, str) or not username.strip():
             raise credentials_exception
     except JWTError as exc:
         raise credentials_exception from exc
     user = get_user(fake_users_db, username=username)
-    if user is None:
+    if user is None or user.disabled:
         raise credentials_exception
     return user
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    """Decode a bearer token and return its active user."""
+    return authenticate_access_token(token)
 
 
 async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
