@@ -19,7 +19,7 @@ _db = Database()
 # Import auth components (will fail if DOR_JWT_SECRET_KEY is missing in non-test env)
 if IS_PRODUCTION or os.environ.get("DOR_JWT_SECRET_KEY"):
     from api.auth import User, get_current_active_user
-    from api.endpoints import auth, control_plane, decisions, implementation_agent, swarm, workflows
+    from api.endpoints import auth, control_plane, decisions, implementation_agent, swarm, swarm_operations, workflows
     HAS_AUTH = True
 else:
     # Allow API to start without auth for test/development
@@ -71,6 +71,7 @@ if HAS_AUTH:
         dependencies=[Depends(get_current_active_user)],
     )
     app.include_router(swarm.router, dependencies=[Depends(get_current_active_user)])
+    app.include_router(swarm_operations.router, dependencies=[Depends(get_current_active_user)])
     app.include_router(workflows.router, dependencies=[Depends(get_current_active_user)])
     app.include_router(
         implementation_agent.router,
