@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.auth import User, get_current_active_user
-from services.swarm_task_queue import SwarmTaskQueue, QueuedTaskStatus
+from services.swarm_task_queue import QueuedTaskStatus, SwarmTaskQueue
 
 router = APIRouter(prefix="/api/v1/swarm", tags=["swarm"])
 
@@ -28,6 +28,22 @@ router = APIRouter(prefix="/api/v1/swarm", tags=["swarm"])
 _queue: SwarmTaskQueue = SwarmTaskQueue()
 _projects: dict[str, dict[str, Any]] = {}
 _paused: bool = False
+
+
+def project_access_allowed(project_id: str, username: str) -> bool:
+    """Return whether ``username`` owns the in-process swarm project."""
+    project = _projects.get(project_id)
+    return project is not None and project.get("owner_id") == username
+
+
+def require_project_access(project_id: str, username: str) -> dict[str, Any]:
+    """Resolve project metadata without revealing another user's project."""
+    project = _projects.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    if project.get("owner_id") != username:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project access denied")
+    return project
 
 
 # --------------------------------------------------------------------------
@@ -113,7 +129,13 @@ async def start_project(
 ) -> dict[str, Any]:
     """Create a swarm project and enqueue its task plan (if provided)."""
     project_id = body.project_id or f"proj-{len(_projects) + 1}"
-    _projects[project_id] = {"created_at": None, "requirements": body.requirements}
+    if project_id in _projects:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project already exists")
+    _projects[project_id] = {
+        "created_at": None,
+        "requirements": body.requirements,
+        "owner_id": current_user.username,
+    }
 
     if body.tasks:
         enqueued = _queue.enqueue_wbs_plan(body.tasks)
@@ -172,6 +194,7 @@ async def project_status(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Return per-status counts for a swarm project."""
+    require_project_access(project_id, current_user.username)
     return _project_report(project_id)
 
 

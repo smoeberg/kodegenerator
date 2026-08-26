@@ -1,10 +1,12 @@
 """DOR control-plane API entrypoint."""
 from __future__ import annotations
 
+import logging
 import os
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
+from sqlalchemy import text
 
 from infrastructure.persistence.database import Database
 from monitoring.tracer import configure_tracing
@@ -12,6 +14,26 @@ from monitoring.tracer import configure_tracing
 # Determine environment
 DOR_ENV = os.environ.get("DOR_ENV", "development").lower()
 IS_PRODUCTION = DOR_ENV == "production"
+logger = logging.getLogger(__name__)
+
+
+def validate_production_security_configuration() -> None:
+    """Fail startup when production authentication has no explicit secrets."""
+    if not IS_PRODUCTION:
+        return
+    missing = [
+        name
+        for name in ("DOR_JWT_SECRET_KEY", "DOR_ADMIN_PASSWORD")
+        if not os.environ.get(name, "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required production security configuration: "
+            + ", ".join(missing)
+        )
+
+
+validate_production_security_configuration()
 
 # Initialize database for health checks
 _db = Database()
@@ -19,7 +41,16 @@ _db = Database()
 # Import auth components (will fail if DOR_JWT_SECRET_KEY is missing in non-test env)
 if IS_PRODUCTION or os.environ.get("DOR_JWT_SECRET_KEY"):
     from api.auth import User, get_current_active_user
-    from api.endpoints import auth, control_plane, decisions, implementation_agent, swarm, swarm_operations, swarm_websocket, workflows
+    from api.endpoints import (
+        auth,
+        control_plane,
+        decisions,
+        implementation_agent,
+        swarm,
+        swarm_operations,
+        swarm_websocket,
+        workflows,
+    )
     HAS_AUTH = True
 else:
     # Allow API to start without auth for test/development
@@ -47,14 +78,11 @@ async def health_ready() -> dict:
     """Return readiness status including database connectivity check."""
     try:
         with _db.session() as session:
-            session.execute("SELECT 1")
+            session.execute(text("SELECT 1"))
         return {"status": "ready", "database": "ok"}
-    except Exception as e:
-        return {
-            "status": "not_ready",
-            "database": "error",
-            "error": str(e)
-        }
+    except Exception:
+        logger.exception("readiness database check failed")
+        return {"status": "error", "database": "error"}
 
 
 if HAS_AUTH:
@@ -65,21 +93,23 @@ if HAS_AUTH:
         """Example authenticated endpoint."""
         return {"message": f"Hello, {current_user.username}!"}
 
-    app.include_router(auth.router)
-    app.include_router(
+    # Canonical router whitelist. Legacy adapters remain deliberately unmounted
+    # until they derive identity and tenant scope from the verified principal.
+    CANONICAL_AUTHENTICATED_ROUTERS = (
         control_plane.router,
-        dependencies=[Depends(get_current_active_user)],
-    )
-    app.include_router(swarm.router, dependencies=[Depends(get_current_active_user)])
-    app.include_router(swarm_operations.router, dependencies=[Depends(get_current_active_user)])
-    # WebSocket/SSE hub — no global JWT Depends (handshake + optional ?token=)
-    app.include_router(swarm_websocket.router)
-    app.include_router(workflows.router, dependencies=[Depends(get_current_active_user)])
-    app.include_router(
+        swarm.router,
+        swarm_operations.router,
+        workflows.router,
         implementation_agent.router,
-        dependencies=[Depends(get_current_active_user)],
-    )
-    app.include_router(
         decisions.router,
-        dependencies=[Depends(get_current_active_user)],
     )
+
+    app.include_router(auth.router)
+    for canonical_router in CANONICAL_AUTHENTICATED_ROUTERS:
+        app.include_router(
+            canonical_router,
+            dependencies=[Depends(get_current_active_user)],
+        )
+    # Realtime endpoints enforce the same JWT plus project access internally,
+    # before accepting a WebSocket or opening an SSE response.
+    app.include_router(swarm_websocket.router)

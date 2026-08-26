@@ -8,17 +8,17 @@ class FakeQueue:
         self.failed = []
 
     def publish(self, topic, payload, message_id=None):
-        self.items.append(type("Message", (), {"id": message_id, "topic": topic, "payload": payload})())
+        self.items.append(type("Message", (), {"id": message_id, "topic": topic, "payload": payload, "lease_id": "lease-1"})())
         return message_id
 
     def claim(self, topic, worker_id):
         return self.items.pop(0) if self.items else None
 
-    def ack(self, message_id, worker_id):
-        self.acked.append((message_id, worker_id))
+    def ack(self, message_id, worker_id, lease_id):
+        self.acked.append((message_id, worker_id, lease_id))
 
-    def fail(self, message_id, worker_id, error):
-        self.failed.append((message_id, worker_id, error))
+    def fail(self, message_id, worker_id, lease_id, error):
+        self.failed.append((message_id, worker_id, lease_id, error))
 
 
 def test_dispatch_and_successful_worker_ack():
@@ -29,7 +29,7 @@ def test_dispatch_and_successful_worker_ack():
 
     assert result.status == "succeeded"
     assert result.result == {"ok": "compile"}
-    assert queue.acked == [("execution:exec-1", "worker-1")]
+    assert queue.acked == [("execution:exec-1", "worker-1", "lease-1")]
 
 
 def test_worker_failure_is_not_acknowledged():
@@ -43,4 +43,4 @@ def test_worker_failure_is_not_acknowledged():
 
     assert result.status == "failed"
     assert queue.acked == []
-    assert queue.failed[0][2] == "boom"
+    assert queue.failed[0][3] == "boom"

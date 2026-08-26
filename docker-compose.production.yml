@@ -36,6 +36,8 @@ services:
       ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
       DOR_QUEUE_BACKEND: database
       DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
+      DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
       DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     depends_on:
@@ -48,7 +50,7 @@ services:
 
   dor-worker:
     build: .
-    command: ["python", "-m", "infrastructure.runtime_worker"]
+    command: ["python", "-m", "services.worker_agent"]
     environment:
       DOR_ENV: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dor}
@@ -57,6 +59,7 @@ services:
       DOR_QUEUE_BACKEND: database
       DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
       DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
+      DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     depends_on:
       postgres:

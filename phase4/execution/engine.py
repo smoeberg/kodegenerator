@@ -1,22 +1,31 @@
 """Fail-closed AI-4 execution engine."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from threading import RLock
-from typing import Dict, Tuple
 
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.authority.models import AuthorityDecision, Decision
+
 from .adapters import ExecutionAdapter
-from .models import ExecutionRequest, ExecutionResult, ExecutionStatus, GovernedDispatch, execution_id_for
+from .models import (
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStatus,
+    GovernedDispatch,
+    execution_id_for,
+)
 from .replay_ledger import ClaimOutcomeKind, ExecutionReplayLedger, InMemoryReplayLedger
+
+logger = logging.getLogger(__name__)
 
 class ExecutionError(Exception): pass
 class ExecutionRejected(ExecutionError): pass
 
 class ExecutionEngine:
-    def __init__(self, adapters: Tuple[ExecutionAdapter, ...] = (), ledger: ExecutionReplayLedger | None = None) -> None:
-        self._adapters: Dict[str, ExecutionAdapter] = {}
+    def __init__(self, adapters: tuple[ExecutionAdapter, ...] = (), ledger: ExecutionReplayLedger | None = None) -> None:
+        self._adapters: dict[str, ExecutionAdapter] = {}
         self._ledger = ledger or InMemoryReplayLedger()
         self._audit: list[ExecutionResult] = []
         self._lock = RLock()
@@ -62,8 +71,13 @@ class ExecutionEngine:
             if result.status is ExecutionStatus.SUCCEEDED: self._ledger.complete_succeeded(execution_id,result,fencing_token=token)
             else: self._ledger.complete_failed(execution_id,result,fencing_token=token)
         except Exception:
-            try: self._ledger.abandon(execution_id,fencing_token=token)
-            except Exception: pass
+            try:
+                self._ledger.abandon(execution_id, fencing_token=token)
+            except Exception:
+                logger.exception(
+                    "failed to abandon execution claim after terminal ledger error",
+                    extra={"execution_id": execution_id},
+                )
             raise
         with self._lock: self._audit.append(result)
         return result
@@ -82,5 +96,5 @@ class ExecutionEngine:
         with self._lock: self._audit.append(result)
         return result
 
-    def audit_trail(self) -> Tuple[ExecutionResult, ...]:
+    def audit_trail(self) -> tuple[ExecutionResult, ...]:
         with self._lock: return tuple(self._audit)

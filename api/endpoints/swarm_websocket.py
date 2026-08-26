@@ -14,21 +14,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocketState
 
-from services.event_bus import (
-    SYSTEM_ALERTS_TOPIC,
-    EventBus,
-    default_event_bus,
-    project_topic,
-)
+from api.auth import User, authenticate_access_token, get_current_active_user
+from api.endpoints.swarm import project_access_allowed, require_project_access
+from services.event_bus import EventBus, default_event_bus, project_topic
 
 router = APIRouter(tags=["swarm-realtime"])
+logger = logging.getLogger(__name__)
 
 _bus: EventBus = default_event_bus
 _connections: dict[str, set[WebSocket]] = {}
@@ -88,6 +94,11 @@ async def broadcast_to_project(project_id: str, message: dict[str, Any]) -> int:
             else:
                 dead.append(ws)
         except Exception:
+            logger.warning(
+                "swarm websocket send failed",
+                extra={"project_id": project_id},
+                exc_info=True,
+            )
             dead.append(ws)
     for ws in dead:
         await _unregister(project_id, ws)
@@ -101,13 +112,21 @@ def _sse_format(data: dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {body}\n\n"
 
 
+def _websocket_token(websocket: WebSocket, query_token: str | None) -> str | None:
+    authorization = websocket.headers.get("authorization", "")
+    scheme, _, header_token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and header_token:
+        return header_token
+    return query_token
+
+
 @router.websocket("/api/v1/swarm/ws/{project_id}")
 async def swarm_websocket(
     websocket: WebSocket,
     project_id: str,
     token: str | None = Query(
         default=None,
-        description="Optional bearer token for gateway-level auth",
+        description="Bearer token used when the client cannot set an Authorization header",
     ),
 ) -> None:
     """Accept a WebSocket, subscribe to the project topic, stream bus events.
@@ -115,12 +134,25 @@ async def swarm_websocket(
     Protocol:
 
     * Server → client: JSON event envelopes from the bus (+ periodic heartbeats)
-    * Client → server: optional ``{"type":"ping"}`` or
-      ``{"type":"publish","event_type":"...","payload":{...}}``
+    * Client → server: ``{"type":"ping"}`` only
 
-    HTTP JWT is not applied on the WebSocket handshake (reverse-proxy / ``token``
-    query recommended). Other ``/api/v1/swarm/*`` routes remain JWT-protected.
+    JWT validation and project ownership are enforced before the handshake is
+    accepted. Clients cannot publish arbitrary events to the internal bus.
     """
+    try:
+        current_user = authenticate_access_token(_websocket_token(websocket, token) or "")
+    except HTTPException:
+        logger.warning("rejected unauthenticated swarm websocket", extra={"project_id": project_id})
+        await websocket.close(code=1008, reason="authentication required")
+        return
+    if not project_access_allowed(project_id, current_user.username):
+        logger.warning(
+            "rejected unauthorized swarm websocket",
+            extra={"project_id": project_id, "username": current_user.username},
+        )
+        await websocket.close(code=1008, reason="project access denied")
+        return
+
     await websocket.accept()
     await _register(project_id, websocket)
 
@@ -142,7 +174,6 @@ async def swarm_websocket(
                 pass
 
     sub_id = _bus.subscribe(topic, _on_event)
-    alert_sub = _bus.subscribe(SYSTEM_ALERTS_TOPIC, _on_event)
 
     await websocket.send_text(
         json.dumps(
@@ -169,6 +200,11 @@ async def swarm_websocket(
             try:
                 await websocket.send_text(json.dumps(envelope, ensure_ascii=False))
             except Exception:
+                logger.info(
+                    "swarm websocket forwarder stopped after send failure",
+                    extra={"project_id": project_id},
+                    exc_info=True,
+                )
                 break
 
     async def _heartbeat() -> None:
@@ -191,6 +227,11 @@ async def swarm_websocket(
                         )
                     )
                 except Exception:
+                    logger.info(
+                        "swarm websocket heartbeat stopped after send failure",
+                        extra={"project_id": project_id},
+                        exc_info=True,
+                    )
                     return
 
     forward_task = asyncio.create_task(_forward_bus())
@@ -205,26 +246,39 @@ async def swarm_websocket(
     except asyncio.CancelledError:
         pass
     except Exception:
-        pass
+        logger.exception(
+            "unexpected swarm websocket lifecycle failure",
+            extra={"project_id": project_id},
+        )
     finally:
         stop.set()
         for task in (forward_task, hb_task):
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                logger.exception(
+                    "swarm websocket background task cleanup failed",
+                    extra={"project_id": project_id},
+                )
         _bus.unsubscribe(topic, sub_id)
-        _bus.unsubscribe(SYSTEM_ALERTS_TOPIC, alert_sub)
         try:
             await _unregister(project_id, websocket)
         except Exception:
-            pass
+            logger.exception(
+                "swarm websocket unregister failed",
+                extra={"project_id": project_id},
+            )
         try:
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.close()
         except Exception:
-            pass
+            logger.exception(
+                "swarm websocket close failed",
+                extra={"project_id": project_id},
+            )
 
 
 async def _handle_client_message(
@@ -255,20 +309,23 @@ async def _handle_client_message(
                 ensure_ascii=False,
             )
         )
-    elif msg_type == "publish":
-        event_type = str(data.get("event_type", "CLIENT_EVENT"))
-        payload = data.get("payload") or {}
-        if not isinstance(payload, dict):
-            payload = {"value": payload}
-        _bus.publish(project_topic(project_id), event_type, payload)
+    else:
+        await websocket.send_text(
+            json.dumps(
+                {"event_type": "ERROR", "message": "unsupported_client_message"},
+                ensure_ascii=False,
+            )
+        )
 
 
 @router.get("/api/v1/swarm/events/{project_id}")
 async def swarm_sse(
     project_id: str,
-    token: str | None = Query(default=None),
+    current_user: User = Depends(get_current_active_user),
 ) -> StreamingResponse:
     """Server-Sent Events stream for clients that cannot use WebSockets."""
+
+    require_project_access(project_id, current_user.username)
 
     topic = project_topic(project_id)
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
@@ -287,7 +344,6 @@ async def swarm_sse(
                 pass
 
     sub_id = _bus.subscribe(topic, _on_event)
-    alert_sub = _bus.subscribe(SYSTEM_ALERTS_TOPIC, _on_event)
 
     async def event_generator() -> Any:
         try:
@@ -314,7 +370,6 @@ async def swarm_sse(
                     yield f": heartbeat {envelope_now()}\n\n"
         finally:
             _bus.unsubscribe(topic, sub_id)
-            _bus.unsubscribe(SYSTEM_ALERTS_TOPIC, alert_sub)
 
     return StreamingResponse(
         event_generator(),

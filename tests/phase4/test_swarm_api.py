@@ -8,6 +8,7 @@ os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
 
 from fastapi.testclient import TestClient
 
+from api.auth import create_access_token, fake_users_db, get_password_hash
 from api.main import app
 
 client = TestClient(app)
@@ -124,3 +125,27 @@ def test_pause_blocks_claiming():
     client.post("/api/v1/swarm/resume", headers=h)
     r = client.post("/api/v1/swarm/workers/claim", json={"worker_id": "w3", "capabilities": []}, headers=h)
     assert r.json()["claimed"] is True
+
+
+def test_project_status_is_bound_to_authenticated_principal():
+    h = _auth_header()
+    response = client.post(
+        "/api/v1/swarm/projects",
+        json={"project_id": "principal-owned"},
+        headers=h,
+    )
+    assert response.status_code == 201
+
+    fake_users_db["project-outsider"] = {
+        "username": "project-outsider",
+        "email": None,
+        "full_name": "Project Outsider",
+        "disabled": False,
+        "hashed_password": get_password_hash("unused"),
+    }
+    outsider_token = create_access_token({"sub": "project-outsider"})
+    response = client.get(
+        "/api/v1/swarm/projects/principal-owned",
+        headers={"Authorization": f"Bearer {outsider_token}"},
+    )
+    assert response.status_code == 403
