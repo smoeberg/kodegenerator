@@ -57,25 +57,25 @@ class SwarmSupervisor:
             if self._monitor is None or not self._monitor.is_alive():
                 self.worker_capabilities = desired
                 return
-            active = [s for s in self._workers if s.thread and s.thread.is_alive() and not s.draining]
-            used: set[int] = set()
+            desired_counts = {}
             for caps in desired:
-                match = next((s for s in active if s.index not in used and s.capabilities == caps), None)
-                if match is None:
-                    continue
-                used.add(match.index)
+                desired_counts[caps] = desired_counts.get(caps, 0) + 1
+            active = [s for s in self._workers if s.thread and s.thread.is_alive() and not s.draining]
+            active_counts = {}
             for slot in active:
-                if slot.index not in used:
+                active_counts[slot.capabilities] = active_counts.get(slot.capabilities, 0) + 1
+            for caps, count in active_counts.items():
+                for slot in [s for s in active if s.capabilities == caps][desired_counts.get(caps, 0):]:
                     slot.draining = True
                     self._stop_worker(slot.worker)
             next_index = max((s.index for s in self._workers), default=-1) + 1
-            for caps in desired:
-                if any(s.index in used and s.capabilities == caps for s in active):
-                    continue
-                slot = _WorkerSlot(next_index, caps)
-                next_index += 1
-                self._workers.append(slot)
-                self._start_slot(slot)
+            for caps, count in desired_counts.items():
+                deficit = max(0, count - active_counts.get(caps, 0))
+                for _ in range(deficit):
+                    slot = _WorkerSlot(next_index, caps)
+                    next_index += 1
+                    self._workers.append(slot)
+                    self._start_slot(slot)
             self.worker_capabilities = desired
 
     def stop(self) -> None:
