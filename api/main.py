@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 
 from api.auth import User, get_current_active_user
-from api.endpoints import auth, control_plane, implementation_agent, workflows
+from api.endpoints import auth, control_plane, decisions, implementation_agent, workflows
 from monitoring.tracer import configure_tracing
 
 app = FastAPI(
@@ -38,5 +38,9 @@ app.include_router(
 app.include_router(workflows.router, dependencies=[Depends(get_current_active_user)])
 app.include_router(
     implementation_agent.router,
+    dependencies=[Depends(get_current_active_user)],
+)
+app.include_router(
+    decisions.router,
     dependencies=[Depends(get_current_active_user)],
 )
