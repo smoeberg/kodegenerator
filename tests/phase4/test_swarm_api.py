@@ -14,7 +14,9 @@ client = TestClient(app)
 
 
 def _auth_token() -> str:
-    r = client.post("/auth/token", data={"username": "admin", "password": "admin"})
+    username = os.environ.get("DOR_ADMIN_USERNAME", "admin")
+    password = os.environ.get("DOR_ADMIN_PASSWORD", "admin")
+    r = client.post("/auth/token", data={"username": username, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
