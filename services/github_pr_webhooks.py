@@ -81,10 +81,9 @@ class GitHubPRWebhookMixin:
         event_type = request.headers.get(GITHUB_WEBHOOK_EVENT_HEADER)
         delivery_id = request.headers.get(GITHUB_WEBHOOK_DELIVERY_HEADER)
 
-        if (
-            self._webhook_verifier
-            and signature
-            and not self._webhook_verifier.verify_signature(body, signature)
+        if self._webhook_verifier and (
+            not signature
+            or not self._webhook_verifier.verify_signature(body, signature)
         ):
             raise WebhookVerificationError(
                 f"Invalid webhook signature for delivery {delivery_id}"

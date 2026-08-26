@@ -961,6 +961,20 @@ class TestGitHubPRBotWebhookProcessing:
         assert response.status == "processed"
         assert len(response.actions) > 0
         assert response.pr_number == 123
+
+    @pytest.mark.asyncio
+    async def test_process_webhook_rejects_missing_signature(
+        self, bot, mock_request
+    ):
+        """A configured webhook secret must fail closed without a signature."""
+        mock_request.headers = {
+            "x-github-event": "push",
+            "x-github-delivery": "delivery-123",
+        }
+        mock_request.body.return_value = b'{"ref": "refs/heads/main"}'
+
+        with pytest.raises(WebhookVerificationError, match="delivery-123"):
+            await bot.process_webhook(mock_request)
     
     def test_route_webhook_issue_comment(self, bot):
         """Test routing of issue comment webhook."""
