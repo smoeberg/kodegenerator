@@ -1,27 +1,10 @@
-"""Thread-safe, idempotent task queue for parallel DOR swarm workers.
-
-The queue is intentionally dependency-aware and lease based.  It keeps the
-claim/heartbeat/complete transitions atomic under one lock so multiple worker
-threads cannot claim the same WBS task.  A stale lease is reclaimed lazily on
-queue operations, which makes crash recovery deterministic without a
-background reaper.
-"""
+"""Swarm task queue used by the HTTP control plane."""
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 from threading import RLock
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 import uuid
-
-
-class QueuedTaskStatus(str, Enum):
-    PENDING = "PENDING"
-    CLAIMED = "CLAIMED"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-
 
 @dataclass
 class QueuedTask:
@@ -30,7 +13,7 @@ class QueuedTask:
     dependencies: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     priority: int = 0
-    status: QueuedTaskStatus = QueuedTaskStatus.PENDING
+    status: str = "PENDING"
     agent_id: Optional[str] = None
     lease_expires_at: Optional[datetime] = None
     heartbeat_at: Optional[datetime] = None
@@ -40,198 +23,60 @@ class QueuedTask:
     patch_result: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def lease_active(self, now: datetime) -> bool:
-        return self.status == QueuedTaskStatus.CLAIMED and bool(
-            self.lease_expires_at and self.lease_expires_at > now
-        )
-
-
 class SwarmTaskQueue:
-    """In-memory transactional queue suitable for a single process swarm.
-
-    The public API is deliberately storage-agnostic so a durable SQL/Redis
-    implementation can later preserve the same claim semantics.
-    """
-
-    def __init__(self, *, lease_seconds: int = 300, clock=None) -> None:
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        self.lease_seconds = lease_seconds
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._lock = RLock()
-        self._tasks: dict[str, QueuedTask] = {}
-        self._plan_keys: set[str] = set()
-
-    def enqueue_wbs_plan(self, plan: Any) -> int:
-        """Enqueue a WBS plan exactly once; return number of newly queued tasks.
-
-        Accepts the repository's WBS output convention (an object exposing
-        ``tasks`` or ``wbs_tasks``) and also a plain iterable of task objects.
-        """
-        plan_key = self._plan_key(plan)
-        tasks = self._extract_tasks(plan)
-        with self._lock:
-            if plan_key in self._plan_keys:
-                return 0
-            new_tasks = 0
-            for item in tasks:
-                task = self._normalise_task(item)
-                if task.task_id in self._tasks:
-                    continue
-                self._tasks[task.task_id] = task
-                new_tasks += 1
-            self._plan_keys.add(plan_key)
-            return new_tasks
-
-    def claim_next_task(
-        self, agent_id: str, capabilities: list[str]
-    ) -> Optional[QueuedTask]:
-        if not agent_id.strip():
-            raise ValueError("agent_id is required")
-        capability_set = set(capabilities)
-        with self._lock:
-            now = self._clock()
-            self._reclaim_expired_locked(now)
-            ready = [
-                task for task in self._tasks.values()
-                if task.status == QueuedTaskStatus.PENDING
-                and set(task.capabilities).issubset(capability_set)
-                and self._dependencies_completed_locked(task)
-            ]
-            if not ready:
-                return None
-            ready.sort(key=lambda t: (-t.priority, t.task_id))
-            task = ready[0]
-            task.status = QueuedTaskStatus.CLAIMED
-            task.agent_id = agent_id
-            task.heartbeat_at = now
-            task.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
-            return task
-
-    def heartbeat(self, task_id: str, agent_id: str) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            now = self._clock()
-            if not task.lease_active(now):
-                self._reclaim_expired_locked(now)
-                raise RuntimeError("task lease has expired")
-            task.heartbeat_at = now
-            task.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
-
-    def complete_task(self, task_id: str, agent_id: str, patch_result: Any) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            now = self._clock()
-            if not task.lease_active(now):
-                self._reclaim_expired_locked(now)
-                raise RuntimeError("task lease has expired")
-            task.status = QueuedTaskStatus.COMPLETED
-            task.patch_result = patch_result
-            task.lease_expires_at = None
-            task.heartbeat_at = now
-            task.agent_id = None
-
-    def fail_task(
-        self, task_id: str, agent_id: str, error: str, retry: bool = True
-    ) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            task.error = error
-            task.retry_count += 1
-            should_retry = retry and task.retry_count <= task.max_retries
-            task.status = (
-                QueuedTaskStatus.PENDING if should_retry else QueuedTaskStatus.FAILED
-            )
-            task.agent_id = None
-            task.lease_expires_at = None
-            task.heartbeat_at = self._clock()
-
-    def pending_count(self) -> int:
-        with self._lock:
-            self._reclaim_expired_locked(self._clock())
-            return sum(t.status == QueuedTaskStatus.PENDING for t in self._tasks.values())
-
-    def get_task(self, task_id: str) -> QueuedTask:
-        with self._lock:
-            return self._tasks[task_id]
-
-    def _reclaim_expired_locked(self, now: datetime) -> None:
-        for task in self._tasks.values():
-            if task.status == QueuedTaskStatus.CLAIMED and not task.lease_active(now):
-                task.status = QueuedTaskStatus.PENDING
-                task.agent_id = None
-                task.lease_expires_at = None
-
-    def _dependencies_completed_locked(self, task: QueuedTask) -> bool:
-        return all(
-            self._tasks.get(dep_id) is not None
-            and self._tasks[dep_id].status == QueuedTaskStatus.COMPLETED
-            for dep_id in task.dependencies
-        )
-
-    def _require_owned_task(self, task_id: str, agent_id: str) -> QueuedTask:
-        task = self._tasks.get(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        if task.status != QueuedTaskStatus.CLAIMED or task.agent_id != agent_id:
-            raise PermissionError("task is not claimed by this agent")
-        return task
-
+    def __init__(self, *, lease_seconds: int = 300) -> None:
+        if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
+        self.lease_seconds=lease_seconds; self._lock=RLock(); self._tasks={}; self._plans=set()
     @staticmethod
-    def _extract_tasks(plan: Any) -> list[Any]:
-        if hasattr(plan, "tasks"):
-            value = plan.tasks
-        elif hasattr(plan, "wbs_tasks"):
-            value = plan.wbs_tasks
-        elif isinstance(plan, (list, tuple)):
-            value = plan
-        else:
-            raise TypeError("WBSPlan must expose tasks or wbs_tasks")
-        return list(value)
-
+    def _now(): return datetime.now(timezone.utc)
     @staticmethod
-    def _plan_key(plan: Any) -> str:
-        for attr in ("plan_id", "wbs_id", "id"):
-            value = getattr(plan, attr, None)
-            if value:
-                return f"plan:{value}"
-        tasks = SwarmTaskQueue._extract_tasks(plan)
-        ids = sorted(str(SwarmTaskQueue._task_value(t, "id", "task_id")) for t in tasks)
-        return "tasks:" + ",".join(ids)
-
-    @staticmethod
-    def _normalise_task(item: Any) -> QueuedTask:
-        task_id = str(SwarmTaskQueue._task_value(item, "id", "task_id"))
-        if not task_id or task_id == "None":
-            task_id = str(uuid.uuid4())
-        dependencies = tuple(str(x) for x in (getattr(item, "dependencies", None) or []))
-        metadata = dict(getattr(item, "metadata", None) or {})
-        capabilities = getattr(item, "capabilities", None) or metadata.get("capabilities", [])
-        capabilities = tuple(
-            getattr(cap, "value", str(cap)) for cap in capabilities
-        )
-        priority = getattr(item, "priority", 0)
-        priority = getattr(priority, "value", priority)
-        try:
-            priority = int(priority)
-        except (TypeError, ValueError):
-            priority = 0
-        return QueuedTask(
-            task_id=task_id,
-            name=str(getattr(item, "name", task_id)),
-            dependencies=dependencies,
-            capabilities=capabilities,
-            priority=priority,
-            max_retries=int(getattr(item, "max_retries", 3)),
-            metadata=metadata,
-        )
-
-    @staticmethod
-    def _task_value(item: Any, *names: str) -> Any:
-        for name in names:
-            if isinstance(item, dict) and name in item:
-                return item[name]
-            value = getattr(item, name, None)
-            if value is not None:
-                return value
+    def _v(x,*names):
+        for n in names:
+            if isinstance(x,dict) and n in x: return x[n]
+            v=getattr(x,n,None)
+            if v is not None:return v
         return None
+    def enqueue_wbs_plan(self,plan):
+        pid=str(self._v(plan,"plan_id","wbs_id","id") or uuid.uuid4()); raw=self._v(plan,"tasks","wbs_tasks")
+        if raw is None and isinstance(plan,(list,tuple)):raw=plan
+        if raw is None:raise TypeError("WBS plan must expose tasks or wbs_tasks")
+        with self._lock:
+            if pid in self._plans:return 0
+            count=0
+            for x in raw:
+                tid=str(self._v(x,"task_id","id") or uuid.uuid4()); md=dict(self._v(x,"metadata") or {}); caps=self._v(x,"capabilities") or md.get("capabilities",[]); caps=tuple(getattr(c,"value",str(c)) for c in caps); deps=tuple(str(d) for d in(self._v(x,"dependencies") or [])); p=self._v(x,"priority") or 0; p=int(getattr(p,"value",p))
+                if tid in self._tasks:continue
+                self._tasks[tid]=QueuedTask(tid,str(self._v(x,"name") or tid),deps,caps,p,metadata=md,max_retries=int(self._v(x,"max_retries") or 3));count+=1
+            self._plans.add(pid);return count
+    def _reclaim(self,now):
+        for t in self._tasks.values():
+            if t.status=="CLAIMED" and t.lease_expires_at and t.lease_expires_at<=now:t.status="PENDING";t.agent_id=None;t.lease_expires_at=None
+    def claim_next_task(self,agent_id,capabilities):
+        if not agent_id.strip():raise ValueError("agent_id is required")
+        with self._lock:
+            now=self._now();self._reclaim(now);caps=set(capabilities); ready=[t for t in self._tasks.values() if t.status=="PENDING" and set(t.capabilities).issubset(caps) and all(self._tasks.get(d) and self._tasks[d].status=="COMPLETED" for d in t.dependencies)]
+            if not ready:return None
+            t=sorted(ready,key=lambda x:(-x.priority,x.task_id))[0];t.status="CLAIMED";t.agent_id=agent_id;t.heartbeat_at=now;t.lease_expires_at=now+timedelta(seconds=self.lease_seconds);return t
+    def _owned(self,tid,agent):
+        t=self._tasks.get(tid)
+        if t is None:raise KeyError(tid)
+        if t.status!="CLAIMED" or t.agent_id!=agent:raise PermissionError("task is not claimed by this worker")
+        if not t.lease_expires_at or t.lease_expires_at<=self._now():self._reclaim(self._now());raise RuntimeError("task lease has expired")
+        return t
+    def heartbeat(self,tid,agent):
+        with self._lock:
+            t=self._owned(tid,agent);now=self._now();t.heartbeat_at=now;t.lease_expires_at=now+timedelta(seconds=self.lease_seconds);return t
+    def complete_task(self,tid,agent,result):
+        with self._lock:
+            t=self._owned(tid,agent);t.status="COMPLETED";t.patch_result=result;t.agent_id=None;t.lease_expires_at=None;return t
+    def fail_task(self,tid,agent,error,retry=True):
+        with self._lock:
+            t=self._owned(tid,agent);t.error=error;t.retry_count+=1;t.status="PENDING" if retry and t.retry_count<=t.max_retries else "FAILED";t.agent_id=None;t.lease_expires_at=None;return t
+    def get_task(self,tid):
+        with self._lock:
+            self._reclaim(self._now())
+            if tid not in self._tasks:raise KeyError(tid)
+            return self._tasks[tid]
+    def tasks_for_project(self,pid):
+        with self._lock:
+            self._reclaim(self._now());return [t for t in self._tasks.values() if t.metadata.get("project_id")==pid]
