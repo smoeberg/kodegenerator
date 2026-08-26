@@ -20,6 +20,11 @@ try:
 except ImportError:
     render_workflow_cockpit = None
 
+try:
+    from dashboard.swarm_monitor import render_swarm_monitor
+except ImportError:
+    render_swarm_monitor = None
+
 st.set_page_config(
     page_title="DOR - Controller & Digital Employee Management",
     page_icon="⚡",
@@ -66,6 +71,7 @@ menu = st.sidebar.radio(
     "Vælg Sektion",
     [
         "🚀 System Generator & Workflow",
+        "🤖 Swarm Fleet Monitor",
         "🎛️ Decision Cockpit (HITL)",
         "Overblik & Systemtilstand",
         "Digitale Medarbejdere (Agenter)",
@@ -88,6 +94,13 @@ if menu == "🚀 System Generator & Workflow":
         render_workflow_cockpit()
     else:
         st.error("`dashboard.workflow_cockpit` kunne ikke importeres.")
+
+# --- Sektion: Swarm Fleet Monitor ---
+elif menu == "🤖 Swarm Fleet Monitor":
+    if render_swarm_monitor is not None:
+        render_swarm_monitor()
+    else:
+        st.error("`dashboard.swarm_monitor` kunne ikke importeres.")
 
 # --- Sektion: Decision Cockpit ---
 elif menu == "🎛️ Decision Cockpit (HITL)":
