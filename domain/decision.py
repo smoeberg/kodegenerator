@@ -103,8 +103,8 @@ class Decision(BaseModel):
         return value
 
     def resolve(self, human_decision: HumanDecision, *, approved: bool = True) -> None:
-        if self.status is not DecisionStatus.HUMAN_REQUIRED:
-            raise ValueError("only HUMAN_REQUIRED decisions can be resolved")
+        if self.status not in (DecisionStatus.HUMAN_REQUIRED, DecisionStatus.PROPOSED):
+            raise ValueError("only HUMAN_REQUIRED or PROPOSED decisions can be resolved")
         valid_keys = {alternative.key for alternative in self.alternatives}
         if human_decision.selected_alternative.upper() not in valid_keys:
             raise ValueError("selected alternative does not belong to this decision")

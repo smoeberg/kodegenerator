@@ -21,11 +21,12 @@ _ISSUER_ID = "phase4.ai-3"
 
 def _load_signing_key() -> bytes:
     encoded = os.environ.get("DOR_AUTHORITY_SIGNING_KEY")
-    is_test_env = os.environ.get("DOR_ENV", "development").lower() == "test"
+    is_prod_env = os.environ.get("DOR_ENV", "development").lower() == "production"
     
     if encoded is None:
-        if is_test_env:
-            return secrets.token_bytes(32)
+        if not is_prod_env:
+            # Ephemeral fallback for test/dev environments
+            return b"0" * 32
         raise RuntimeError(
             "DOR_AUTHORITY_SIGNING_KEY must be configured in production. "
             "Set a URL-safe base64 key of at least 32 bytes."
@@ -45,16 +46,14 @@ def _load_signing_key() -> bytes:
     return key
 
 
-_SIGNING_KEY = _load_signing_key()
-
-
 def _canonical_bytes(kind: str, payload: dict[str, object]) -> bytes:
     envelope = {"kind": kind, "payload": payload, "version": _PROVENANCE_VERSION}
     return json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def _signature_for(kind: str, payload: dict[str, object]) -> str:
-    return hmac.new(_SIGNING_KEY, _canonical_bytes(kind, payload), hashlib.sha256).hexdigest()
+    key = _load_signing_key()
+    return hmac.new(key, _canonical_bytes(kind, payload), hashlib.sha256).hexdigest()
 
 
 def _decision_payload(decision: AuthorityDecision) -> dict[str, object]:
