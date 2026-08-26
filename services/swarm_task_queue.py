@@ -1,237 +1,81 @@
-"""Thread-safe, idempotent task queue for parallel DOR swarm workers.
-
-The queue is intentionally dependency-aware and lease based.  It keeps the
-claim/heartbeat/complete transitions atomic under one lock so multiple worker
-threads cannot claim the same WBS task.  A stale lease is reclaimed lazily on
-queue operations, which makes crash recovery deterministic without a
-background reaper.
-"""
+"""Storage-agnostic facade for the swarm task queue."""
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from threading import RLock
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 import uuid
 
-
 class QueuedTaskStatus(str, Enum):
-    PENDING = "PENDING"
-    CLAIMED = "CLAIMED"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-
-
+    PENDING="PENDING"; CLAIMED="CLAIMED"; COMPLETED="COMPLETED"; FAILED="FAILED"
 @dataclass
 class QueuedTask:
-    task_id: str
-    name: str
-    dependencies: tuple[str, ...] = ()
-    capabilities: tuple[str, ...] = ()
-    priority: int = 0
-    status: QueuedTaskStatus = QueuedTaskStatus.PENDING
-    agent_id: Optional[str] = None
-    lease_expires_at: Optional[datetime] = None
-    heartbeat_at: Optional[datetime] = None
-    retry_count: int = 0
-    max_retries: int = 3
-    error: Optional[str] = None
-    patch_result: Any = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    task_id:str; name:str; dependencies:tuple[str,...]=(); capabilities:tuple[str,...]=(); priority:int=0; status:QueuedTaskStatus=QueuedTaskStatus.PENDING; agent_id:Optional[str]=None; lease_expires_at:Optional[datetime]=None; heartbeat_at:Optional[datetime]=None; retry_count:int=0; max_retries:int=3; error:Optional[str]=None; patch_result:Any=None; metadata:dict[str,Any]=field(default_factory=dict)
+    def lease_active(self,now): return self.status==QueuedTaskStatus.CLAIMED and bool(self.lease_expires_at and self.lease_expires_at>now)
 
-    def lease_active(self, now: datetime) -> bool:
-        return self.status == QueuedTaskStatus.CLAIMED and bool(
-            self.lease_expires_at and self.lease_expires_at > now
-        )
-
+class _MemoryTaskQueue:
+    def __init__(self,*,lease_seconds=300,clock=None):
+        if lease_seconds<=0: raise ValueError("lease_seconds must be positive")
+        self.lease_seconds=lease_seconds; self._clock=clock or (lambda:datetime.now(timezone.utc)); self._lock=RLock(); self._tasks={}; self._plan_keys=set()
+    def enqueue_wbs_plan(self,plan):
+        key=self._plan_key(plan); tasks=self._extract_tasks(plan)
+        with self._lock:
+            if key in self._plan_keys:return 0
+            n=0
+            for x in tasks:
+                t=self._normalise_task(x)
+                if t.task_id not in self._tasks:self._tasks[t.task_id]=t;n+=1
+            self._plan_keys.add(key);return n
+    def submit_task(self,task,**_):
+        t=task if isinstance(task,QueuedTask) else self._normalise_task(task); self._tasks.setdefault(t.task_id,t); return t.task_id
+    def claim_next_task(self,agent_id,capabilities):
+        if not agent_id.strip():raise ValueError("agent_id is required")
+        with self._lock:
+            now=self._clock();self._reclaim(now);ready=[t for t in self._tasks.values() if t.status==QueuedTaskStatus.PENDING and set(t.capabilities).issubset(capabilities) and self._deps(t)]
+            if not ready:return None
+            t=sorted(ready,key=lambda x:(-x.priority,x.task_id))[0];t.status=QueuedTaskStatus.CLAIMED;t.agent_id=agent_id;t.heartbeat_at=now;t.lease_expires_at=now+timedelta(seconds=self.lease_seconds);return t
+    def heartbeat(self,tid,agent):
+        t=self._owned(tid,agent)
+        now=self._clock()
+        if not t.lease_active(now):self._reclaim(now);raise RuntimeError("task lease has expired")
+        t.heartbeat_at=now;t.lease_expires_at=now+timedelta(seconds=self.lease_seconds)
+    def complete_task(self,tid,agent,result):
+        t=self._owned(tid,agent);now=self._clock()
+        if not t.lease_active(now):self._reclaim(now);raise RuntimeError("task lease has expired")
+        t.status=QueuedTaskStatus.COMPLETED;t.patch_result=result;t.agent_id=None;t.lease_expires_at=None;t.heartbeat_at=now
+    def fail_task(self,tid,agent,error,retry=True):
+        t=self._owned(tid,agent);t.error=error;t.retry_count+=1;t.status=QueuedTaskStatus.PENDING if retry and t.retry_count<=t.max_retries else QueuedTaskStatus.FAILED;t.agent_id=None;t.lease_expires_at=None;t.heartbeat_at=self._clock()
+    def reclaim_expired(self):
+        with self._lock:return self._reclaim(self._clock())
+    def get_queue_stats(self):
+        self.reclaim_expired();return {s.value.lower():sum(t.status==s for t in self._tasks.values()) for s in QueuedTaskStatus}
+    def pending_count(self):return self.get_queue_stats().get("pending",0)
+    def get_task(self,tid):return self._tasks[tid]
+    def _reclaim(self,now):
+        n=0
+        for t in self._tasks.values():
+            if t.status==QueuedTaskStatus.CLAIMED and not t.lease_active(now):t.status=QueuedTaskStatus.PENDING;t.agent_id=None;t.lease_expires_at=None;n+=1
+        return n
+    def _owned(self,tid,agent):
+        t=self._tasks.get(tid)
+        if not t:raise KeyError(tid)
+        if t.status!=QueuedTaskStatus.CLAIMED or t.agent_id!=agent:raise PermissionError("task is not claimed by this agent")
+        return t
+    def _deps(self,t):return all(self._tasks.get(d) and self._tasks[d].status==QueuedTaskStatus.COMPLETED for d in t.dependencies)
+    @staticmethod
+    def _extract_tasks(plan):return list(getattr(plan,"tasks",getattr(plan,"wbs_tasks",plan)))
+    @staticmethod
+    def _plan_key(plan):return "plan:"+str(getattr(plan,"plan_id",getattr(plan,"id",id(plan))))
+    @staticmethod
+    def _normalise_task(x):
+        tid=str(getattr(x,"task_id",getattr(x,"id",None)) or uuid.uuid4());caps=tuple(getattr(c,"value",str(c)) for c in (getattr(x,"capabilities",[]) or []));return QueuedTask(tid,str(getattr(x,"name",tid)),tuple(map(str,getattr(x,"dependencies",[]) or [])),caps,int(getattr(x,"priority",0) or 0),max_retries=int(getattr(x,"max_retries",3)),metadata=dict(getattr(x,"metadata",{}) or {}))
 
 class SwarmTaskQueue:
-    """In-memory transactional queue suitable for a single process swarm.
-
-    The public API is deliberately storage-agnostic so a durable SQL/Redis
-    implementation can later preserve the same claim semantics.
-    """
-
-    def __init__(self, *, lease_seconds: int = 300, clock=None) -> None:
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        self.lease_seconds = lease_seconds
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._lock = RLock()
-        self._tasks: dict[str, QueuedTask] = {}
-        self._plan_keys: set[str] = set()
-
-    def enqueue_wbs_plan(self, plan: Any) -> int:
-        """Enqueue a WBS plan exactly once; return number of newly queued tasks.
-
-        Accepts the repository's WBS output convention (an object exposing
-        ``tasks`` or ``wbs_tasks``) and also a plain iterable of task objects.
-        """
-        plan_key = self._plan_key(plan)
-        tasks = self._extract_tasks(plan)
-        with self._lock:
-            if plan_key in self._plan_keys:
-                return 0
-            new_tasks = 0
-            for item in tasks:
-                task = self._normalise_task(item)
-                if task.task_id in self._tasks:
-                    continue
-                self._tasks[task.task_id] = task
-                new_tasks += 1
-            self._plan_keys.add(plan_key)
-            return new_tasks
-
-    def claim_next_task(
-        self, agent_id: str, capabilities: list[str]
-    ) -> Optional[QueuedTask]:
-        if not agent_id.strip():
-            raise ValueError("agent_id is required")
-        capability_set = set(capabilities)
-        with self._lock:
-            now = self._clock()
-            self._reclaim_expired_locked(now)
-            ready = [
-                task for task in self._tasks.values()
-                if task.status == QueuedTaskStatus.PENDING
-                and set(task.capabilities).issubset(capability_set)
-                and self._dependencies_completed_locked(task)
-            ]
-            if not ready:
-                return None
-            ready.sort(key=lambda t: (-t.priority, t.task_id))
-            task = ready[0]
-            task.status = QueuedTaskStatus.CLAIMED
-            task.agent_id = agent_id
-            task.heartbeat_at = now
-            task.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
-            return task
-
-    def heartbeat(self, task_id: str, agent_id: str) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            now = self._clock()
-            if not task.lease_active(now):
-                self._reclaim_expired_locked(now)
-                raise RuntimeError("task lease has expired")
-            task.heartbeat_at = now
-            task.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
-
-    def complete_task(self, task_id: str, agent_id: str, patch_result: Any) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            now = self._clock()
-            if not task.lease_active(now):
-                self._reclaim_expired_locked(now)
-                raise RuntimeError("task lease has expired")
-            task.status = QueuedTaskStatus.COMPLETED
-            task.patch_result = patch_result
-            task.lease_expires_at = None
-            task.heartbeat_at = now
-            task.agent_id = None
-
-    def fail_task(
-        self, task_id: str, agent_id: str, error: str, retry: bool = True
-    ) -> None:
-        with self._lock:
-            task = self._require_owned_task(task_id, agent_id)
-            task.error = error
-            task.retry_count += 1
-            should_retry = retry and task.retry_count <= task.max_retries
-            task.status = (
-                QueuedTaskStatus.PENDING if should_retry else QueuedTaskStatus.FAILED
-            )
-            task.agent_id = None
-            task.lease_expires_at = None
-            task.heartbeat_at = self._clock()
-
-    def pending_count(self) -> int:
-        with self._lock:
-            self._reclaim_expired_locked(self._clock())
-            return sum(t.status == QueuedTaskStatus.PENDING for t in self._tasks.values())
-
-    def get_task(self, task_id: str) -> QueuedTask:
-        with self._lock:
-            return self._tasks[task_id]
-
-    def _reclaim_expired_locked(self, now: datetime) -> None:
-        for task in self._tasks.values():
-            if task.status == QueuedTaskStatus.CLAIMED and not task.lease_active(now):
-                task.status = QueuedTaskStatus.PENDING
-                task.agent_id = None
-                task.lease_expires_at = None
-
-    def _dependencies_completed_locked(self, task: QueuedTask) -> bool:
-        return all(
-            self._tasks.get(dep_id) is not None
-            and self._tasks[dep_id].status == QueuedTaskStatus.COMPLETED
-            for dep_id in task.dependencies
-        )
-
-    def _require_owned_task(self, task_id: str, agent_id: str) -> QueuedTask:
-        task = self._tasks.get(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        if task.status != QueuedTaskStatus.CLAIMED or task.agent_id != agent_id:
-            raise PermissionError("task is not claimed by this agent")
-        return task
-
-    @staticmethod
-    def _extract_tasks(plan: Any) -> list[Any]:
-        if hasattr(plan, "tasks"):
-            value = plan.tasks
-        elif hasattr(plan, "wbs_tasks"):
-            value = plan.wbs_tasks
-        elif isinstance(plan, (list, tuple)):
-            value = plan
-        else:
-            raise TypeError("WBSPlan must expose tasks or wbs_tasks")
-        return list(value)
-
-    @staticmethod
-    def _plan_key(plan: Any) -> str:
-        for attr in ("plan_id", "wbs_id", "id"):
-            value = getattr(plan, attr, None)
-            if value:
-                return f"plan:{value}"
-        tasks = SwarmTaskQueue._extract_tasks(plan)
-        ids = sorted(str(SwarmTaskQueue._task_value(t, "id", "task_id")) for t in tasks)
-        return "tasks:" + ",".join(ids)
-
-    @staticmethod
-    def _normalise_task(item: Any) -> QueuedTask:
-        task_id = str(SwarmTaskQueue._task_value(item, "id", "task_id"))
-        if not task_id or task_id == "None":
-            task_id = str(uuid.uuid4())
-        dependencies = tuple(str(x) for x in (getattr(item, "dependencies", None) or []))
-        metadata = dict(getattr(item, "metadata", None) or {})
-        capabilities = getattr(item, "capabilities", None) or metadata.get("capabilities", [])
-        capabilities = tuple(
-            getattr(cap, "value", str(cap)) for cap in capabilities
-        )
-        priority = getattr(item, "priority", 0)
-        priority = getattr(priority, "value", priority)
-        try:
-            priority = int(priority)
-        except (TypeError, ValueError):
-            priority = 0
-        return QueuedTask(
-            task_id=task_id,
-            name=str(getattr(item, "name", task_id)),
-            dependencies=dependencies,
-            capabilities=capabilities,
-            priority=priority,
-            max_retries=int(getattr(item, "max_retries", 3)),
-            metadata=metadata,
-        )
-
-    @staticmethod
-    def _task_value(item: Any, *names: str) -> Any:
-        for name in names:
-            if isinstance(item, dict) and name in item:
-                return item[name]
-            value = getattr(item, name, None)
-            if value is not None:
-                return value
-        return None
+    """Facade selecting in-memory (default) or SQLite persistence."""
+    def __init__(self, *, lease_seconds=300, clock=None, backend="memory", db_path="swarm.db"):
+        if backend in ("sqlite","durable"):
+            from .swarm_persistence import SQLiteTaskQueue
+            self._backend=SQLiteTaskQueue(db_path,lease_seconds=lease_seconds,clock=clock)
+        else:self._backend=_MemoryTaskQueue(lease_seconds=lease_seconds,clock=clock)
+    def __getattr__(self,name):return getattr(self._backend,name)
