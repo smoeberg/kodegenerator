@@ -6,6 +6,7 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
     ports:
       - "8000:8000"
     volumes:
@@ -31,6 +32,7 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
     volumes:
       - sqlite-data:/data
     depends_on:
@@ -66,6 +68,7 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
     command: ["python", "-m", "services.tui"]
     volumes:
       - sqlite-data:/data
