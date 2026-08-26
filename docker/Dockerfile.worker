@@ -12,5 +12,5 @@ COPY . /app
 RUN chown -R kodegen:kodegen /app
 USER kodegen
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import os; raise SystemExit(0 if os.path.isdir('/app') else 1)"
-ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]
 CMD ["python", "-m", "services.worker_agent"]
