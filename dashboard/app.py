@@ -77,6 +77,7 @@ page = st.sidebar.radio(
         "Active Workflows",
         "Governance Gates",
         "Artifacts Registry",
+        "📌 Human Approvals & PM Inbox",
     ],
 )
 
@@ -266,3 +267,42 @@ elif page == "Artifacts Registry":
         },
     ]
     st.dataframe(pd.DataFrame(artifacts_data), use_container_width=True)
+
+elif page == "📌 Human Approvals & PM Inbox":
+    st.header("📌 Human Approval Queue & Project Manager Inbox")
+    st.markdown("Her kan medarbejdere se afventende godkendelser, eskaleringer og dagens udfordringer fra AI-projektlederen, uden at systemets processer blokeres.")
+
+    try:
+        df_queue = pd.read_sql_query(
+            "SELECT id, topic, status, attempts, created_at, payload FROM runtime_queue_messages WHERE status != 'acked' ORDER BY created_at DESC",
+            conn,
+        )
+    except Exception:
+        df_queue = pd.DataFrame()
+
+    if not df_queue.empty:
+        st.subheader("📋 Aktive Kø-elementer & Godkendelser")
+        for idx, row in df_queue.iterrows():
+            payload_dict = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+            with st.expander(f"[{row['topic'].upper()}] {payload_dict.get('title', row['id'])} (Status: {row['status']})"):
+                st.write(f"**ID:** `{row['id']}`")
+                st.write(f"**Oprettet:** {row['created_at']}")
+                st.write(f"**Beskrivelse:** {payload_dict.get('description', 'Ingen beskrivelse')}")
+                st.json(payload_dict)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Godkend / Ack", key=f"approve_{row['id']}"):
+                        conn.execute("UPDATE runtime_queue_messages SET status = 'acked', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+                        conn.commit()
+                        st.success("Godkendt og frigivet til agent-køen!")
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Afvis / Failure", key=f"reject_{row['id']}"):
+                        conn.execute("UPDATE runtime_queue_messages SET status = 'failed', last_error = 'Rejected by human reviewer in UI', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+                        conn.commit()
+                        st.warning("Markeret som afvist.")
+                        st.rerun()
+    else:
+        st.info("✨ Ingen afventende godkendelser eller eskaleringer i køen i øjeblikket. Alle processer kører uforstyrret.")
+
