@@ -21,15 +21,27 @@ _ISSUER_ID = "phase4.ai-3"
 
 def _load_signing_key() -> bytes:
     encoded = os.environ.get("DOR_AUTHORITY_SIGNING_KEY")
+    is_test_env = os.environ.get("DOR_ENV", "development").lower() == "test"
+    
     if encoded is None:
-        return secrets.token_bytes(32)
+        if is_test_env:
+            return secrets.token_bytes(32)
+        raise RuntimeError(
+            "DOR_AUTHORITY_SIGNING_KEY must be configured in production. "
+            "Set a URL-safe base64 key of at least 32 bytes."
+        )
+    
     padded = encoded + "=" * (-len(encoded) % 4)
     try:
         key = base64.b64decode(padded, altchars=b"-_", validate=True)
     except (binascii.Error, ValueError) as exc:
         raise RuntimeError("DOR_AUTHORITY_SIGNING_KEY must be URL-safe base64") from exc
+    
     if len(key) < 32:
-        raise RuntimeError("DOR_AUTHORITY_SIGNING_KEY must decode to at least 32 bytes")
+        raise RuntimeError(
+            "DOR_AUTHORITY_SIGNING_KEY must decode to at least 32 bytes. "
+            f"Got {len(key)} bytes."
+        )
     return key
 
 

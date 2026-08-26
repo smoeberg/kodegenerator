@@ -36,6 +36,7 @@ services:
       ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
       DOR_QUEUE_BACKEND: database
       DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     depends_on:
       postgres:
@@ -47,7 +48,6 @@ services:
 
   dor-worker:
     build: .
-    command: ["python", "-m", "workers.runtime_worker"]
     command: ["python", "-m", "infrastructure.runtime_worker"]
     environment:
       DOR_ENV: production
@@ -55,6 +55,8 @@ services:
       ARTIFACT_STORE_URL: http://minio:9000
       ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
       DOR_QUEUE_BACKEND: database
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     depends_on:
       postgres:

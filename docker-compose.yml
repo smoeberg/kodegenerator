@@ -6,6 +6,7 @@ services:
     environment:
       DATABASE_URL: sqlite:///./dor_runtime.db
       DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     volumes:
       - ./data:/app/data
@@ -13,7 +14,7 @@ services:
       - otel-collector
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prometheus/prometheus:latest
     ports:
       - "9090:9090"
     volumes:
