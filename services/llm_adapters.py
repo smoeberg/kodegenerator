@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Mapping, Optional, Protocol
+from dataclasses import dataclass
+from typing import Any, Iterator, Mapping, Optional, Protocol
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+from .secure_http import validate_http_url
 
 
 @dataclass(frozen=True)
@@ -89,13 +91,15 @@ class OpenAIAdapter(BaseLLMAdapter):
 
     def __init__(self, api_key: str, model: str = "gpt-4o-mini", *, base_url: str = "https://api.openai.com/v1", **kwargs: Any) -> None:
         super().__init__(model, **kwargs)
-        self.api_key, self.base_url = api_key, base_url.rstrip("/")
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
 
     def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
         payload: dict[str, Any] = {"model": self.model, "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
-        if schema is not None: payload["response_format"] = {"type": "json_object"}
-        req = Request(f"{self.base_url}/chat/completions", json.dumps(payload).encode(), {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
-        with urlopen(req, timeout=60) as result: data = json.load(result)
+        if schema is not None:
+            payload["response_format"] = {"type": "json_object"}
+        req = Request(validate_http_url(f"{self.base_url}/chat/completions"), json.dumps(payload).encode(), {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
+        with urlopen(req, timeout=60) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
+            data = json.load(result)
         usage = data.get("usage", {})
         return LLMResponse(data["choices"][0]["message"]["content"], data.get("model", self.model), int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)), int(usage.get("total_tokens", 0)), data)
 
@@ -106,12 +110,13 @@ class AnthropicAdapter(BaseLLMAdapter):
 
     def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest", *, base_url: str = "https://api.anthropic.com/v1", **kwargs: Any) -> None:
         super().__init__(model, **kwargs)
-        self.api_key, self.base_url = api_key, base_url.rstrip("/")
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
 
     def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
         payload = {"model": self.model, "max_tokens": 4096, "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
-        req = Request(f"{self.base_url}/messages", json.dumps(payload).encode(), {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
-        with urlopen(req, timeout=60) as result: data = json.load(result)
+        req = Request(validate_http_url(f"{self.base_url}/messages"), json.dumps(payload).encode(), {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
+        with urlopen(req, timeout=60) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
+            data = json.load(result)
         usage = data.get("usage", {})
         text = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
         return LLMResponse(text, data.get("model", self.model), int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0)), int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0)), data)
@@ -122,12 +127,14 @@ class OllamaAdapter(BaseLLMAdapter):
     provider = "ollama"
 
     def __init__(self, model: str = "llama3.1", *, base_url: str = "http://localhost:11434", **kwargs: Any) -> None:
-        super().__init__(model, **kwargs); self.base_url = base_url.rstrip("/")
+        super().__init__(model, **kwargs)
+        self.base_url = validate_http_url(base_url).rstrip("/")
 
     def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
         payload = {"model": self.model, "prompt": prompt, "stream": False, "options": {"temperature": temperature}}
-        req = Request(f"{self.base_url}/api/generate", json.dumps(payload).encode(), {"Content-Type": "application/json"})
-        with urlopen(req, timeout=120) as result: data = json.load(result)
+        req = Request(validate_http_url(f"{self.base_url}/api/generate"), json.dumps(payload).encode(), {"Content-Type": "application/json"})
+        with urlopen(req, timeout=120) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
+            data = json.load(result)
         return LLMResponse(data.get("response", ""), data.get("model", self.model), int(data.get("prompt_eval_count", 0)), int(data.get("eval_count", 0)), int(data.get("prompt_eval_count", 0)) + int(data.get("eval_count", 0)), data)
 
 
@@ -136,7 +143,8 @@ class MockLLMAdapter(BaseLLMAdapter):
     provider = "mock"
 
     def __init__(self, response: str = "mock response", model: str = "mock", **kwargs: Any) -> None:
-        super().__init__(model, **kwargs); self.response = response
+        super().__init__(model, **kwargs)
+        self.response = response
 
     def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
         return LLMResponse(self.response, self.model, len(prompt.split()), len(self.response.split()), len(prompt.split()) + len(self.response.split()))
