@@ -405,7 +405,25 @@ elif page == "📈 Ledelsesrapport (Executive Report)":
 
     st.markdown("---")
 
-    # --- Sektion 4: Systemkvalitet & Driftssundhed ---
+    # --- Sektion 5: Multi-Provider & LibreChat Gateway ---
+    st.subheader("🌐 5. Multi-Provider & LibreChat Gateway")
+    st.markdown("Systemet understøtter fuldt ud Universal API-routing til alle store udbydere samt **LibreChat** som samlet gateway for jeres AI-agenter.")
+
+    from phase4.adaptation.multi_provider import MultiProviderGateway
+    providers = MultiProviderGateway.get_provider_list()
+
+    cols = st.columns(4)
+    for i, prov_key in enumerate(providers):
+        prov_info = MultiProviderGateway.SUPPORTED_PROVIDERS[prov_key]
+        with cols[i % 4]:
+            st.metric(label=prov_info["name"], value="Aktiv 🟢", delta=prov_info["api_format"])
+
+    with st.expander("⚙️ Konfigurer og Test Provider Routing"):
+        selected_prov = st.selectbox("Vælg AI-udbyder / Gateway", providers)
+        test_prompt = st.text_input("Test Prompt", "Analyser legacy kode og foreslå refactoring.")
+        if st.button("Test Routing & Dispatch"):
+            res = MultiProviderGateway.route_request(selected_prov, test_prompt)
+            st.json(res)
     st.subheader("🛡️ 4. Systemkvalitet, Driftssundhed & GitHub Auth")
     
     from phase4.adaptation.drift_detector import RepositoryDriftDetector
