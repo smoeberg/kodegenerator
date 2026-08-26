@@ -5,9 +5,9 @@ import ast
 import json
 import re
 import subprocess
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,6 @@ class SbomDocument:
 class SupplyChainGuard:
     """Merge gate for secrets, vulnerable declarations, and service imports."""
 
-    # Intentionally small, deterministic baseline. Entries are conservative minimums.
     STATIC_CVES: Mapping[str, tuple[str, str, str]] = {
         "requests": ("2.31.0", "CVE-2024-35195", "2.32.0"),
         "urllib3": ("2.2.1", "CVE-2024-37891", "2.2.2"),
@@ -88,7 +87,7 @@ class SupplyChainGuard:
         ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")),
         ("dotenv_secret", re.compile(r"(?i)^\s*\+?\s*(?:[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD))\s*=\s*[^\s#][^#]*$")),
     )
-
+    _DOTENV_LINE = re.compile(r"^\s*\+?\s*[A-Z][A-Z0-9_]*\s*=\s*[^\s#][^#]*$")
     _VERSION_RE = re.compile(r"(?P<op>===|==|>=|<=|~=|>|<)?\s*(?P<version>\d+(?:\.\d+){0,3}(?:[a-zA-Z0-9.-]*)?)")
 
     def __init__(self, project_root: str | Path = ".", *, cve_database: Mapping[str, tuple[str, str, str]] | None = None) -> None:
@@ -98,8 +97,11 @@ class SupplyChainGuard:
     def scan_patch(self, patch: str) -> ScanReport:
         findings: list[ScanFinding] = []
         lines = patch.splitlines()
+        current_file = ""
         for number, line in enumerate(lines, 1):
-            # Only additions are merge-introducing. Ignore diff metadata and deletions.
+            if line.startswith("+++ b/"):
+                current_file = line[6:]
+                continue
             if not line.startswith("+") or line.startswith("+++"):
                 continue
             content = line[1:]
@@ -108,6 +110,11 @@ class SupplyChainGuard:
                 if match:
                     evidence = self._redact(content, match.start(), match.end())
                     findings.append(ScanFinding(kind, number, pattern.pattern, evidence))
+            if Path(current_file).name.startswith(".env"):
+                match = self._DOTENV_LINE.search(content)
+                if match and not any(f.line == number and f.kind == "dotenv_file" for f in findings):
+                    start, end = match.span()
+                    findings.append(ScanFinding("dotenv_file", number, self._DOTENV_LINE.pattern, self._redact(content, start, end)))
         return ScanReport(findings=findings, scanned_lines=len(lines))
 
     @staticmethod
@@ -131,15 +138,31 @@ class SupplyChainGuard:
     def _parse_manifest(self, manifest: str | Path | Mapping[str, Any]) -> dict[str, str]:
         if isinstance(manifest, Mapping):
             if "dependencies" in manifest or "devDependencies" in manifest:
-                result = {}
+                result: dict[str, str] = {}
                 for section in ("dependencies", "devDependencies"):
                     result.update({str(k): str(v) for k, v in manifest.get(section, {}).items()})
                 return result
             return {str(k): str(v) for k, v in manifest.items()}
-        path = Path(manifest)
-        text = path.read_text(encoding="utf-8")
-        if path.name == "package.json":
-            return self._parse_manifest(json.loads(text))
+        value = str(manifest)
+        path = Path(value)
+        if "\n" in value or "\r" in value:
+            return self._parse_requirements_text(value)
+        try:
+            if path.exists():
+                text = path.read_text(encoding="utf-8")
+            else:
+                text = value
+        except OSError:
+            text = value
+        if path.name == "package.json" or text.lstrip().startswith("{"):
+            try:
+                return self._parse_manifest(json.loads(text))
+            except json.JSONDecodeError:
+                pass
+        return self._parse_requirements_text(text)
+
+    @staticmethod
+    def _parse_requirements_text(text: str) -> dict[str, str]:
         result: dict[str, str] = {}
         for raw in text.splitlines():
             line = raw.strip()
@@ -192,7 +215,7 @@ class SupplyChainGuard:
         except OSError:
             patch = ""
         scan = guard.scan_patch(patch)
-        manifest_reports: list[AuditReport] = []
+        manifest_reports = []
         for name in ("requirements.txt", "package.json"):
             path = root / name
             if path.exists():
