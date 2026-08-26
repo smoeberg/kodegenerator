@@ -6,80 +6,58 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
-    ports:
-      - "8000:8000"
-    volumes:
-      - sqlite-data:/data
+    ports: ["8000:8000"]
+    volumes: [sqlite-data:/data]
     depends_on:
-      redis:
-        condition: service_healthy
+      redis: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
     deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 768M
-
+      resources: {limits: {cpus: "1.0", memory: 768M}}
   worker-pool:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.worker
+    build: {context: ., dockerfile: docker/Dockerfile.worker}
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
-    volumes:
-      - sqlite-data:/data
+    volumes: [sqlite-data:/data]
     depends_on:
-      redis:
-        condition: service_healthy
+      redis: {condition: service_healthy}
     deploy:
       replicas: 2
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 768M
-
+      resources: {limits: {cpus: "1.0", memory: 768M}}
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
+    volumes: [redis-data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
     deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-
+      resources: {limits: {cpus: "0.5", memory: 256M}}
+  sqlite-volume:
+    image: alpine:3.20
+    command: ["sh", "-c", "sleep infinity"]
+    volumes: [sqlite-data:/data]
+    deploy:
+      resources: {limits: {cpus: "0.1", memory: 32M}}
   tui:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.api
+    build: {context: ., dockerfile: docker/Dockerfile.api}
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
     command: ["python", "-m", "services.tui"]
-    volumes:
-      - sqlite-data:/data
+    volumes: [sqlite-data:/data]
     depends_on:
-      api:
-        condition: service_healthy
+      api: {condition: service_healthy}
     stdin_open: true
     tty: true
     deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-
+      resources: {limits: {cpus: "0.5", memory: 512M}}
 volumes:
   sqlite-data:
   redis-data:
