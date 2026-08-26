@@ -405,18 +405,37 @@ elif page == "📈 Ledelsesrapport (Executive Report)":
 
     st.markdown("---")
 
-    # --- Sektion 4: Systemkvalitet & Sundhed ---
-    st.subheader("🛡️ 4. Systemkvalitet & Driftssundhed")
+    # --- Sektion 4: Systemkvalitet & Driftssundhed ---
+    st.subheader("🛡️ 4. Systemkvalitet, Driftssundhed & GitHub Auth")
     
     from phase4.adaptation.drift_detector import RepositoryDriftDetector
+    from phase4.adaptation.github_health import GitHubHealthChecker
+    
     d_detector = RepositoryDriftDetector()
     head_hash = d_detector.get_current_head()
+    gh_health = GitHubHealthChecker.check_health()
 
-    sys1, sys2 = st.columns(2)
+    sys1, sys2, sys3 = st.columns(3)
     with sys1:
         st.info(f"**Repository Sync Status**\n- Git HEAD: `{head_hash}`\n- Status: Synkroniseret\n- Out-of-band detektion: Aktiv")
     with sys2:
-        st.info(f"**Runtime Queue Health**\n- Durable Ledger: SQLite WAL aktiv\n- Transaction Fencing: Aktiveret\n- Timeout Sweeper: Aktiv (24t TTL)")
+        st.info(f"**Runtime Queue Health**\n- Durable Ledger: SQLite WAL\n- Transaction Fencing: Aktiv\n- Timeout Sweeper: 24t TTL")
+    with sys3:
+        if gh_health["is_healthy"]:
+            st.success(f"**GitHub Auth Status**\n- Forbindelse: OK 🟢\n- Token fundet: {'Ja' if gh_health['token_present'] else 'Nej (Standard)'}\n- Remote: `{gh_health['remote_url'][:30]}...`")
+        else:
+            st.warning(f"**GitHub Auth Advarsel ⚠️**\n- Status: {gh_health['auth_status']}\n- Årsag: {gh_health['details']}\n- *Kø-handling: Paused / Human Notice*")
+
+    with st.expander("🔐 GitHub Kredentialer & Token-håndtering"):
+        st.markdown("Hvis GitHub-tokenet udløber, eller rettighederne ændres, fanger systemet det automatisk. Du kan indtaste et nyt token herunder for at re-authentificere systemet:")
+        new_token = st.text_input("Ny GITHUB_TOKEN", type="password", help="Indsæt ny GitHub Personal Access Token")
+        if st.button("Opdater & Test Forbindelse"):
+            if new_token:
+                os.environ["GITHUB_TOKEN"] = new_token
+                st.success("GitHub token opdateret i sessionen! Genindlæser...")
+                st.rerun()
+            else:
+                st.warning("Indtast venligst et gyldigt token.")
 
     st.markdown("### 📌 Konklusion for Ledelsen")
     st.markdown("Systemet er fuldt operativt, hærdet mod fejl og udstyret med både kognitive modstandsmekanismer (mod tuben), projektleder-køer, menneskelig godkendelse med timeout og automatisk detektering af menneskelige koderettelser. Organisationen er klar til fuld skala drift.")
