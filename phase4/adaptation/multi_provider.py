@@ -8,6 +8,7 @@ class MultiProviderGateway:
     """Manages routing between OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LibreChat etc."""
 
     SUPPORTED_PROVIDERS: Dict[str, Dict[str, Any]] = {
+        "rool": {"name": "Rool Machine (Native AI Core)", "api_format": "rool_native", "default_model": "rool-machine-mind"},
         "openai": {"name": "OpenAI / ChatGPT", "api_format": "openai", "default_model": "gpt-4o"},
         "anthropic": {"name": "Anthropic / Claude", "api_format": "anthropic", "default_model": "claude-3-5-sonnet"},
         "google": {"name": "Google Gemini", "api_format": "google", "default_model": "gemini-1.5-pro"},
