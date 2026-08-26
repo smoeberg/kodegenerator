@@ -1,4 +1,5 @@
-"""DOR Runtime API application entrypoint."""
+"""DOR control-plane API entrypoint."""
+from __future__ import annotations
 
 import os
 from typing import Annotated
@@ -18,7 +19,7 @@ _db = Database()
 # Import auth components (will fail if DOR_JWT_SECRET_KEY is missing in non-test env)
 if IS_PRODUCTION or os.environ.get("DOR_JWT_SECRET_KEY"):
     from api.auth import User, get_current_active_user
-    from api.endpoints import auth, control_plane, implementation_agent, workflows
+    from api.endpoints import auth, control_plane, decisions, implementation_agent, workflows
     HAS_AUTH = True
 else:
     # Allow API to start without auth for test/development
@@ -27,16 +28,17 @@ else:
 app = FastAPI(
     title="Digital Organization Runtime (DOR)",
     version="0.1.0",
-    description="Canonical runtime API for organization-scoped workflow execution.",
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
+
 configure_tracing(app)
 
 
 @app.get("/health", tags=["system"])
-async def health() -> dict:
-    """Return a minimal liveness response without initializing persistence."""
+async def health() -> dict[str, str]:
+    """Return runtime liveness status without authenticating."""
     return {"status": "ok"}
 
 
@@ -71,5 +73,9 @@ if HAS_AUTH:
     app.include_router(workflows.router, dependencies=[Depends(get_current_active_user)])
     app.include_router(
         implementation_agent.router,
+        dependencies=[Depends(get_current_active_user)],
+    )
+    app.include_router(
+        decisions.router,
         dependencies=[Depends(get_current_active_user)],
     )
