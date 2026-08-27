@@ -138,7 +138,7 @@ class BubblewrapProcessAdapter:
             "--tmpfs", os.sep,
             "--dev", "/dev",
             "--proc", "/proc",
-            "--tmpfs", "/tmp",
+            "--tmpfs", "/tmp",  # nosec B108
         ]
         # Build an empty root and expose only the runtime needed to launch
         # allowlisted executables.  In particular, never inherit /etc, /app,

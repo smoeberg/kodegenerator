@@ -38,23 +38,18 @@ validate_production_security_configuration()
 # Initialize database for health checks
 _db = Database()
 
-# Import auth components (will fail if DOR_JWT_SECRET_KEY is missing in non-test env)
-if IS_PRODUCTION or os.environ.get("DOR_JWT_SECRET_KEY"):
-    from api.auth import User, get_current_active_user
-    from api.endpoints import (
-        auth,
-        control_plane,
-        decisions,
-        implementation_agent,
-        swarm,
-        swarm_operations,
-        swarm_websocket,
-        workflows,
-    )
-    HAS_AUTH = True
-else:
-    # Allow API to start without auth for test/development
-    HAS_AUTH = False
+from api.auth import User, get_current_active_user
+from api.endpoints import (
+    auth,
+    control_plane,
+    decisions,
+    implementation_agent,
+    swarm,
+    swarm_operations,
+    swarm_websocket,
+    workflows,
+)
+HAS_AUTH = True
 
 app = FastAPI(
     title="Digital Organization Runtime (DOR)",
