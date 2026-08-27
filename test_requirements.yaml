@@ -1,0 +1,55 @@
+# test_requirements.yaml
+
+project_name: "User Service API"
+project_description: "A REST API for managing users in a multi-tenant system"
+version: "1.0.0"
+
+requirements:
+  - id: REQ-001
+    description: "Create a new user"
+    acceptance_criteria:
+      - "User must have a unique email address"
+      - "User must have a name"
+      - "User must have a role (admin, user, or guest)"
+      - "Password must be at least 8 characters"
+      - "Returns user ID on success"
+    priority: high
+    security: "authentication_required: true"
+    
+  - id: REQ-002
+    description: "Get user by ID"
+    acceptance_criteria:
+      - "Returns user data when user exists"
+      - "Returns 404 when user does not exist"
+      - "Returns 403 when requesting user in different organization"
+    priority: high
+    security: "authentication_required: true"
+    
+  - id: REQ-003
+    description: "Update user"
+    acceptance_criteria:
+      - "Can update name, email, role, and password"
+      - "Cannot update user in different organization"
+      - "Email must remain unique after update"
+    priority: high
+    security: "authentication_required: true"
+    
+  - id: REQ-004
+    description: "Delete user"
+    acceptance_criteria:
+      - "User is soft-deleted (not permanently removed)"
+      - "Cannot delete user in different organization"
+      - "Deleted user cannot be retrieved"
+      - "Returns 404 when user does not exist"
+    priority: medium
+    security: "authentication_required: true"
+    
+  - id: REQ-005
+    description: "List users"
+    acceptance_criteria:
+      - "Returns paginated list of users in the same organization"
+      - "Supports filtering by role"
+      - "Supports sorting by name, email, created_at"
+      - "Total count is included in response"
+    priority: medium
+    security: "authentication_required: true"
