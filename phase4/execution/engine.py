@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from threading import RLock
 
@@ -26,7 +27,12 @@ class ExecutionRejected(ExecutionError): pass
 class ExecutionEngine:
     def __init__(self, adapters: tuple[ExecutionAdapter, ...] = (), ledger: ExecutionReplayLedger | None = None) -> None:
         self._adapters: dict[str, ExecutionAdapter] = {}
-        self._ledger = ledger or InMemoryReplayLedger()
+        production = os.getenv("DOR_ENV", "").strip().lower() == "production" or os.getenv(
+            "IS_PRODUCTION", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if production and (ledger is None or isinstance(ledger, InMemoryReplayLedger)):
+            raise RuntimeError("production requires a durable execution replay ledger")
+        self._ledger = ledger if ledger is not None else InMemoryReplayLedger()
         self._audit: list[ExecutionResult] = []
         self._lock = RLock()
         for adapter in adapters: self.register_adapter(adapter)
@@ -65,7 +71,7 @@ class ExecutionEngine:
             adapter_result=adapter.execute(request, dispatch=dispatch)
             if adapter_result is None: result=self._failed(request,execution_id,decision,"adapter rejected execution without a verified governed dispatch")
             else: result=ExecutionResult(execution_id=execution_id,request_id=request.request_id,authority_policy_id=decision.policy_id,authority_policy_version=decision.policy_version,agent_identity=request.agent_identity,action=request.action,resource=request.resource,context_packet_id=request.context_packet_id,status=ExecutionStatus.SUCCEEDED,adapter_id=adapter.adapter_id,output=adapter_result.output,error=None,executed_at=datetime.now(timezone.utc).isoformat())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - adapter failures become governed FAILED results
             result=self._failed(request,execution_id,decision,f"{type(exc).__name__}: {exc}")
         try:
             if result.status is ExecutionStatus.SUCCEEDED: self._ledger.complete_succeeded(execution_id,result,fencing_token=token)

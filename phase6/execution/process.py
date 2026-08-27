@@ -6,11 +6,16 @@ import resource
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
 
-from phase6.execution.sandbox import ExecutionOutcome, ExecutionResult, ExecutionSpec, InvalidExecutionSpec
+from phase6.execution.sandbox import (
+    ExecutionOutcome,
+    ExecutionResult,
+    ExecutionSpec,
+    InvalidExecutionSpec,
+)
 
 
 class ProcessSandboxUnavailable(RuntimeError):
@@ -97,6 +102,11 @@ class BubblewrapProcessAdapter:
                 raise InvalidExecutionSpec(f"sandbox filesystem path does not exist: {path}")
         tmp_root = Path(tempfile.gettempdir()).resolve()
         var_tmp_root = (Path(os.sep) / "var" / "tmp").resolve()
+        allowed_data_roots = (tmp_root, var_tmp_root)
+        for path in spec.read_only_paths:
+            resolved = Path(path).resolve(strict=True)
+            if not any(resolved == root or root in resolved.parents for root in allowed_data_roots):
+                raise InvalidExecutionSpec("read-only sandbox data paths must be under /tmp or /var/tmp")
         for path in spec.writable_paths:
             source = Path(path)
             if source.is_symlink():
@@ -104,8 +114,7 @@ class BubblewrapProcessAdapter:
             resolved = source.resolve(strict=True)
             if resolved == Path(os.sep):
                 raise InvalidExecutionSpec("root cannot be writable")
-            allowed_roots = (tmp_root, var_tmp_root)
-            if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+            if not any(resolved == root or root in resolved.parents for root in allowed_data_roots):
                 raise InvalidExecutionSpec("writable sandbox paths must be under /tmp or /var/tmp")
             if not resolved.is_dir():
                 raise InvalidExecutionSpec("writable sandbox paths must be directories")
@@ -117,7 +126,6 @@ class BubblewrapProcessAdapter:
                 raise InvalidExecutionSpec("working_directory must be mounted")
 
     def _build_command(self, spec):
-        sandbox_tmp = str(Path(tempfile.gettempdir()).resolve())
         command = [
             self._bubblewrap_path or "bwrap",
             "--die-with-parent",
@@ -127,11 +135,19 @@ class BubblewrapProcessAdapter:
             "--unshare-uts",
             "--unshare-ipc",
             "--unshare-net",
-            "--ro-bind", os.sep, os.sep,
+            "--tmpfs", os.sep,
             "--dev", "/dev",
             "--proc", "/proc",
-            "--tmpfs", sandbox_tmp,
+            "--tmpfs", "/tmp",
         ]
+        # Build an empty root and expose only the runtime needed to launch
+        # allowlisted executables.  In particular, never inherit /etc, /app,
+        # user homes, or arbitrary host paths through a root bind.
+        for system_path in ("/usr", "/lib", "/lib64", "/bin"):
+            if os.path.exists(system_path):
+                command.extend(("--ro-bind", system_path, system_path))
+        for blocked_path in ("/app", "/etc", "/home", "/root"):
+            command.extend(("--dir", blocked_path))
         for path in spec.writable_paths:
             target = str(Path(path).resolve())
             command.extend(("--dir", target))

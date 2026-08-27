@@ -7,16 +7,37 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
+from phase4.authority import (
+    AuthorityDecision,
+    AuthorityEngine,
+    AuthorityPolicy,
+    AuthorityRule,
+    Decision,
+)
 from phase4.authority.grants import VerifiedAuthorityGrant
-from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.execution import (
+    ExecutionEngine,
+    ExecutionReplayLedger,
+    ExecutionResult,
+    ExecutionStatus,
+)
 from phase4.execution.models import ExecutionRequest, GovernedDispatch
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import PatchProposalNotFoundError
-from .patch_adapter import PatchExecutionAdapter, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
-from .patch_models import IMPLEMENTATION_APPLY_ACTION, PatchExecutionRecord, PatchExecutionRequest, TrustedToolSpec
+from .patch_adapter import (
+    PatchExecutionAdapter,
+    PatchExecutionRequestNotFoundError,
+    ToolRunner,
+    WorkspacePatchExecutor,
+)
+from .patch_models import (
+    IMPLEMENTATION_APPLY_ACTION,
+    PatchExecutionRecord,
+    PatchExecutionRequest,
+    TrustedToolSpec,
+)
 from .runtime import ImplementationAgentRuntime
 from .sandbox_tool_runner import BubblewrapToolRunner
 
@@ -112,7 +133,7 @@ class _GovernedPatchAdapter:
 class GovernedPatchExecutionRuntime:
     """Apply only stored proposals through operator-fixed tools and AI-3 authority."""
 
-    def __init__(self, *, proposal_runtime: ImplementationAgentRuntime, workspace_root: Path, tools: tuple[TrustedToolSpec, ...], tool_runner: ToolRunner | None = None, max_file_bytes: int = 16 * 1024 * 1024, max_workspace_files: int = 20_000, max_workspace_bytes: int = 256 * 1024 * 1024, patch_timeout_seconds: int = 30) -> None:
+    def __init__(self, *, proposal_runtime: ImplementationAgentRuntime, workspace_root: Path, tools: tuple[TrustedToolSpec, ...], tool_runner: ToolRunner | None = None, max_file_bytes: int = 16 * 1024 * 1024, max_workspace_files: int = 20_000, max_workspace_bytes: int = 256 * 1024 * 1024, patch_timeout_seconds: int = 30, replay_ledger: ExecutionReplayLedger | None = None) -> None:
         if not isinstance(proposal_runtime, ImplementationAgentRuntime):
             raise TypeError("proposal_runtime must be an ImplementationAgentRuntime")
         if not isinstance(tools, tuple) or any(not isinstance(tool, TrustedToolSpec) for tool in tools):
@@ -126,7 +147,7 @@ class GovernedPatchExecutionRuntime:
         self._authority = AuthorityEngine(self._policy_for())
         self._adapter = PatchExecutionAdapter(adapter_id="adapter.implementation.governed-patch", workspace=self._workspace)
         self._governed_adapter = _GovernedPatchAdapter(self._adapter)
-        self._execution = ExecutionEngine((self._governed_adapter,))
+        self._execution = ExecutionEngine((self._governed_adapter,), ledger=replay_ledger)
         self._outcomes = OutcomeEngine()
         self._commands: dict[str, tuple[str, PatchExecutionRequest]] = {}
         self._lock = RLock()

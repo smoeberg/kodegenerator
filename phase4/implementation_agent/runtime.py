@@ -7,15 +7,43 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from threading import RLock
 
-from phase4.agent_registry import AgentRecord, AgentRegistry, AgentRole, AgentVersion, Capability
-from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision, VerifiedAuthorityGrant
-from phase4.context_packet import ContextItem, ContextPacket, ContextPacketEngine, ContextRequest
-from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
+from phase4.agent_registry import (
+    AgentRecord,
+    AgentRegistry,
+    AgentRole,
+    AgentVersion,
+    Capability,
+)
+from phase4.authority import (
+    AuthorityDecision,
+    AuthorityEngine,
+    AuthorityPolicy,
+    AuthorityRule,
+    Decision,
+    VerifiedAuthorityGrant,
+)
+from phase4.context_packet import (
+    ContextItem,
+    ContextPacket,
+    ContextPacketEngine,
+    ContextRequest,
+)
+from phase4.execution import (
+    ExecutionEngine,
+    ExecutionReplayLedger,
+    ExecutionResult,
+    ExecutionStatus,
+)
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import ImplementationExecutionAdapter, ImplementationProvider
-from .models import IMPLEMENTATION_ACTION, ChangeBudget, ImplementationRequest, PatchProposal
+from .models import (
+    IMPLEMENTATION_ACTION,
+    ChangeBudget,
+    ImplementationRequest,
+    PatchProposal,
+)
 from .patch_models import IMPLEMENTATION_APPLY_ACTION
 
 
@@ -48,7 +76,7 @@ class ImplementationAgentRun:
 
 
 class ImplementationAgentRuntime:
-    def __init__(self, *, provider: ImplementationProvider, allowed_resources: Iterable[str], max_files: int = 8, max_changed_lines: int = 1_000, max_context_items: int = 200, max_context_bytes: int = 512 * 1024) -> None:
+    def __init__(self, *, provider: ImplementationProvider, allowed_resources: Iterable[str], max_files: int = 8, max_changed_lines: int = 1_000, max_context_items: int = 200, max_context_bytes: int = 512 * 1024, replay_ledger: ExecutionReplayLedger | None = None) -> None:
         provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip(): raise ValueError("provider must declare a non-empty provider_id")
         if not callable(getattr(provider, "propose_patch", None)): raise TypeError("provider must implement propose_patch")
@@ -63,7 +91,7 @@ class ImplementationAgentRuntime:
         self._max_context_items, self._max_context_bytes = max_context_items, max_context_bytes
         self._context = ContextPacketEngine(); self._registry = AgentRegistry(); self._agent = self._register_agent(provider_id)
         self._authority = AuthorityEngine(self._policy_for(resources)); self._adapter = ImplementationExecutionAdapter(adapter_id=f"adapter.implementation.runtime:{provider_id}", provider=provider)
-        self._execution = ExecutionEngine((self._adapter,)); self._outcomes = OutcomeEngine(); self._registered_requests: set[str] = set(); self._commands: dict[str, str] = {}; self._lock = RLock()
+        self._execution = ExecutionEngine((self._adapter,), ledger=replay_ledger); self._outcomes = OutcomeEngine(); self._registered_requests: set[str] = set(); self._commands: dict[str, str] = {}; self._lock = RLock()
 
     @property
     def agent(self) -> AgentRecord: return self._agent
