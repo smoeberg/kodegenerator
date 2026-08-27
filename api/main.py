@@ -41,6 +41,7 @@ _db = Database()
 from api.auth import User, get_current_active_user
 from api.endpoints import (
     auth,
+    pipeline,
     control_plane,
     decisions,
     implementation_agent,
@@ -48,6 +49,7 @@ from api.endpoints import (
     swarm_operations,
     swarm_websocket,
     workflows,
+    pipeline,
 )
 HAS_AUTH = True
 
@@ -97,6 +99,8 @@ if HAS_AUTH:
         workflows.router,
         implementation_agent.router,
         decisions.router,
+        decisions.pipeline_decision_router,
+        pipeline.router,
     )
 
     app.include_router(auth.router)

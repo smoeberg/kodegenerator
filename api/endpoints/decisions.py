@@ -93,3 +93,40 @@ def resolve_decision(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="decision_not_found") from exc
     except (DecisionGateError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------
+# Pipeline gate decisions
+# The software-factory pipeline records human gate approvals/decisions here.
+# Payload: {"workflow_id", "gate_id", "decision": "approved"|"rejected"}
+# --------------------------------------------------------------------------
+from pydantic import BaseModel
+from api.dependencies import get_dor
+from runtime.core import DORRuntime
+from runtime.pipeline_orchestrator import get_pipeline_orchestrator
+
+pipeline_decision_router = APIRouter(prefix="/decisions", tags=["pipeline-decisions"])
+
+
+class PipelineDecisionRequest(BaseModel):
+    workflow_id: str
+    gate_id: str
+    decision: str
+
+
+@pipeline_decision_router.post("")
+async def create_pipeline_decision(
+    request: PipelineDecisionRequest,
+    runtime: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    """Record a gate approval/rejection for a software-factory pipeline."""
+    try:
+        orchestrator = get_pipeline_orchestrator()
+        return await orchestrator.decide_gate(
+            request.workflow_id,
+            request.gate_id,
+            request.decision,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

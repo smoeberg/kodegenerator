@@ -10,7 +10,7 @@ from domain.workflow import Workflow
 from domain.pipeline_states import PipelineState
 from domain.pipeline_transitions import get_pipeline_transitions
 from domain.pipeline_gates import get_pipeline_gates
-from infrastructure.persistence.repositories.workflow_repository import WorkflowRepository
+from infrastructure.persistence.repositories import WorkflowRepository
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,17 @@ class PipelineAdapter:
             logger.error(f"Failed to create pipeline: {str(e)}")
             raise
     
+    def parse_spec(self, yaml_content: str) -> Dict[str, Any]:
+        """Parse and validate a YAML requirements spec, returning the dict."""
+        try:
+            spec = yaml.safe_load(yaml_content)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML: {str(e)}")
+        if not spec:
+            raise ValueError("Empty or invalid YAML content")
+        self._validate_spec(spec)
+        return spec
+
     def _validate_spec(self, spec: Dict[str, Any]) -> None:
         """Validate that requirements spec has required fields"""
         
