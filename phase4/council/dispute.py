@@ -27,16 +27,35 @@ class DisputeProtocol:
         hypothesis: Hypothesis,
         raised_by_agent_id: str,
         reason: str,
+        dispute_id: str | None = None,
     ) -> Dispute:
         """Create a new dispute attached to a hypothesis."""
         if not reason or not reason.strip():
             raise DisputeProtocolError("A dispute must contain a clear, non-empty reason.")
 
+        normalized_reason = reason.strip()
+        if dispute_id is not None and dispute_id in self._disputes:
+            existing = self._disputes[dispute_id]
+            if (
+                existing.hypothesis_id == hypothesis.hypothesis_id
+                and existing.raised_by_agent_id == raised_by_agent_id
+                and existing.reason == normalized_reason
+            ):
+                return existing
+            raise DisputeProtocolError(
+                "A dispute ID cannot be reused with changed identity."
+            )
+
+        values = {
+            "hypothesis_id": hypothesis.hypothesis_id,
+            "raised_by_agent_id": raised_by_agent_id,
+            "reason": normalized_reason,
+            "status": DisputeStatus.OPEN,
+        }
+        if dispute_id is not None:
+            values["dispute_id"] = dispute_id
         dispute = Dispute(
-            hypothesis_id=hypothesis.hypothesis_id,
-            raised_by_agent_id=raised_by_agent_id,
-            reason=reason.strip(),
-            status=DisputeStatus.OPEN,
+            **values,
         )
         self._disputes[dispute.dispute_id] = dispute
         return dispute

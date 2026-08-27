@@ -46,7 +46,13 @@ class DeliberationSession:
         self.history: List[Dict[str, str]] = []
         self._record_history("Session initialized in OPEN state.")
 
-    def raise_dispute(self, agent_id: str, reason: str) -> Dispute:
+    def raise_dispute(
+        self,
+        agent_id: str,
+        reason: str,
+        *,
+        dispute_id: str | None = None,
+    ) -> Dispute:
         """Raise a dispute against the current hypothesis in session."""
         if self.state in (SessionState.DECISION_READY, SessionState.DEADLOCKED):
             raise DeliberationError(f"Cannot raise dispute in finished session state: {self.state}")
@@ -55,6 +61,7 @@ class DeliberationSession:
             hypothesis=self.hypothesis,
             raised_by_agent_id=agent_id,
             reason=reason,
+            dispute_id=dispute_id,
         )
         self.state = SessionState.IN_DISPUTE
         self._record_history(f"Dispute {dispute.dispute_id} raised by agent {agent_id}.")

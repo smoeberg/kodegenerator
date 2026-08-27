@@ -1,7 +1,8 @@
 # 📚 Digital Organization Runtime (DOR) - Dokumentation
 
-**Version:** 1.2.0  
-**Senest opdateret:** 18. august 2026  
+**Version:** 1.3.0
+
+**Senest opdateret:** 27. august 2026
 
 ---
 
@@ -25,6 +26,9 @@ EIRA Control Plane  (package: phase4/)
    ├── AI-3 Authority               phase4/authority  (HMAC VerifiedAuthorityGrant)
    ├── AI-4 Execution               phase4/execution  (grant-only + replay ledger)
    ├── Epistemic persistence        phase4/brain_persistence
+   ├── Dialectical Council          phase4/council  (durable rounds + readiness)
+   ├── Belief revision              phase4/epistemics
+   ├── Anti-Tube adaptation         phase4/adaptation
    ├── Implementation agent         phase4/implementation_agent
    ├── Project audit                phase4/project_audit
    └── Verification / planner / …   phase4/verification, planner, …
@@ -46,6 +50,8 @@ The fundamental invariants are:
 - **Phase 7 owns durable work execution and worker leases**
 - **Phase 1–3 organization authority remains the multi-tenant API boundary**
 - **AI-3 → AI-4 is fail-closed** (raw `AuthorityDecision` is not executable)
+- **Council readiness ≠ authority** (`DecisionReadiness` must still pass AI-3)
+- **Repeated identical failures force pivot** (Anti-Tube prevents blind retry)
 
 ### Authority and execution (implemented)
 
@@ -107,6 +113,7 @@ Yderligere: [docs/PHASE4_ARCHITECTURE.md](docs/PHASE4_ARCHITECTURE.md), [docs/RO
 
 ## 📜 Changelog
 
+* **1.3.0** (2026-08-27) – Durable dialectical Council runtime, content-addressed orchestrator turns, evidence-derived readiness and Anti-Tube preemption.
 * **1.2.0** (2026-08-18) – README aligned to implemented control plane modules; SECURITY.md; P4-01 ledger overview; legacy API warning.
 * **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface.
 * **1.0.0** (2026-08-03) – Initial DOR specification and architecture.

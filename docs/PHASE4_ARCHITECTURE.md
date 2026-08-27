@@ -63,6 +63,8 @@ Phase 4 owns:
 | Agent Registry | Agent identity, role, capabilities and lifecycle metadata | Worker process lifecycle |
 | Assignment | Binding of work to an agent with execution/lease state | Compute process identity |
 | Brain | Epistemic records and materialized knowledge state | Execution authority |
+| Dialectical Council | Evidence-backed deliberation, formal disputes, independent reviews and decision readiness | Authority grants or execution |
+| Anti-Tube | Classification of repeated execution failures and explicit pivot/halt/escalation signals | Blind retries or direct replanning execution |
 | Verification Policy | Rules for accepting or escalating claims | Runtime execution permissions |
 | Phase 7 Queue | Durable jobs, leases, retries and worker ownership | Agent identity and epistemic truth |
 | Phase 6 | Secure execution boundary | Epistemic consensus |
@@ -82,6 +84,9 @@ The following are architectural invariants for Phase 4:
 8. **Deterministic verification is preferred over LLM consensus whenever deterministic evidence is sufficient.**
 9. **High-risk or disputed claims may require quorum and/or human escalation.**
 10. **Epistemic history is auditable.** Observations, claims, evidence and verification outcomes must not be silently overwritten.
+11. **Council roles are independent.** Proposer, Architect, Security Skeptic and QA Red Team require distinct active Agent Registry identities; missing capacity fails closed.
+12. **Council readiness is not authority.** The Council may produce `DecisionReadiness`, but only AI-3 may issue a `VerifiedAuthorityGrant`.
+13. **Repeated identical failures cannot loop indefinitely.** Anti-Tube emits an explicit pivot requirement before another deliberation attempt.
 
 ## 4. Two execution modes
 
@@ -210,6 +215,31 @@ escalate_on_conflict = true
 A deterministic test result, type check or other reliable machine-verifiable evidence should bypass unnecessary LLM debate.
 
 Persistent disagreement or timeout must terminate in an explicit escalation state rather than an indefinite quorum loop.
+
+### Dialectical Council runtime
+
+For disputed or non-deterministic implementation hypotheses, the Council runs
+bounded, content-addressed turns:
+
+```text
+Hypothesis + Context-bound Agenda
+        -> Proposer evidence
+        -> Architect / Security / QA reviews
+        -> formal dispute resolution
+        -> durable round checkpoint (OCC)
+        -> DecisionReadiness or explicit escalation
+```
+
+Every provider request is bound to the organization, session, hypothesis and
+workspace revisions, context packet, role, round and current dispute set. Risk
+and evidence revision maps are derived by the runtime; they are not accepted as
+caller assertions. Published Anti-Tube/policy events remain durable aggregate
+signals and preempt new provider calls.
+
+The deterministic fake provider is the first executable provider boundary. A
+real model adapter must preserve the same turn identity and structured response
+contract; adding an LLM transport must not create an Authority or Execution
+path.
 
 ## 8. Concurrency model
 
