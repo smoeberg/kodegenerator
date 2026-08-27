@@ -4,7 +4,10 @@ on:
   pull_request:
     branches: [ main ]
   push:
-    branches: [ main, feature/* ]
+    branches: [ main, feature/*, fix/* ]
+
+permissions:
+  contents: read
 
 jobs:
   merge-gate:
@@ -19,16 +22,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
-      - name: Install dependencies
+      - name: Prepare Bubblewrap user namespaces
+        run: |
+          set -euo pipefail
+          if [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            current="$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)"
+            if [ "${current}" = "1" ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            fi
+          fi
+          if ! command -v bwrap >/dev/null 2>&1; then
+            sudo apt-get update -o Acquire::Retries=3
+            sudo apt-get install -y --no-install-recommends bubblewrap
+          fi
+          bwrap --version
+
+      - name: Install locked dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pydantic fastapi sqlalchemy uvicorn python-jose alembic
+          pip install --require-hashes -r requirements.lock
 
       - name: Run Merge Gate & Diff Integrity Linter
-        run: |
-          python scripts/ci_merge_gate.py --base origin/main --head HEAD
+        run: python scripts/ci_merge_gate.py --base origin/main --head HEAD
 
       - name: Run Test Suite
-        run: |
-          PYTHONPATH=. python -m pytest tests/
+        env:
+          DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
+          DOR_ADMIN_PASSWORD: ci-admin-password
+          DOR_ADMIN_USERNAME: admin
+          DOR_ENV: test
+          DOR_ENCRYPTION_KEY: 32-byte-fernet-key-string-placeholder==
+          PYTHONPATH: .
+          TMPDIR: /tmp
+        run: python -m pytest tests/

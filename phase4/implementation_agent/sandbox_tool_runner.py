@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 from phase6.execution.process import BubblewrapProcessAdapter, ProcessSandboxUnavailable
@@ -25,8 +26,18 @@ class BubblewrapToolRunner:
         if not tool.executable_matches():
             return RawToolResult(ToolStatus.START_ERROR, None, b"", b"trusted tool executable fingerprint changed")
 
+        executable = Path(tool.command[0]).resolve()
+        python_executable = Path(sys.executable).resolve()
+        python_runtime = Path(sys.base_prefix).resolve()
+        system_roots = tuple(Path(value) for value in ("/usr", "/lib", "/lib64", "/bin"))
+        runtime_roots = ()
+        if executable == python_executable and not any(
+            executable == root or root in executable.parents for root in system_roots
+        ):
+            runtime_roots = (str(python_runtime),)
         adapter = BubblewrapProcessAdapter(
-            allowed_executables=(tool.command[0],),
+            allowed_executables=(str(executable),),
+            runtime_roots=runtime_roots,
             bubblewrap_path=self._bubblewrap_path,
         )
         execution_id = hashlib.sha256(

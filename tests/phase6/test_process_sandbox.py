@@ -136,3 +136,35 @@ def test_writable_symlink_is_rejected(tmp_path) -> None:
     )
     with pytest.raises(InvalidExecutionSpec, match="must not be symlinks"):
         adapter.execute(spec)
+
+
+def test_explicit_runtime_root_is_mounted_without_exposing_parent(tmp_path) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    executable = runtime_root / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"runtime")
+    executable.chmod(0o755)
+    adapter = BubblewrapProcessAdapter(
+        allowed_executables=(str(executable),),
+        runtime_roots=(str(runtime_root),),
+        bubblewrap_path=BWRAP,
+    )
+    spec = _spec(executable=str(executable))
+
+    command = adapter._build_command(spec)
+    triples = tuple(zip(command, command[1:], command[2:]))
+
+    assert ("--ro-bind", str(runtime_root), str(runtime_root)) in triples
+    assert ("--ro-bind", str(tmp_path), str(tmp_path)) not in triples
+    assert ("--ro-bind", "/opt", "/opt") not in triples
+
+
+def test_runtime_root_must_contain_allowlisted_executable(tmp_path) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    with pytest.raises(ValueError, match="contain an allowlisted executable"):
+        BubblewrapProcessAdapter(
+            allowed_executables=(PYTHON,),
+            runtime_roots=(str(runtime_root),),
+            bubblewrap_path=BWRAP,
+        )
