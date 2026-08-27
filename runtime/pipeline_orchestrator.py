@@ -52,7 +52,9 @@ class PipelineOrchestrator:
             "workflow_id": workflow_id,
             "current_state": p["state"].value,
             "project_name": p.get("project_name"),
+            "project_description": p.get("project_description"),
             "version": p.get("version"),
+            "requirements": list(p.get("requirements", [])),
             "pending_gate": p.get("pending_gate"),
             "approved_gates": list(p.get("approved_gates", [])),
             "created_at": p.get("created_at"),
@@ -85,6 +87,7 @@ class PipelineOrchestrator:
             "error": None,
             "tasks": [],
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._persist(workflow_id, pipeline)
         logger.info(f"Started pipeline {workflow_id} for {pipeline['project_name']}")
@@ -129,10 +132,13 @@ class PipelineOrchestrator:
             # Advance to the post-approval state, e.g.
             # REQUIREMENTS_VALIDATED -> REQUIREMENTS_APPROVED
             pipeline["state"] = self._next_after_approval(state)
+            pipeline["updated_at"] = datetime.now(timezone.utc).isoformat()
             message = f"Gate '{gate_id}' approved"
         else:
             pipeline["state"] = PipelineState.FAILED
             pipeline["error"] = f"Gate {gate_id} rejected"
+            pipeline["pending_gate"] = None
+            pipeline["updated_at"] = datetime.now(timezone.utc).isoformat()
             message = f"Gate '{gate_id}' rejected - pipeline failed"
 
         self._persist(workflow_id, pipeline)
@@ -169,6 +175,9 @@ class PipelineOrchestrator:
             pipeline["state"] = nxt
             moved = True
 
+        # Refresh the pending gate to reflect the final state reached.
+        pipeline["pending_gate"] = self._gate_for_state(pipeline["state"])
+        pipeline["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._persist(workflow_id, pipeline)
         if moved:
             return {
