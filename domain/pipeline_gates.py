@@ -9,21 +9,17 @@ def get_pipeline_gates() -> list[Gate]:
         Gate(
             id="gate_requirements_approval",
             name="Requirements Approval",
-            decision_id=None,
         ),
         Gate(
             id="gate_architecture_approval",
             name="Architecture Approval",
-            decision_id=None,
         ),
         Gate(
             id="gate_contracts_approval",
             name="Contracts Approval",
-            decision_id=None,
         ),
         Gate(
             id="gate_release_approval",
             name="Release Approval",
-            decision_id=None,
         ),
     ]
