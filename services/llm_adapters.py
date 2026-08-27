@@ -3,12 +3,21 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterator, Mapping, Optional, Protocol
+from typing import Any, Protocol
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from jsonschema import SchemaError, ValidationError, validators
+from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
+
 from .secure_http import validate_http_url
+
+
+class SchemaValidationError(ValueError):
+    """An LLM response did not satisfy its mandatory response schema."""
 
 
 @dataclass(frozen=True)
@@ -32,13 +41,13 @@ class BaseLLMAdapter:
     """Base adapter implementing retries, rate-limit handling and JSON recovery."""
     provider = "unknown"
 
-    def __init__(self, model: str, *, max_retries: int = 3, backoff_base: float = 0.25, cost_optimizer: Optional[CostSink] = None) -> None:
+    def __init__(self, model: str, *, max_retries: int = 3, backoff_base: float = 0.25, cost_optimizer: CostSink | None = None) -> None:
         self.model = model
         self.max_retries = max(0, max_retries)
         self.backoff_base = max(0.0, backoff_base)
         self.cost_optimizer = cost_optimizer
 
-    def generate(self, prompt: str, schema: Optional[Mapping[str, Any]] = None, temperature: float = 0.2) -> LLMResponse:
+    def generate(self, prompt: str, schema: Mapping[str, Any] | type[BaseModel] | BaseModel | None = None, temperature: float = 0.2) -> LLMResponse:
         """Generate a normalized response, retrying transient failures."""
         for attempt in range(self.max_retries + 1):
             try:
@@ -53,11 +62,11 @@ class BaseLLMAdapter:
                 time.sleep(self.backoff_base * (2 ** attempt))
         raise RuntimeError("unreachable")
 
-    def stream(self, prompt: str, schema: Optional[Mapping[str, Any]] = None, temperature: float = 0.2) -> Iterator[str]:
+    def stream(self, prompt: str, schema: Mapping[str, Any] | type[BaseModel] | BaseModel | None = None, temperature: float = 0.2) -> Iterator[str]:
         """Yield generated text chunks; adapters may override for native streaming."""
         yield self.generate(prompt, schema, temperature).text
 
-    def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
+    def _generate(self, prompt: str, schema: Mapping[str, Any] | None, temperature: float) -> LLMResponse:
         raise NotImplementedError
 
     def _retryable(self, exc: Exception) -> bool:
@@ -70,18 +79,27 @@ class BaseLLMAdapter:
             self.cost_optimizer.record_usage(self.provider, response.model, response.prompt_tokens, response.completion_tokens)
 
     @staticmethod
-    def _recover_json(response: LLMResponse, schema: Mapping[str, Any]) -> LLMResponse:
+    def _recover_json(response: LLMResponse, schema: Mapping[str, Any] | type[BaseModel] | BaseModel) -> LLMResponse:
         """Parse JSON safely and return a normalized JSON string; schema errors fail closed."""
         try:
             value = json.loads(response.text)
-            if not isinstance(value, dict):
-                raise ValueError("JSON response must be an object")
-            required = schema.get("required", [])
-            if any(key not in value for key in required):
-                raise ValueError("JSON response is missing required fields")
-            text = json.dumps(value, separators=(",", ":"), sort_keys=True)
-        except (ValueError, json.JSONDecodeError):
-            text = response.text
+        except json.JSONDecodeError as exc:
+            raise SchemaValidationError("LLM response is not valid JSON") from exc
+        try:
+            if isinstance(schema, BaseModel):
+                validated = type(schema).model_validate(value).model_dump(mode="json")
+            elif isinstance(schema, type) and issubclass(schema, BaseModel):
+                validated = schema.model_validate(value).model_dump(mode="json")
+            elif isinstance(schema, Mapping):
+                validator_class = validators.validator_for(schema)
+                validator_class.check_schema(schema)
+                validator_class(schema).validate(value)
+                validated = value
+            else:
+                raise TypeError("schema must be a JSON Schema mapping or Pydantic model")
+        except (ValidationError, SchemaError, PydanticValidationError) as exc:
+            raise SchemaValidationError("LLM response failed schema validation") from exc
+        text = json.dumps(validated, separators=(",", ":"), sort_keys=True)
         return LLMResponse(text, response.model, response.prompt_tokens, response.completion_tokens, response.total_tokens, response.raw, response.streamed)
 
 
@@ -93,7 +111,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         super().__init__(model, **kwargs)
         self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
 
-    def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
+    def _generate(self, prompt: str, schema: Mapping[str, Any] | None, temperature: float) -> LLMResponse:
         payload: dict[str, Any] = {"model": self.model, "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
         if schema is not None:
             payload["response_format"] = {"type": "json_object"}
@@ -112,7 +130,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         super().__init__(model, **kwargs)
         self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
 
-    def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
+    def _generate(self, prompt: str, schema: Mapping[str, Any] | None, temperature: float) -> LLMResponse:
         payload = {"model": self.model, "max_tokens": 4096, "messages": [{"role": "user", "content": prompt}], "temperature": temperature}
         req = Request(validate_http_url(f"{self.base_url}/messages"), json.dumps(payload).encode(), {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
         with urlopen(req, timeout=60) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
@@ -130,7 +148,7 @@ class OllamaAdapter(BaseLLMAdapter):
         super().__init__(model, **kwargs)
         self.base_url = validate_http_url(base_url).rstrip("/")
 
-    def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
+    def _generate(self, prompt: str, schema: Mapping[str, Any] | None, temperature: float) -> LLMResponse:
         payload = {"model": self.model, "prompt": prompt, "stream": False, "options": {"temperature": temperature}}
         req = Request(validate_http_url(f"{self.base_url}/api/generate"), json.dumps(payload).encode(), {"Content-Type": "application/json"})
         with urlopen(req, timeout=120) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
@@ -146,5 +164,5 @@ class MockLLMAdapter(BaseLLMAdapter):
         super().__init__(model, **kwargs)
         self.response = response
 
-    def _generate(self, prompt: str, schema: Optional[Mapping[str, Any]], temperature: float) -> LLMResponse:
+    def _generate(self, prompt: str, schema: Mapping[str, Any] | None, temperature: float) -> LLMResponse:
         return LLMResponse(self.response, self.model, len(prompt.split()), len(self.response.split()), len(prompt.split()) + len(self.response.split()))
