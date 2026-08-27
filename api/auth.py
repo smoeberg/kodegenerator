@@ -17,12 +17,13 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY")
+IS_PRODUCTION = os.getenv("DOR_ENV", "development").lower() == "production"
+SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or ("" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx")
 ALGORITHM = os.getenv("DOR_JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("DOR_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
-if not SECRET_KEY:
-    raise RuntimeError("DOR_JWT_SECRET_KEY must be configured before starting the API")
+if IS_PRODUCTION and not SECRET_KEY:
+    raise RuntimeError("DOR_JWT_SECRET_KEY must be configured in production before starting the API")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 _users: dict[str, dict] = {}

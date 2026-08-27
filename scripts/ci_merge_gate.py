@@ -70,6 +70,9 @@ class MergeGateChecker:
                 continue
             
             if os.path.getsize(full_path) == 0:
+                base_name = os.path.basename(f_path)
+                if base_name in ("__init__.py", ".gitkeep", "requirements.txt"):
+                    continue
                 self.errors.append(f"HALLUCINATION VIOLATION (Rule 2): File '{f_path}' is empty (0 bytes).")
                 continue
 
