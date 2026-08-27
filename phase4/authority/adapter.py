@@ -4,20 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from phase4.adaptation.models import RiskLevel
 from phase4.council.models import DisputeStatus, SessionState
 from phase4.council.session import DeliberationSession
 from phase4.epistemics.models import Evidence, Hypothesis, HypothesisStatus
 
-
-class RiskLevel(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    CRITICAL = "CRITICAL"
+__all__ = [
+    "RiskLevel",
+    "DecisionReadiness",
+    "CouncilDecisionAdapter",
+]
 
 
 @dataclass(frozen=True)
@@ -65,7 +64,6 @@ class CouncilDecisionAdapter:
         total_disputes = len(all_disputes)
 
         # Verify evidence against current revision
-        # If evidence revision map is provided, check if all supporting evidence matches current revision
         evidence_verified = True
         evidence_count = len(hyp.supporting_evidence)
 
@@ -76,7 +74,6 @@ class CouncilDecisionAdapter:
                     evidence_verified = False
                     break
         else:
-            # Default check: if hypothesis is supported/active and has evidence, verified against current
             if not current_revision or not current_revision.strip():
                 evidence_verified = False
 

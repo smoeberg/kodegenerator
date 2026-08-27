@@ -10,6 +10,13 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
+class RiskLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
 class FailureCategory(str, Enum):
     SAME_FAILURE = "SAME_FAILURE"
     REGRESSION = "REGRESSION"
