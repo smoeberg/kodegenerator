@@ -1,5 +1,8 @@
 import json
-from services.llm_adapters import MockLLMAdapter, LLMResponse
+
+import pytest
+
+from services.llm_adapters import LLMResponse, MockLLMAdapter, SchemaValidationError
 from services.llm_router import LLMRouter
 
 
@@ -17,8 +20,8 @@ def test_json_mode_recovers_valid_json():
 
 
 def test_json_mode_is_fail_safe_for_invalid_payload():
-    response = MockLLMAdapter("not-json").generate("p", {"type": "object", "required": ["answer"]})
-    assert response.text == "not-json"
+    with pytest.raises(SchemaValidationError):
+        MockLLMAdapter("not-json").generate("p", {"type": "object", "required": ["answer"]})
 
 
 def test_router_selects_provider_and_fallback():

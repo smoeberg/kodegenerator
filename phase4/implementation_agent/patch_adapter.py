@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import secrets
@@ -58,6 +59,102 @@ class PatchExecutionFailed(PatchExecutionAdapterError):
     def __init__(self, record: PatchExecutionRecord) -> None:
         self.record = record
         super().__init__(record.error or "governed patch execution failed")
+
+
+class StaleBaselineConflictError(PatchWorkspaceError):
+    """The live file no longer matches the authority-bound baseline."""
+
+
+def atomic_write_if_hash_matches(
+    path: Path | str,
+    new_content: bytes | str,
+    expected_sha256: str,
+) -> None:
+    """Replace an existing regular file iff its locked live hash still matches."""
+    target = Path(path)
+    payload = new_content.encode("utf-8") if isinstance(new_content, str) else new_content
+    if not isinstance(payload, bytes):
+        raise TypeError("new_content must be bytes or str")
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise ValueError("expected_sha256 must be a SHA-256 hex digest")
+
+    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    while True:
+        descriptor = os.open(target, open_flags)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            opened = os.fstat(descriptor)
+            live = target.lstat()
+            if (opened.st_dev, opened.st_ino) != (live.st_dev, live.st_ino):
+                continue
+            if not stat.S_ISREG(opened.st_mode) or opened.st_nlink > 1:
+                raise PatchWorkspaceError("CAS target must be a single-link regular file")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            digest = hashlib.sha256()
+            while chunk := os.read(descriptor, 1024 * 1024):
+                digest.update(chunk)
+            if not secrets.compare_digest(digest.hexdigest(), expected_sha256):
+                raise StaleBaselineConflictError("live file hash no longer matches expected baseline")
+
+            temporary_fd, temporary_name = tempfile.mkstemp(
+                prefix=f".dor-patch-cas-{target.name}-", dir=str(target.parent)
+            )
+            try:
+                os.fchmod(temporary_fd, stat.S_IMODE(opened.st_mode))
+                with os.fdopen(temporary_fd, "wb", closefd=True) as stream:
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary_fd = -1
+                os.replace(temporary_name, target)
+                directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary_fd >= 0:
+                    os.close(temporary_fd)
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+            return
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+def _atomic_unlink_if_hash_matches(path: Path, expected_sha256: str) -> None:
+    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    while True:
+        descriptor = os.open(path, open_flags)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            opened = os.fstat(descriptor)
+            live = path.lstat()
+            if (opened.st_dev, opened.st_ino) != (live.st_dev, live.st_ino):
+                continue
+            digest = hashlib.sha256()
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            while chunk := os.read(descriptor, 1024 * 1024):
+                digest.update(chunk)
+            if not secrets.compare_digest(digest.hexdigest(), expected_sha256):
+                raise StaleBaselineConflictError("live file hash no longer matches expected baseline")
+            path.unlink()
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
 
 @dataclass(frozen=True)
@@ -268,36 +365,63 @@ class WorkspacePatchExecutor:
 
     def _commit_candidate(self, request: PatchExecutionRequest, sandbox: Path, artifact: PatchArtifact) -> None:
         rollback: list[tuple[Path, bytes | None, int | None]] = []
-        staging = Path(tempfile.mkdtemp(prefix=".dor-patch-commit-", dir=str(self._root.parent)))
+        baseline_by_path = {state.path: state for state in request.baseline}
+        candidate_by_path = {state.path: state for state in artifact.files}
+        committed_paths: list[str] = []
         try:
             for path in request.proposal.touched_paths:
                 source = sandbox / path
                 target = self._root / path
                 before = self._snapshot(self._root, path)
+                expected = baseline_by_path[path]
                 rollback.append((target, before.content, before.state.mode))
                 if source.exists():
-                    staged = staging / path
-                    staged.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, staged, follow_symlinks=False)
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(staged, target)
+                    if expected.exists:
+                        if expected.sha256 is None:
+                            raise PatchWorkspaceError("existing baseline file is missing its hash")
+                        atomic_write_if_hash_matches(target, source.read_bytes(), expected.sha256)
+                    else:
+                        descriptor = os.open(
+                            target,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+                            source.stat().st_mode & 0o777,
+                        )
+                        with os.fdopen(descriptor, "wb") as stream:
+                            stream.write(source.read_bytes())
+                            stream.flush()
+                            os.fsync(stream.fileno())
                 elif target.exists():
-                    target.unlink()
+                    if expected.sha256 is None:
+                        raise StaleBaselineConflictError("baseline did not contain the live file")
+                    _atomic_unlink_if_hash_matches(target, expected.sha256)
+                committed_paths.append(path)
         except Exception as exc:
-            for target, content, mode in reversed(rollback):
+            rollback_errors: list[str] = []
+            rollback_by_path = {target.relative_to(self._root).as_posix(): (target, content, mode) for target, content, mode in rollback}
+            for path in reversed(committed_paths):
+                target, content, mode = rollback_by_path[path]
+                candidate = candidate_by_path[path]
                 try:
                     if content is None:
-                        target.unlink(missing_ok=True)
+                        if candidate.sha256 is not None:
+                            _atomic_unlink_if_hash_matches(target, candidate.sha256)
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_bytes(content)
-                        if mode is not None:
-                            os.chmod(target, mode)
-                except OSError:
-                    pass
-            raise PatchWorkspaceError(f"commit failed; live workspace rolled back: {exc}") from exc
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+                        if candidate.sha256 is None:
+                            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode or 0o600)
+                            with os.fdopen(descriptor, "wb") as stream:
+                                stream.write(content)
+                                stream.flush()
+                                os.fsync(stream.fileno())
+                        else:
+                            atomic_write_if_hash_matches(target, content, candidate.sha256)
+                except (OSError, PatchWorkspaceError) as rollback_exc:
+                    rollback_errors.append(f"{path}: {type(rollback_exc).__name__}")
+            detail = f"commit failed; live workspace rolled back: {exc}"
+            if rollback_errors:
+                detail += "; rollback conflicts: " + ", ".join(rollback_errors)
+            raise PatchWorkspaceError(detail) from exc
 
 
 class PatchExecutionAdapter:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 import pytest
 
@@ -11,9 +12,6 @@ from phase6.execution.sandbox import (
     ExecutionSpec,
     InvalidExecutionSpec,
 )
-
-
-import shutil
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("bwrap") or not os.access(shutil.which("bwrap"), os.X_OK),
@@ -81,6 +79,8 @@ def test_bubblewrap_command_unshares_network_and_pid() -> None:
     assert "--unshare-net" in command
     assert "--unshare-pid" in command
     assert "--ro-bind" in command
+    assert ("--ro-bind", "/", "/") not in tuple(zip(command, command[1:], command[2:]))
+    assert command[command.index("--tmpfs") + 1] == "/"
     assert command[command.index("--") + 1] == PYTHON
 
 
