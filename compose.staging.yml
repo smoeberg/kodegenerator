@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build: .
+    container_name: rool_agent_orchestrator
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=sqlite:///data/durable_ledger.db
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - ./data:/data
+      - ./phase4:/app/phase4
+    command: python3 -m phase4.pipeline.e2e_runner
+    restart: unless-stopped
+
+  librechat_proxy:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: rool_librechat_proxy
+    ports:
+      - "3080:3080"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3080
+    restart: unless-stopped
