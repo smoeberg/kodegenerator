@@ -232,6 +232,34 @@ class CouncilStore:
                 for row in rows
             )
 
+    def events_for_aggregate(
+        self,
+        organization_id: str,
+        aggregate_id: str,
+    ) -> tuple[CouncilOutboxEvent, ...]:
+        """Return durable aggregate signals regardless of publication status."""
+        with self.session_factory() as db:
+            rows = db.scalars(
+                select(CouncilOutboxEventModel)
+                .where(
+                    CouncilOutboxEventModel.organization_id == organization_id,
+                    CouncilOutboxEventModel.aggregate_id == aggregate_id,
+                )
+                .order_by(CouncilOutboxEventModel.created_at)
+            ).all()
+            return tuple(
+                CouncilOutboxEvent(
+                    event_id=row.event_id,
+                    organization_id=row.organization_id,
+                    event_type=CouncilRuntimeEventType(row.event_type),
+                    aggregate_id=row.aggregate_id,
+                    payload=row.payload,
+                    correlation_id=row.correlation_id,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            )
+
     def mark_published(self, organization_id: str, event_id: str) -> None:
         with self.session_factory() as db:
             result = db.execute(

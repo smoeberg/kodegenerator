@@ -62,10 +62,28 @@ trusted from process memory: prior durable failure observations are replayed in
 order before evaluating a new event. Pending outbox events remain publishable
 until explicitly marked published.
 
-## Deliberate next boundary
+## Council orchestrator boundary
 
-`CouncilOrchestrator` will consume this repository and event contract. It may
-select roles and call model providers, but it must only return a
-`DecisionReadiness`. Risk derivation, required-role enforcement, and the
-Decision Cockpit consumer are separate follow-up changes; no placeholder here
-silently weakens Authority's existing fail-closed gate.
+`CouncilOrchestrator` consumes this repository and event contract through
+content-addressed provider turns. A strong Council requires four distinct,
+active Agent Registry identities: Proposer, Architect, Security Skeptic, and QA
+Red Team. Missing review capacity aborts before session creation; there is no
+weak mode.
+
+Each complete round is one OCC-protected durable checkpoint. Provider requests
+carry a deterministic `turn_id`, so a process failure before the checkpoint may
+repeat the same provider turn without changing its identity. A restart after a
+checkpoint resumes from the persisted round and `state_version`.
+
+Risk is derived by runtime policy from the immutable agenda and deliberation
+record. Evidence revision data comes only from `CouncilStore`; callers cannot
+supply either risk or an evidence map. A pending pivot, environment halt,
+policy escalation, or human-required aggregate event preempts further provider
+calls and prevents readiness production even after that outbox event has been
+published. Vote consensus without the configured minimum evidence returns the
+explicit `READINESS_BLOCKED` outcome rather than executable readiness.
+
+The orchestrator may return `DecisionReadiness`, but it imports no
+`AuthorityEngine`, issues no grant, and invokes no execution adapter. A real
+model-provider adapter and the Decision Cockpit consumer remain separate
+follow-up boundaries.
