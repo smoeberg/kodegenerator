@@ -34,12 +34,24 @@ class _ProcessLimits:
 class BubblewrapProcessAdapter:
     adapter_id = "bubblewrap-process"
 
-    def __init__(self, *, allowed_executables: Sequence[str], bubblewrap_path: str | None = None, runner: Callable[..., subprocess.Popen[str]] = subprocess.Popen):
+    def __init__(self, *, allowed_executables: Sequence[str], runtime_roots: Sequence[str] = (), bubblewrap_path: str | None = None, runner: Callable[..., subprocess.Popen[str]] = subprocess.Popen):
         if not allowed_executables:
             raise ValueError("at least one executable must be allowlisted")
         self._bubblewrap_candidate = bubblewrap_path or shutil.which("bwrap")
         self._bubblewrap_path = None
         self._allowed = frozenset(str(Path(v).resolve()) for v in allowed_executables)
+        blocked_roots = tuple(Path(value) for value in ("/app", "/etc", "/home", "/root"))
+        resolved_runtime_roots: list[str] = []
+        for value in runtime_roots:
+            root = Path(value).resolve(strict=True)
+            if not root.is_dir() or root == Path(os.sep):
+                raise ValueError("runtime roots must be existing non-root directories")
+            if any(root == blocked or blocked in root.parents for blocked in blocked_roots):
+                raise ValueError("runtime roots cannot expose blocked host paths")
+            if not any(Path(executable) == root or root in Path(executable).parents for executable in self._allowed):
+                raise ValueError("each runtime root must contain an allowlisted executable")
+            resolved_runtime_roots.append(str(root))
+        self._runtime_roots = tuple(sorted(set(resolved_runtime_roots)))
         self._runner = runner
 
     def _resolve_bubblewrap(self):
@@ -146,6 +158,9 @@ class BubblewrapProcessAdapter:
         for system_path in ("/usr", "/lib", "/lib64", "/bin"):
             if os.path.exists(system_path):
                 command.extend(("--ro-bind", system_path, system_path))
+        for runtime_root in self._runtime_roots:
+            command.extend(("--dir", runtime_root))
+            command.extend(("--ro-bind", runtime_root, runtime_root))
         for blocked_path in ("/app", "/etc", "/home", "/root"):
             command.extend(("--dir", blocked_path))
         for path in spec.writable_paths:
