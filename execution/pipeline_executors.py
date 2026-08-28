@@ -15,6 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
+from urllib.parse import urlparse
 
 from generation.project_renderer import ProjectRenderer
 from generation.project_spec import ArchitectureKind, ProjectDefinition
@@ -603,13 +604,14 @@ class ReleaseExecutor:
         owner = payload.get("owner")
         repo = payload.get("repo")
         repository = payload.get("repository") or payload.get("repo_url")
-        if (not owner or not repo) and repository and "github.com/" in repository:
-            slug = repository.rstrip("/")
-            if slug.endswith(".git"):
-                slug = slug[:-4]
-            parts = slug.split("github.com/", 1)[1].split("/")
-            if len(parts) >= 2:
-                owner, repo = parts[0], parts[1]
+        if (not owner or not repo) and repository:
+            parsed = urlparse(repository)
+            if parsed.netloc in ("github.com", "www.github.com"):
+                path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+                if len(path_parts) >= 2:
+                    owner, repo = path_parts[0], path_parts[1]
+                    if repo.endswith(".git"):
+                        repo = repo[:-4]
         if not repo:
             raise ValueError("release payload requires repo")
         owner = owner or os.getenv("GITHUB_OWNER", "dor-factory")
