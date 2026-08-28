@@ -12,9 +12,23 @@ class FakeDeployBackend:
     def __init__(self):
         self.calls = []
 
-    def deploy(self, repository, project_name, environment, target, release=None, workspace=None):
-        self.calls.append((repository, project_name, environment, target, release, workspace))
-        return {"deployed_at": "2026-08-28T00:00:00+00:00", "image_tag": "registry/demo:prod-abc123", "url": "https://demo.example"}
+    def deploy(
+        self,
+        repository,
+        project_name,
+        environment,
+        target,
+        release=None,
+        workspace=None,
+    ):
+        self.calls.append(
+            (repository, project_name, environment, target, release, workspace)
+        )
+        return {
+            "deployed_at": "2026-08-28T00:00:00+00:00",
+            "image_tag": "registry/demo:prod-abc123",
+            "url": "https://demo.example",
+        }
 
 
 def _grant(
@@ -37,15 +51,19 @@ def _grant(
 
 def test_deploy_executor_is_injectable():
     backend = FakeDeployBackend()
-    result = DeployExecutor(backend).execute({
-        "repository": "https://github.com/example/demo.git",
-        "project_name": "demo",
-        "environment": "prod",
-        "target": "docker-compose.yml",
-        "release": "v1.2.3",
-        "workspace": "/tmp/demo",
-        "authority_grant": _grant(),
-    })
+    result = DeployExecutor(backend).execute(
+        {
+            "task_id": "deploy-1",
+            "organization_id": "org-1",
+            "repository": "https://github.com/example/demo.git",
+            "project_name": "demo",
+            "environment": "prod",
+            "target": "docker-compose.yml",
+            "release": "v1.2.3",
+            "workspace": "/tmp/demo",
+            "authority_grant": _grant(),
+        }
+    )
     assert result["status"] == "success"
     assert result["deployment"]["image_tag"] == "registry/demo:prod-abc123"
     assert backend.calls[0][4] == "v1.2.3"
@@ -53,7 +71,15 @@ def test_deploy_executor_is_injectable():
 
 def test_deploy_executor_rejects_missing_repository():
     try:
-        DeployExecutor(FakeDeployBackend()).execute({"project_name": "demo", "target": "docker", "authority_grant": _grant()})
+        DeployExecutor(FakeDeployBackend()).execute(
+            {
+                "task_id": "deploy-2",
+                "organization_id": "org-1",
+                "project_name": "demo",
+                "target": "docker",
+                "authority_grant": _grant(),
+            }
+        )
     except ValueError as exc:
         assert "repository" in str(exc)
     else:
@@ -63,27 +89,45 @@ def test_deploy_executor_rejects_missing_repository():
 def test_docker_service_checks_out_builds_pushes_and_composes(monkeypatch, tmp_path):
     calls = []
     responses = {
-        ("git", "describe", "--tags", "--abbrev=0"): SimpleNamespace(returncode=0, stdout="v1.2.3\n", stderr=""),
-        ("git", "rev-parse", "HEAD"): SimpleNamespace(returncode=0, stdout="abcdef1234567890\n", stderr=""),
+        ("git", "describe", "--tags", "--abbrev=0"): SimpleNamespace(
+            returncode=0, stdout="v1.2.3\n", stderr=""
+        ),
+        ("git", "rev-parse", "HEAD"): SimpleNamespace(
+            returncode=0, stdout="abcdef1234567890\n", stderr=""
+        ),
     }
 
     def runner(command, **kwargs):
         calls.append(command)
-        return responses.get(tuple(command), SimpleNamespace(returncode=0, stdout="", stderr=""))
+        return responses.get(
+            tuple(command), SimpleNamespace(returncode=0, stdout="", stderr="")
+        )
 
     monkeypatch.setenv("DOR_PIPELINE_DOCKER_REGISTRY", "registry.example")
     service = DockerDeployService(runner=runner)
     (tmp_path / ".git").mkdir()
     (tmp_path / "docker-compose.yml").write_text("services: {app: {image: demo}}\n")
-    result = service.deploy("https://github.com/example/demo.git", "Demo", "prod", "docker-compose.yml", workspace=str(tmp_path))
+    result = service.deploy(
+        "https://github.com/example/demo.git",
+        "Demo",
+        "prod",
+        "docker-compose.yml",
+        workspace=str(tmp_path),
+    )
 
     assert result["commit_sha"] == "abcdef1234567890"
     assert result["image_tag"] == "registry.example/demo:prod-abcdef123456"
     assert any(c[:3] == ["docker", "build", "-t"] for c in calls)
-    assert [c[0:2] for c in calls if c[0] == "docker"] == [["docker", "build"], ["docker", "push"], ["docker", "compose"]]
+    assert [c[0:2] for c in calls if c[0] == "docker"] == [
+        ["docker", "build"],
+        ["docker", "push"],
+        ["docker", "compose"],
+    ]
 
 
-def test_docker_service_reports_deploy_failure_and_attempts_rollback(monkeypatch, tmp_path):
+def test_docker_service_reports_deploy_failure_and_attempts_rollback(
+    monkeypatch, tmp_path
+):
     calls = []
 
     def runner(command, **kwargs):
@@ -99,13 +143,17 @@ def test_docker_service_reports_deploy_failure_and_attempts_rollback(monkeypatch
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setenv("DOR_PIPELINE_DOCKER_REGISTRY", "registry.example")
-    monkeypatch.setenv("DOR_PIPELINE_ROLLBACK_IMAGE", "registry.example/demo:prod-oldimage")
+    monkeypatch.setenv(
+        "DOR_PIPELINE_ROLLBACK_IMAGE", "registry.example/demo:prod-oldimage"
+    )
     service = DockerDeployService(runner=runner)
     (tmp_path / ".git").mkdir()
     (tmp_path / "docker-compose.yml").write_text("services: {app: {image: demo}}\n")
 
     try:
-        service.deploy("repo", "demo", "prod", "docker-compose.yml", workspace=str(tmp_path))
+        service.deploy(
+            "repo", "demo", "prod", "docker-compose.yml", workspace=str(tmp_path)
+        )
     except RuntimeError as exc:
         assert "deployment failed" in str(exc)
         assert "rollback=attempted" in str(exc)
@@ -116,12 +164,23 @@ def test_docker_service_reports_deploy_failure_and_attempts_rollback(monkeypatch
 
 
 def test_docker_service_rejects_compose_path_traversal(tmp_path):
-    service = DockerDeployService(runner=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="abcdef1234567890\n", stderr=""))
+    service = DockerDeployService(
+        runner=lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout="abcdef1234567890\n", stderr=""
+        )
+    )
     (tmp_path / ".git").mkdir()
     outside = tmp_path.parent / "outside.yml"
     outside.write_text("services: {app: {image: demo}}\n")
     with pytest.raises(ValueError, match="inside repository"):
-        service.deploy("repo", "demo", "prod", "../outside.yml", release="main", workspace=str(tmp_path))
+        service.deploy(
+            "repo",
+            "demo",
+            "prod",
+            "../outside.yml",
+            release="main",
+            workspace=str(tmp_path),
+        )
 
 
 @pytest.mark.parametrize(
@@ -133,8 +192,19 @@ def test_docker_service_rejects_compose_path_traversal(tmp_path):
     ],
 )
 def test_docker_service_rejects_host_escape_capabilities(tmp_path, compose):
-    service = DockerDeployService(runner=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="abcdef1234567890\n", stderr=""))
+    service = DockerDeployService(
+        runner=lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout="abcdef1234567890\n", stderr=""
+        )
+    )
     (tmp_path / ".git").mkdir()
     (tmp_path / "docker-compose.yml").write_text(compose)
     with pytest.raises(ValueError, match="requests"):
-        service.deploy("repo", "demo", "prod", "docker-compose.yml", release="main", workspace=str(tmp_path))
+        service.deploy(
+            "repo",
+            "demo",
+            "prod",
+            "docker-compose.yml",
+            release="main",
+            workspace=str(tmp_path),
+        )
