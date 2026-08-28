@@ -12,10 +12,35 @@ from phase4.implementation_agent import (
     canonical_python_tools,
 )
 from runtime.core import DORRuntime
+from services.governed_llm import GovernedLLMRuntime
+from services.llm_adapters import OpenAIAdapter
 
 
 class ImplementationAgentConfigurationError(RuntimeError):
     """The operational implementation-agent provider is not configured."""
+
+
+@lru_cache(maxsize=1)
+def get_pipeline_llm_runtime() -> GovernedLLMRuntime:
+    """Build the explicit fail-closed structured LLM proposal boundary."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    model = os.getenv("DOR_PIPELINE_LLM_MODEL")
+    if not api_key or not model:
+        raise ImplementationAgentConfigurationError(
+            "OPENAI_API_KEY and DOR_PIPELINE_LLM_MODEL are required"
+        )
+    adapter = OpenAIAdapter(
+        api_key=api_key,
+        model=model,
+        max_retries=_positive_int_environment("DOR_PIPELINE_LLM_RETRIES", 2),
+        timeout_seconds=_positive_int_environment(
+            "DOR_PIPELINE_LLM_TIMEOUT_SECONDS", 60
+        ),
+        max_output_tokens=_positive_int_environment(
+            "DOR_PIPELINE_LLM_MAX_OUTPUT_TOKENS", 2048
+        ),
+    )
+    return GovernedLLMRuntime(adapter)
 
 
 @lru_cache(maxsize=1)
@@ -137,8 +162,7 @@ def get_governed_patch_runtime() -> GovernedPatchExecutionRuntime:
     unknown = tuple(item for item in requested_ids if item not in available)
     if unknown:
         raise ImplementationAgentConfigurationError(
-            "DOR_PATCH_ALLOWED_TOOLS contains an unknown tool ID: "
-            + ", ".join(unknown)
+            "DOR_PATCH_ALLOWED_TOOLS contains an unknown tool ID: " + ", ".join(unknown)
         )
     tools = tuple(available[item] for item in requested_ids)
     try:
