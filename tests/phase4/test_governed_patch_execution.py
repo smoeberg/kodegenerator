@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ from domain.organization import Organization
 from infrastructure.persistence.uow import UnitOfWork
 from phase4.context_packet import ContextItem
 from phase4.execution import ExecutionStatus
+from phase4.implementation_agent.sandbox_tool_runner import BubblewrapToolRunner
 from phase4.implementation_agent import (
     IMPLEMENTATION_APPLY_ACTION,
     ChangeBudget,
@@ -219,7 +221,27 @@ def test_successful_patch_is_authorized_evidenced_committed_and_replayed(tmp_pat
     assert IMPLEMENTATION_APPLY_ACTION in capabilities
 
 
+def test_bubblewrap_tool_runner_fails_closed_without_bwrap(tmp_path):
+    """Without bubblewrap the sandbox tool runner must fail closed, not fall
+    back to an unprotected subprocess (same fail-closed contract as
+    BubblewrapProcessAdapter)."""
+    if shutil.which("bwrap") is not None:
+        pytest.skip("bwrap present; fail-closed path not exercised here")
+    root = _workspace(tmp_path)
+    executable = str(Path(sys.executable).resolve())
+    tool = TrustedToolSpec(
+        "probe",
+        ToolKind.LINT,
+        (executable, "-c", "print('must not run')"),
+    )
+    result = BubblewrapToolRunner().run(tool, cwd=root)
+    assert result.status is ToolStatus.START_ERROR
+    assert b"bwrap" in result.stderr
+
+
 def test_canonical_python_toolchain_runs_in_validation_workspace(tmp_path):
+    if shutil.which("bwrap") is None:
+        pytest.skip("bubblewrap is not installed")
     root = _workspace(tmp_path)
     (root / "src" / "__init__.py").write_text("", encoding="utf-8")
     (root / "test_app.py").write_text(
