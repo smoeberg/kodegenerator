@@ -1,4 +1,5 @@
 """DOR control-plane API entrypoint."""
+
 from __future__ import annotations
 
 import logging
@@ -28,18 +29,17 @@ def validate_production_security_configuration() -> None:
     ]
     if missing:
         raise RuntimeError(
-            "Missing required production security configuration: "
-            + ", ".join(missing)
+            "Missing required production security configuration: " + ", ".join(missing)
         )
 
 
 validate_production_security_configuration()
 
 # Initialize database for health checks
-_db = Database()
+_db = Database(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db"))
 
-from api.auth import User, get_current_active_user
-from api.endpoints import (
+from api.auth import User, get_current_active_user  # noqa: E402
+from api.endpoints import (  # noqa: E402
     auth,
     control_plane,
     decisions,
@@ -51,6 +51,7 @@ from api.endpoints import (
     swarm_websocket,
     workflows,
 )
+
 HAS_AUTH = True
 
 app = FastAPI(
@@ -83,6 +84,7 @@ async def health_ready() -> dict:
 
 
 if HAS_AUTH:
+
     @app.get("/protected", tags=["system"])
     async def protected_route(
         current_user: Annotated[User, Depends(get_current_active_user)],

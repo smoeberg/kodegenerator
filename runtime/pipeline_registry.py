@@ -69,7 +69,7 @@ class PipelineAwareQueue:
                     if isinstance(patch_result, dict)
                     else {"value": patch_result},
                 }
-            # Advance orchestrator & pipeline transition first before acking complete in queue
+            # Advance pipeline state before acknowledging queue completion.
             self._orchestrator.handle_task_completion(domain_task)
         self._queue.complete_task(task_id, agent_id, patch_result)
 
@@ -98,11 +98,16 @@ class PipelineRegistry:
         self.runtime = runtime
         queue_path = Path(os.getenv("DOR_PIPELINE_QUEUE_PATH", "pipeline_tasks.db"))
         state_path = Path(os.getenv("DOR_PIPELINE_STATE_PATH", "pipeline_state.json"))
+        state_store = (
+            None
+            if os.getenv("DOR_PIPELINE_DATABASE_URL")
+            else PipelineStateStore(state_path)
+        )
         self._raw_queue = SQLiteTaskQueue(queue_path, lease_seconds=lease_seconds)
         self.orchestrator = PipelineOrchestrator(
             runtime,
             task_queue=self._raw_queue,
-            state_store=PipelineStateStore(state_path),
+            state_store=state_store,
         )
         # Workers see the aware queue so complete_task advances the pipeline.
         self.queue = PipelineAwareQueue(self._raw_queue, self.orchestrator)

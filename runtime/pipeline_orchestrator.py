@@ -213,9 +213,9 @@ class PipelineOrchestrator:
                 "task_type": (t.metadata or {}).get(
                     "task_type", getattr(t, "task_type", None) or t.name
                 ),
-                "status": getattr(
-                    t.status, "value", str(getattr(t, "status", "pending"))
-                ),
+                "status": str(
+                    getattr(t.status, "name", getattr(t, "status", "pending"))
+                ).lower(),
             }
             for t in self._tasks.values()
             if t.workflow_id == workflow_id
