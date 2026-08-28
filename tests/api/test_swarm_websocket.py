@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("DOR_JWT_SECRET_KEY", "test-secret-key-min-32-chars-long")
 os.environ.setdefault("DOR_ENV", "test")
@@ -140,7 +141,10 @@ def test_websocket_receives_bus_publish(bus: EventBus) -> None:
     token = _auth_token(client)
     _create_project(client, "proj-ws", token)
     try:
-        with client.websocket_connect(f"/api/v1/swarm/ws/proj-ws?token={token}") as websocket:
+        with client.websocket_connect(
+            "/api/v1/swarm/ws/proj-ws",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as websocket:
             welcome = json.loads(websocket.receive_text())
             assert welcome["event_type"] == "WS_CONNECTED"
             assert welcome["project_id"] == "proj-ws"
@@ -165,7 +169,10 @@ def test_websocket_ping_pong(bus: EventBus) -> None:
     token = _auth_token(client)
     _create_project(client, "proj-ping", token)
     try:
-        with client.websocket_connect(f"/api/v1/swarm/ws/proj-ping?token={token}") as websocket:
+        with client.websocket_connect(
+            "/api/v1/swarm/ws/proj-ping",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as websocket:
             websocket.receive_text()  # welcome
             websocket.send_text(json.dumps({"type": "ping"}))
             pong = json.loads(websocket.receive_text())
@@ -180,7 +187,10 @@ def test_websocket_client_publish_is_rejected(bus: EventBus) -> None:
     token = _auth_token(client)
     _create_project(client, "proj-pub", token)
     try:
-        with client.websocket_connect(f"/api/v1/swarm/ws/proj-pub?token={token}") as websocket:
+        with client.websocket_connect(
+            "/api/v1/swarm/ws/proj-pub",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as websocket:
             websocket.receive_text()
             websocket.send_text(
                 json.dumps(
@@ -227,7 +237,10 @@ def test_connection_count_tracks_sockets(bus: EventBus) -> None:
     _create_project(client, "proj-cnt", token)
     assert ws_mod.connection_count("proj-cnt") == 0
     try:
-        with client.websocket_connect(f"/api/v1/swarm/ws/proj-cnt?token={token}") as websocket:
+        with client.websocket_connect(
+            "/api/v1/swarm/ws/proj-cnt",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as websocket:
             websocket.receive_text()
             assert ws_mod.connection_count("proj-cnt") >= 1
     except Exception as exc:
@@ -251,6 +264,39 @@ def test_websocket_rejects_missing_and_invalid_tokens(bus: EventBus) -> None:
             pass
     assert invalid.value.code == 1008
 
+    with pytest.raises(WebSocketDisconnect) as query_token:
+        with client.websocket_connect(f"/api/v1/swarm/ws/proj-auth?token={token}"):
+            pass
+    assert query_token.value.code == 1008
+
+
+def test_websocket_revalidates_token_and_closes_expired_session(
+    bus: EventBus, monkeypatch
+) -> None:
+    client = TestClient(app)
+    token = _auth_token(client)
+    _create_project(client, "proj-expiry", token)
+    original = ws_mod.authenticate_access_token
+    calls = 0
+
+    def authenticate_once(value):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise HTTPException(status_code=401)
+        return original(value)
+
+    monkeypatch.setattr(ws_mod, "authenticate_access_token", authenticate_once)
+    monkeypatch.setattr(ws_mod, "WEBSOCKET_AUTH_REVALIDATION_SECONDS", 0.01)
+    with client.websocket_connect(
+        "/api/v1/swarm/ws/proj-expiry",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as websocket:
+        websocket.receive_text()
+        with pytest.raises(WebSocketDisconnect) as expired:
+            websocket.receive_text()
+    assert expired.value.code == 1008
+
 
 def test_websocket_rejects_user_without_project_access(bus: EventBus) -> None:
     client = TestClient(app)
@@ -267,7 +313,8 @@ def test_websocket_rejects_user_without_project_access(bus: EventBus) -> None:
 
     with pytest.raises(WebSocketDisconnect) as denied:
         with client.websocket_connect(
-            f"/api/v1/swarm/ws/proj-private?token={other_token}"
+            "/api/v1/swarm/ws/proj-private",
+            headers={"Authorization": f"Bearer {other_token}"},
         ):
             pass
     assert denied.value.code == 1008

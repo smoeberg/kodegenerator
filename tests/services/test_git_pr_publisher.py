@@ -112,9 +112,16 @@ def test_git_pr_publisher_end_to_end(temp_git_repo: Path):
             status=PRStatus.CREATED,
         )
     ), patch.object(publisher, "add_pr_comment", return_value={"id": 1}):
+        grant = MagicMock(spec=VerifiedAuthorityGrant)
+        grant.verified = True
+        grant.action = "release.publish"
+        grant.resource = "repository:test-org/test-repo"
+        grant.parameters = (("patch_id", "task-42"), ("base_branch", "main"))
         result = publisher.publish_patch_as_pr(
             patch=patch_info,
             pr_metadata=pr_meta,
+            authority_grant=grant,
+            test_results={"status": "passed", "tests_run": 1, "failures": 0},
             push_remote=False,  # Local repo without origin
         )
 
@@ -152,5 +159,30 @@ def test_git_pr_publisher_rejects_unverified_authority_grant(temp_git_repo: Path
             patch=patch_info,
             pr_metadata=pr_meta,
             authority_grant=unverified_grant,
+            push_remote=False,
+        )
+
+
+def test_git_pr_publisher_requires_authority_and_test_evidence(temp_git_repo: Path):
+    publisher = GitPRPublisher(owner="test-org", repo="test-repo", token="token", repo_root=temp_git_repo)
+    patch_info = PatchInfo(patch_id="task-44", patch_content="diff", author="bot")
+    metadata = PRMetadata(title="test", description="", branch="feature/test")
+    with pytest.raises(WorktreeSecurityError, match="required"):
+        publisher.publish_patch_as_pr(patch_info, metadata, push_remote=False)
+    grant = MagicMock(spec=VerifiedAuthorityGrant)
+    grant.verified = True
+    grant.action = "release.publish"
+    grant.resource = "repository:test-org/test-repo"
+    grant.parameters = (("patch_id", "task-44"), ("base_branch", "main"))
+    with pytest.raises(WorktreeSecurityError, match="test evidence"):
+        publisher.publish_patch_as_pr(patch_info, metadata, authority_grant=grant, push_remote=False)
+
+    grant.parameters = (("patch_id", "another-patch"), ("base_branch", "main"))
+    with pytest.raises(WorktreeSecurityError, match="bound to this patch"):
+        publisher.publish_patch_as_pr(
+            patch_info,
+            metadata,
+            authority_grant=grant,
+            test_results={"status": "passed", "tests_run": 1, "failures": 0},
             push_remote=False,
         )

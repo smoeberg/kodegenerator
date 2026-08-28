@@ -22,7 +22,6 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Query,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -39,6 +38,7 @@ logger = logging.getLogger(__name__)
 _bus: EventBus = default_event_bus
 _connections: dict[str, set[WebSocket]] = {}
 _conn_lock = asyncio.Lock()
+WEBSOCKET_AUTH_REVALIDATION_SECONDS = 15.0
 
 
 def get_event_bus() -> EventBus:
@@ -112,22 +112,18 @@ def _sse_format(data: dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {body}\n\n"
 
 
-def _websocket_token(websocket: WebSocket, query_token: str | None) -> str | None:
+def _websocket_token(websocket: WebSocket) -> str | None:
     authorization = websocket.headers.get("authorization", "")
     scheme, _, header_token = authorization.partition(" ")
     if scheme.lower() == "bearer" and header_token:
         return header_token
-    return query_token
+    return None
 
 
 @router.websocket("/api/v1/swarm/ws/{project_id}")
 async def swarm_websocket(
     websocket: WebSocket,
     project_id: str,
-    token: str | None = Query(
-        default=None,
-        description="Bearer token used when the client cannot set an Authorization header",
-    ),
 ) -> None:
     """Accept a WebSocket, subscribe to the project topic, stream bus events.
 
@@ -140,9 +136,13 @@ async def swarm_websocket(
     accepted. Clients cannot publish arbitrary events to the internal bus.
     """
     try:
-        current_user = authenticate_access_token(_websocket_token(websocket, token) or "")
+        token = _websocket_token(websocket) or ""
+        current_user = authenticate_access_token(token)
     except HTTPException:
-        logger.warning("rejected unauthenticated swarm websocket", extra={"project_id": project_id})
+        logger.warning(
+            "rejected unauthenticated swarm websocket",
+            extra={"project_id": project_id},
+        )
         await websocket.close(code=1008, reason="authentication required")
         return
     if not project_access_allowed(project_id, current_user.username):
@@ -210,12 +210,26 @@ async def swarm_websocket(
     async def _heartbeat() -> None:
         while not stop.is_set():
             try:
-                await asyncio.wait_for(stop.wait(), timeout=15.0)
+                await asyncio.wait_for(
+                    stop.wait(), timeout=WEBSOCKET_AUTH_REVALIDATION_SECONDS
+                )
                 return
             except asyncio.TimeoutError:
                 if websocket.client_state != WebSocketState.CONNECTED:
                     return
                 try:
+                    refreshed_user = authenticate_access_token(token)
+                    if (
+                        refreshed_user.username != current_user.username
+                        or not project_access_allowed(
+                            project_id, refreshed_user.username
+                        )
+                    ):
+                        await websocket.close(
+                            code=1008, reason="authorization expired"
+                        )
+                        stop.set()
+                        return
                     await websocket.send_text(
                         json.dumps(
                             {
@@ -226,6 +240,10 @@ async def swarm_websocket(
                             ensure_ascii=False,
                         )
                     )
+                except HTTPException:
+                    await websocket.close(code=1008, reason="authentication expired")
+                    stop.set()
+                    return
                 except Exception:
                     logger.info(
                         "swarm websocket heartbeat stopped after send failure",
