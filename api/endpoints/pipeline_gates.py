@@ -8,6 +8,7 @@ Note: this is intentionally separate from the Decision Engine
 (api/endpoints/decisions.py) — gates are pipeline checkpoints, decisions are
 agent deliberations.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,7 @@ from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
+from runtime.pipeline_registry import get_pipeline_registry
 
 router = APIRouter(prefix="/api/v1/pipeline-gates", tags=["pipeline_gates"])
 
@@ -40,15 +42,20 @@ class GateApprovalResponse(BaseModel):
 
 def _orchestrator(dor: DORRuntime) -> PipelineOrchestrator:
     # Reuse a per-runtime orchestrator when available; otherwise create one.
-    if hasattr(dor, "_pipeline_orchestrator") and dor._pipeline_orchestrator is not None:
+    if (
+        hasattr(dor, "_pipeline_orchestrator")
+        and dor._pipeline_orchestrator is not None
+    ):
         return dor._pipeline_orchestrator
-    orch = PipelineOrchestrator(dor)
+    orch = get_pipeline_registry(dor).orchestrator
     if hasattr(dor, "_pipeline_orchestrator"):
         dor._pipeline_orchestrator = orch
     return orch
 
 
-@router.post("/approve", response_model=GateApprovalResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/approve", response_model=GateApprovalResponse, status_code=status.HTTP_200_OK
+)
 def approve_gate(
     request: ApproveGateRequest,
     _: User = Depends(get_current_active_user),
@@ -63,9 +70,13 @@ def approve_gate(
             decision=request.decision,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     workflow = orch._get_workflow(request.workflow_id)
     return GateApprovalResponse(
@@ -85,7 +96,9 @@ def list_gates(
     orch = _orchestrator(dor)
     workflow = orch._get_workflow(workflow_id)
     if workflow is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
+        )
     return [
         {
             "id": gate.id,

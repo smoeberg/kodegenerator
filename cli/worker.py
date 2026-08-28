@@ -8,6 +8,7 @@ Usage::
     # Claim tasks published by the pipeline orchestrator (shared registry)
     python -m cli.worker --id worker-01 --caps code,test,domain,arch --pipeline
 """
+
 from __future__ import annotations
 
 import argparse
@@ -83,8 +84,8 @@ def _resolve_queue(args: argparse.Namespace) -> SwarmTaskQueue:
     if not args.pipeline:
         return SwarmTaskQueue(lease_seconds=args.lease_seconds)
     try:
-        from runtime.pipeline_registry import get_pipeline_registry
         from api.dependencies import get_dor
+        from runtime.pipeline_registry import get_pipeline_registry
     except ImportError:
         logging.getLogger(__name__).warning(
             "pipeline registry unavailable; falling back to empty local queue"
@@ -114,12 +115,43 @@ def main(argv: List[str] | None = None) -> int:
     )
 
     queue = _resolve_queue(args)
+    synthesizer = None
+    if args.pipeline:
+        from contextlib import contextmanager
+
+        from execution.pipeline_executors import build_pipeline_executor_registry
+        from execution.pipeline_task_synthesizer import PipelineTaskSynthesizer
+        from infrastructure.persistence.uow import UnitOfWork
+        from runtime.pipeline_registry import get_pipeline_registry
+        from services.task_execution_service import (
+            DictTaskExecutorFactory,
+            TaskExecutionService,
+        )
+
+        registry = get_pipeline_registry()
+
+        @contextmanager
+        def execution_service_factory():
+            with registry.runtime.database.session() as session:
+                yield TaskExecutionService(
+                    UnitOfWork(session),
+                    DictTaskExecutorFactory(build_pipeline_executor_registry()),
+                    runtime_ready=registry.runtime.ready,
+                )
+
+        synthesizer = PipelineTaskSynthesizer(
+            context_provider=lambda workflow_id: dict(
+                registry.orchestrator.get_pipeline_status(workflow_id)["context"]
+            ),
+            execution_service_factory=execution_service_factory,
+        )
     agent = WorkerAgent(
         worker_id=args.worker_id,
         capabilities=args.capabilities,
         queue=queue,
         poll_interval=args.poll_interval,
         heartbeat_interval=args.heartbeat_interval,
+        synthesizer=synthesizer,
     )
     agent.run(install_signal_handlers=True)
     return 0

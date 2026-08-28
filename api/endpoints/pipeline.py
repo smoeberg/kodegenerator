@@ -1,24 +1,26 @@
 # api/endpoints/pipeline.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from api.schemas.pipeline import (
-    StartPipelineRequest,
-    PipelineStatusResponse,
     PipelineListResponse,
+    PipelineStatusResponse,
+    StartPipelineRequest,
 )
 from domain.principal import Principal
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
+from runtime.pipeline_registry import get_pipeline_registry
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 def _create_pipeline_orchestrator(runtime: DORRuntime) -> PipelineOrchestrator:
-    return PipelineOrchestrator(runtime)
+    return get_pipeline_registry(runtime).orchestrator
 
 
 @router.post("/start", response_model=PipelineStatusResponse)
@@ -40,7 +42,9 @@ def start_pipeline(
         status = orchestrator.get_pipeline_status(workflow_id)
         return PipelineStatusResponse(**status)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -59,7 +63,9 @@ def get_pipeline_status(
         orchestrator = _create_pipeline_orchestrator(runtime)
         return PipelineStatusResponse(**orchestrator.get_pipeline_status(workflow_id))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
 
 @router.post("/{workflow_id}/advance")
@@ -74,7 +80,9 @@ def advance_pipeline(
         orchestrator.advance_pipeline(workflow_id)
         return {"status": "ok", "message": "Pipeline advanced"}
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.get("/", response_model=PipelineListResponse)
@@ -98,9 +106,10 @@ def list_pipelines(
         actor_id=current_user.username,
     )
     workflows = [
-        w for w in runtime.list_workflows(context)
+        w
+        for w in runtime.list_workflows(context)
         if (state is None or w.current_state.value == state)
-    ][offset:offset + limit]
+    ][offset : offset + limit]
 
     return PipelineListResponse(
         items=[

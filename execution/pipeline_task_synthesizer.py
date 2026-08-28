@@ -10,13 +10,17 @@ When a worker claims a pipeline-published ``QueuedTask``, this synthesizer:
 The worker daemon stays unaware of pipeline details; it only needs a
 ``synthesize(task) -> dict`` callable (or object with that method).
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Mapping, Optional, Protocol
 
+from domain.principal import Principal
+from domain.task_execution import TaskExecutionRequest, TaskExecutionStatus
 from execution.pipeline_executors import build_pipeline_executor_registry
 from services.swarm_task_queue import QueuedTask
+from services.task_execution_service import TaskExecutionService
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +47,14 @@ class PipelineTaskSynthesizer:
         *,
         registry: Optional[Mapping[str, PipelineExecutor]] = None,
         context_provider: Optional[Callable[[str], dict[str, Any]]] = None,
+        execution_service_factory: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._registry: dict[str, PipelineExecutor] = dict(
             registry if registry is not None else _default_registry()
         )
         # Optional: workflow_id → context dict (project name, requirements, …)
         self._context_provider = context_provider
+        self._execution_service_factory = execution_service_factory
 
     def register(self, task_type: str, executor: PipelineExecutor) -> None:
         self._registry[task_type] = executor
@@ -75,10 +81,14 @@ class PipelineTaskSynthesizer:
             task_type,
             meta.get("workflow_id"),
         )
-        result = executor.execute(payload)
+        if self._execution_service_factory is None:
+            result = executor.execute(payload)
+        else:
+            result = self._execute_canonically(task, task_type, meta, payload)
         if not isinstance(result, dict):
             raise TypeError(
-                f"Executor for {task_type} returned {type(result).__name__}, expected dict"
+                f"Executor for {task_type} returned {type(result).__name__}, "
+                "expected dict"
             )
         # Enrich with claim provenance for audit / downstream advance.
         result.setdefault("task_id", task.task_id)
@@ -86,6 +96,41 @@ class PipelineTaskSynthesizer:
         if meta.get("workflow_id"):
             result.setdefault("workflow_id", meta["workflow_id"])
         return result
+
+    def _execute_canonically(
+        self,
+        task: QueuedTask,
+        task_type: str,
+        meta: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        organization_id = str(meta.get("organization_id") or "").strip()
+        actor_id = str(meta.get("actor_id") or "").strip()
+        if not organization_id or not actor_id:
+            raise ValueError("pipeline task is missing organization_id or actor_id")
+        service_context = self._execution_service_factory()
+        with service_context as service:
+            if not isinstance(service, TaskExecutionService):
+                raise TypeError(
+                    "execution_service_factory must yield TaskExecutionService"
+                )
+            receipt = service.execute(
+                Principal(id=actor_id, type="service"),
+                TaskExecutionRequest(
+                    execution_id=task.task_id,
+                    organization_id=organization_id,
+                    actor_id=actor_id,
+                    task_type=task_type,
+                    capability_id=f"pipeline.{task_type}",
+                    payload=payload,
+                ),
+            )
+        if (
+            receipt.status is not TaskExecutionStatus.SUCCEEDED
+            or receipt.result is None
+        ):
+            raise RuntimeError(f"canonical task execution failed: {receipt.error_code}")
+        return dict(receipt.result)
 
     def _build_payload(
         self,
