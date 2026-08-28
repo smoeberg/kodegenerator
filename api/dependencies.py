@@ -4,6 +4,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from infrastructure.persistence.llm_replay_store import SQLAlchemyLLMReplayStore
+from infrastructure.runtime.db import build_session_factory
 from phase4.implementation_agent import (
     GovernedPatchExecutionRuntime,
     ImplementationAgentRuntime,
@@ -40,7 +42,11 @@ def get_pipeline_llm_runtime() -> GovernedLLMRuntime:
             "DOR_PIPELINE_LLM_MAX_OUTPUT_TOKENS", 2048
         ),
     )
-    return GovernedLLMRuntime(adapter)
+    replay_store = SQLAlchemyLLMReplayStore(
+        build_session_factory(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")),
+        lease_seconds=_positive_int_environment("DOR_PIPELINE_LLM_LEASE_SECONDS", 180),
+    )
+    return GovernedLLMRuntime(adapter, replay_store=replay_store)
 
 
 @lru_cache(maxsize=1)
