@@ -72,6 +72,6 @@ def test_api_main_mounts_only_canonical_router_whitelist(monkeypatch):
     assert "/tasks/" not in paths
     assert "/actors/digital-employee" not in paths
     assert "/organizations/" not in paths
-    assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == 7
+    assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == 8
     # Pipeline gate approval endpoints are deliberately part of the canonical set.
     assert "/api/v1/pipeline-gates/approve" in paths
