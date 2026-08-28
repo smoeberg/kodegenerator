@@ -1,7 +1,9 @@
 """Persistent infrastructure for DOR Foundation v0.1."""
 
 from .database import Database
+from .llm_replay_store import SQLAlchemyLLMReplayStore
 from .models import Base
+from .pipeline_state_store import SQLAlchemyPipelineStateStore
 from .repositories import (
     ActorRepository,
     EventStore,
@@ -20,4 +22,6 @@ __all__ = [
     "RepositoryError",
     "WorkflowRepository",
     "UnitOfWork",
+    "SQLAlchemyLLMReplayStore",
+    "SQLAlchemyPipelineStateStore",
 ]

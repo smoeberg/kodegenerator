@@ -18,7 +18,7 @@ registry and adapts to whatever runtime it is handed:
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol
 
 from domain.pipeline_states import PipelineState
 from domain.pipeline_task_mapping import PipelineTaskMapping
@@ -40,6 +40,13 @@ _TERMINAL = frozenset(
 )
 
 
+class PipelineSnapshotStore(Protocol):
+    """Persistence boundary shared by file and database state stores."""
+
+    def save(self, snapshot: dict[str, Any]) -> None: ...
+    def load(self) -> dict[str, Any] | None: ...
+
+
 class PipelineOrchestrator:
     """Orchestrates the software factory pipeline."""
 
@@ -49,7 +56,7 @@ class PipelineOrchestrator:
         adapter: Optional[PipelineAdapter] = None,
         *,
         task_queue: Any = None,
-        state_store: Optional[PipelineStateStore] = None,
+        state_store: Optional[PipelineSnapshotStore] = None,
     ):
         self._runtime = runtime
         self._adapter = adapter or PipelineAdapter()
@@ -57,13 +64,33 @@ class PipelineOrchestrator:
         self._workflows: Dict[str, Workflow] = {}
         self._tasks: Dict[str, Task] = {}
         self._task_queue = task_queue
-        state_path = os.getenv("DOR_PIPELINE_STATE_PATH")
-        self._state_store = state_store or (
-            PipelineStateStore(state_path) if state_path else None
-        )
+        self._state_store = state_store or self._configured_state_store()
         self._restore()
         if self._task_queue is not None:
             self.bind_task_queue(self._task_queue)
+
+    @staticmethod
+    def _configured_state_store() -> PipelineSnapshotStore | None:
+        database_url = os.getenv("DOR_PIPELINE_DATABASE_URL")
+        if database_url:
+            organization_id = os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID")
+            if not organization_id:
+                raise ValueError(
+                    "DOR_PIPELINE_STATE_ORGANIZATION_ID is required with "
+                    "DOR_PIPELINE_DATABASE_URL"
+                )
+            from infrastructure.persistence.pipeline_state_store import (
+                SQLAlchemyPipelineStateStore,
+            )
+            from infrastructure.runtime.db import build_session_factory
+
+            return SQLAlchemyPipelineStateStore(
+                build_session_factory(database_url),
+                organization_id=organization_id,
+                store_id=os.getenv("DOR_PIPELINE_STATE_STORE_ID", "pipeline-default"),
+            )
+        state_path = os.getenv("DOR_PIPELINE_STATE_PATH")
+        return PipelineStateStore(state_path) if state_path else None
 
     def bind_task_queue(self, task_queue: Any) -> None:
         """Bind a claim-capable queue and republish unfinished durable tasks."""
@@ -111,9 +138,12 @@ class PipelineOrchestrator:
             # runtime rejections are still fail-closed (raised below).
             persisted = False
             try:
-                persisted = self._runtime.get_workflow(
-                    getattr(self._runtime, "_admin_context", None), workflow.id
-                ) is not None
+                persisted = (
+                    self._runtime.get_workflow(
+                        getattr(self._runtime, "_admin_context", None), workflow.id
+                    )
+                    is not None
+                )
             except Exception:
                 persisted = False
             if persisted:
