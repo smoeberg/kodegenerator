@@ -297,3 +297,27 @@ class GovernedLLMCallModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+
+
+class TerminalSideEffectModel(Base):
+    """Durable fenced receipt for deploy, image and PR mutations."""
+
+    __tablename__ = "terminal_side_effects"
+
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    action: Mapped[str] = mapped_column(String(64), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    fencing_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    failure_class: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

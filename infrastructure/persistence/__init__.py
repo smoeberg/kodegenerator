@@ -11,6 +11,7 @@ from .repositories import (
     RepositoryError,
     WorkflowRepository,
 )
+from .side_effect_store import SQLAlchemySideEffectStore
 from .uow import UnitOfWork
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "UnitOfWork",
     "SQLAlchemyLLMReplayStore",
     "SQLAlchemyPipelineStateStore",
+    "SQLAlchemySideEffectStore",
 ]

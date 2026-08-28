@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+
 from execution.pipeline_executors import ReleaseExecutor
-from services.github_pr_contracts import GitHubConfig, PatchInfo, PRMetadata
+from services.github_pr_contracts import PatchInfo, PRMetadata
 
 
 class FakePublisher:
@@ -45,6 +46,7 @@ def test_release_executor_publishes_pr_successfully():
         "patch_content": "diff --git a/a.txt b/a.txt\n",
         "files_changed": ["a.txt"],
         "workflow_id": "wf-123",
+        "organization_id": "org-1",
     }
 
     result = executor.execute(payload)
@@ -75,6 +77,8 @@ def test_release_executor_parses_repo_url_and_env_token(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "env_token_val")
     executor = ReleaseExecutor(publisher_factory=factory)
     payload = {
+        "task_id": "release-2",
+        "organization_id": "org-1",
         "repo_url": "https://github.com/smoeberg/kodegenerator.git",
         "version": "2.0.0",
     }
@@ -90,4 +94,6 @@ def test_release_executor_parses_repo_url_and_env_token(monkeypatch):
 def test_release_executor_fails_without_repo():
     executor = ReleaseExecutor(publisher_factory=FakePublisher)
     with pytest.raises(ValueError, match="release payload requires repo"):
-        executor.execute({"token": "secret"})
+        executor.execute(
+            {"task_id": "release-3", "organization_id": "org-1", "token": "secret"}
+        )
