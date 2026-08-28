@@ -2,7 +2,11 @@
 
 Usage::
 
-    python -m cli.worker --id worker-01 --caps cap.domain.modeling,cap.code.generation
+    # In-process empty queue (legacy demo)
+    python -m cli.worker --id worker-01 --caps code,test
+
+    # Claim tasks published by the pipeline orchestrator (shared registry)
+    python -m cli.worker --id worker-01 --caps code,test,domain,arch --pipeline
 """
 from __future__ import annotations
 
@@ -41,6 +45,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated capability tokens this worker may claim.",
     )
     parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help=(
+            "Claim from the process-shared pipeline task queue "
+            "(requires API/worker in the same process or a prior registry init)."
+        ),
+    )
+    parser.add_argument(
         "--poll-interval",
         type=float,
         default=1.0,
@@ -67,6 +79,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_queue(args: argparse.Namespace) -> SwarmTaskQueue:
+    if not args.pipeline:
+        return SwarmTaskQueue(lease_seconds=args.lease_seconds)
+    try:
+        from runtime.pipeline_registry import get_pipeline_registry
+        from api.dependencies import get_dor
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "pipeline registry unavailable; falling back to empty local queue"
+        )
+        return SwarmTaskQueue(lease_seconds=args.lease_seconds)
+
+    # Initialise registry with the same runtime the API uses when possible.
+    try:
+        runtime = get_dor()
+    except Exception:
+        runtime = None
+    if runtime is not None:
+        registry = get_pipeline_registry(runtime, lease_seconds=args.lease_seconds)
+    else:
+        # Registry must already exist (e.g. API started first in-process).
+        registry = get_pipeline_registry(lease_seconds=args.lease_seconds)
+    return registry.queue
+
+
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -76,9 +113,7 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
-    # In-process queue is suitable for single-process swarm demos and tests.
-    # A durable queue adapter can be injected later without changing WorkerAgent.
-    queue = SwarmTaskQueue(lease_seconds=args.lease_seconds)
+    queue = _resolve_queue(args)
     agent = WorkerAgent(
         worker_id=args.worker_id,
         capabilities=args.capabilities,
