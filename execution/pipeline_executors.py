@@ -10,7 +10,9 @@ import json
 import os
 import shlex
 import subprocess
-from pathlib import Path
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Protocol
 
 from services.llm_adapters import BaseLLMAdapter, OpenAIAdapter
@@ -18,6 +20,102 @@ from services.llm_adapters import BaseLLMAdapter, OpenAIAdapter
 
 class PipelineExecutorConfigurationError(RuntimeError):
     pass
+
+
+class TaskExecutor(Protocol):
+    task_type: str
+
+    def execute(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class DeployService(Protocol):
+    def deploy(
+        self,
+        files: list[Mapping[str, str]],
+        project_name: str,
+        environment: str,
+        target: str,
+    ) -> dict[str, str]: ...
+
+
+class DockerDeployService:
+    """Build and push generated source as a Docker image."""
+
+    def __init__(self, registry: str | None = None) -> None:
+        self._registry = (registry or os.getenv("DOR_PIPELINE_DOCKER_REGISTRY", "")).strip().rstrip("/")
+
+    @staticmethod
+    def _safe_name(value: str) -> str:
+        value = value.strip().lower()
+        safe = "".join(char if char.isalnum() or char in "._-" else "-" for char in value)
+        return safe.strip(".-") or "app"
+
+    @staticmethod
+    def _write_files(root: Path, files: list[Mapping[str, str]]) -> None:
+        for item in files:
+            path = str(item.get("path", ""))
+            if not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+                raise ValueError(f"invalid generated file path: {path!r}")
+            destination = root.joinpath(*PurePosixPath(path).parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(str(item.get("content", "")), encoding="utf-8")
+
+        dockerfile = root / "Dockerfile"
+        if not dockerfile.exists():
+            raise ValueError("generated files must contain a Dockerfile")
+
+    def deploy(
+        self,
+        files: list[Mapping[str, str]],
+        project_name: str,
+        environment: str,
+        target: str,
+    ) -> dict[str, str]:
+        project = self._safe_name(project_name)
+        env = self._safe_name(environment)
+        repository = f"{self._registry}/{project}" if self._registry else project
+        image_tag = f"{repository}:{env}"
+
+        with tempfile.TemporaryDirectory(prefix="dor-deploy-") as temp_dir:
+            root = Path(temp_dir)
+            self._write_files(root, files)
+            build = subprocess.run(
+                ["docker", "build", "-t", image_tag, str(root)],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            if build.returncode:
+                raise RuntimeError(f"docker build failed: {build.stderr[-4000:]}")
+
+            push = subprocess.run(
+                ["docker", "push", image_tag],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            if push.returncode:
+                raise RuntimeError(f"docker push failed: {push.stderr[-4000:]}")
+
+        deployed_at = datetime.now(timezone.utc).isoformat()
+        base_url = os.getenv("DOR_PIPELINE_DEPLOY_URL", "").rstrip("/")
+        if base_url:
+            url = base_url.format(
+                project_name=project,
+                environment=env,
+                target=target,
+                image_tag=image_tag,
+            )
+        else:
+            url = target
+
+        return {
+            "deployed_at": deployed_at,
+            "image_tag": image_tag,
+            "url": url,
+        }
 
 
 class StructuredGenerator(Protocol):
@@ -167,27 +265,26 @@ class RunTestsExecutor:
         }
 
 
-class DeployExecutor:
+class DeployExecutor(TaskExecutor):
     task_type = "deploy"
 
-    def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
-        raw = os.getenv("DOR_PIPELINE_DEPLOY_COMMAND")
-        if not raw:
-            raise PipelineExecutorConfigurationError(
-                "DOR_PIPELINE_DEPLOY_COMMAND is required"
-            )
-        completed = subprocess.run(
-            shlex.split(raw), capture_output=True, text=True, timeout=900, check=False
-        )
-        if completed.returncode:
-            raise RuntimeError("deployment command failed")
+    def __init__(self, backend: DeployService | None = None):
+        self._backend = backend or DockerDeployService()
+
+    def execute(self, data: dict[str, Any]) -> dict[str, Any]:
+        files = data.get("files")
+        project_name = data.get("project_name")
+        environment = data.get("environment")
+        target = data.get("target")
+        if not isinstance(files, list) or not project_name or not environment or not target:
+            raise ValueError("deploy payload requires files, project_name, environment and target")
+
+        deployment = self._backend.deploy(files, project_name, environment, target)
         return {
             "status": "success",
             "deployment": {
                 "component": "services/docker",
-                "environment": payload.get("environment", "development"),
-                "url": os.getenv("DOR_PIPELINE_DEPLOY_URL"),
-                "output": completed.stdout[-20000:],
+                **deployment,
             },
         }
 
