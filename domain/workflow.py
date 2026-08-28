@@ -57,9 +57,11 @@ class Gate:
     """Represents a gate (condition) that must be satisfied to proceed in a Workflow."""
     id: str
     name: str
+    description: str = ""
     required_approvals: List[str] = field(default_factory=list)
     min_consensus_score: float = 0.0
     conditions: Dict[str, Any] = field(default_factory=dict)
+    decision_id: Optional[str] = None
 
     def is_satisfied(self, artifact: Optional["Artifact"], approvals: List[str]) -> bool:
         """Check if this gate is satisfied."""
@@ -91,8 +93,8 @@ class Transition:
 @dataclass
 class Workflow:
     """Represents a process definition with states, transitions, and gates."""
-    id: str
-    name: str
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
     description: str = ""
     states: List[State] = field(default_factory=list)
     transitions: List[Transition] = field(default_factory=list)
@@ -108,6 +110,7 @@ class Workflow:
     events: List["Event"] = field(default_factory=list)
 
     metadata: Dict[str, Any] = field(default_factory=dict)
+    context: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -254,6 +257,7 @@ class Workflow:
             "transitions": [{"from_state": t.from_state.name, "to_state": t.to_state.name, "condition": t.condition, "gate_id": t.gate_id} for t in self.transitions],
             "gates": [{"id": g.id, "name": g.name, "required_approvals": g.required_approvals, "min_consensus_score": g.min_consensus_score, "conditions": g.conditions} for g in self.gates],
             "metadata": self.metadata,
+            "context": self.context,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -273,6 +277,7 @@ class Workflow:
             transitions=transitions,
             gates=gates,
             metadata=data.get("metadata", {}),
+            context=data.get("context", {}),
             created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
             updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             **kwargs,

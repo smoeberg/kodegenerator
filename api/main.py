@@ -44,6 +44,7 @@ from api.endpoints import (
     control_plane,
     decisions,
     implementation_agent,
+    pipeline_gates,
     swarm,
     swarm_operations,
     swarm_websocket,
@@ -97,6 +98,7 @@ if HAS_AUTH:
         workflows.router,
         implementation_agent.router,
         decisions.router,
+        pipeline_gates.router,
     )
 
     app.include_router(auth.router)

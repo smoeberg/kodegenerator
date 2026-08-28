@@ -10,7 +10,8 @@ from domain.workflow import Workflow
 from domain.pipeline_states import PipelineState
 from domain.pipeline_transitions import get_pipeline_transitions
 from domain.pipeline_gates import get_pipeline_gates
-from infrastructure.persistence.repositories.workflow_repository import WorkflowRepository
+from infrastructure.persistence.repositories import WorkflowRepository
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,13 @@ class PipelineAdapter:
     a fully configured Workflow for the software factory pipeline.
     """
     
-    def __init__(self, workflow_repository: WorkflowRepository):
+    def __init__(self, workflow_repository: Optional[WorkflowRepository] = None):
+        # Repo is optional: when absent we keep workflows in memory so the
+        # pipeline can run end-to-end without a database session.
         self._workflow_repo = workflow_repository
+        self._memory_cache: dict[str, Workflow] = {}
     
-    async def create_pipeline_from_yaml(
+    def create_pipeline_from_yaml(
         self,
         yaml_content: str,
         organization_id: str,
@@ -84,8 +88,10 @@ class PipelineAdapter:
             workflow.organization_id = organization_id
             workflow.created_by = created_by
             
-            # 5. Save to repository
-            await self._workflow_repo.save(workflow)
+            # 5. Save to repository (or in-memory cache when no repo is wired)
+            if self._workflow_repo is not None:
+                self._workflow_repo.add(workflow, organization_id)
+            self._memory_cache[workflow.id] = workflow
             
             logger.info(f"Created pipeline workflow {workflow.id} for project {spec.get('project_name')}")
             return workflow

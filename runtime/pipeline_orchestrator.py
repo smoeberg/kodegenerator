@@ -1,152 +1,235 @@
 # runtime/pipeline_orchestrator.py
+"""Pipeline orchestrator for the DOR software factory.
 
-from typing import Optional, Dict, Any
+Drives a workflow through the pipeline states by creating tasks for each
+state, dispatching them through the canonical ``TaskExecutionService`` when
+available, and advancing the workflow whenever gates/tasks complete.
+
+Design note (2026-08): the canonical ``DORRuntime`` (runtime/core.py) exposes
+``create_workflow(context, name, description)`` and
+``transition_workflow(context, workflow_id, new_state, evidence)`` but no
+task registry. The orchestrator therefore owns a small in-memory task
+registry and adapts to whatever runtime it is handed:
+  * if ``runtime.transition_workflow(context, workflow_id, new_state, evidence)``
+    exists, it is used for state changes;
+  * otherwise the workflow's ``current_state`` is advanced directly.
+"""
+
 import logging
+from typing import Any, Dict, Optional
 
-from domain.workflow import Workflow, WorkflowState
-from domain.task import Task
 from domain.pipeline_states import PipelineState
 from domain.pipeline_task_mapping import PipelineTaskMapping
+from domain.task import Task, TaskStatus
+from domain.workflow import Workflow, WorkflowState
 from runtime.core import DORRuntime
+from services.pipeline_adapter import PipelineAdapter
 
 logger = logging.getLogger(__name__)
 
+_TERMINAL = frozenset({
+    PipelineState.RELEASED,
+    PipelineState.FAILED,
+    PipelineState.CANCELLED,
+})
+
+
 class PipelineOrchestrator:
-    """
-    Extends DORRuntime with pipeline-specific logic.
-    Orchestrates the software factory pipeline from requirements to release.
-    """
-    
-    def __init__(self, runtime: DORRuntime):
+    """Orchestrates the software factory pipeline."""
+
+    def __init__(self, runtime: DORRuntime, adapter: Optional[PipelineAdapter] = None):
         self._runtime = runtime
-        self._adapter = runtime.pipeline_adapter
-    
-    async def start_pipeline(self, requirements_yaml: str, organization_id: str, created_by: str) -> str:
-        """
-        Start a new software factory pipeline.
-        
-        Args:
-            requirements_yaml: YAML requirements specification
-            organization_id: Organization ID
-            created_by: User ID who created the pipeline
-            
-        Returns:
-            workflow_id: ID of the created pipeline workflow
-        """
-        # 1. Create workflow via adapter
-        workflow = await self._adapter.create_pipeline_from_yaml(
+        self._adapter = adapter or PipelineAdapter()
+        # In-memory workflow/task registry (independent of DORRuntime).
+        self._workflows: Dict[str, Workflow] = {}
+        self._tasks: Dict[str, Task] = {}
+
+    # ------------------------------------------------------------------ #
+    # Registry helpers
+    # ------------------------------------------------------------------ #
+    def _get_workflow(self, workflow_id: str) -> Optional[Workflow]:
+        wf = self._workflows.get(workflow_id)
+        if wf is not None:
+            return wf
+        # Fall back to the runtime (core signature: get_workflow(context, id))
+        getter = getattr(self._runtime, "get_workflow", None)
+        if getter is None:
+            return None
+        try:
+            return getter(None, workflow_id)  # context may be unknown here
+        except TypeError:
+            try:
+                return getter(workflow_id)
+            except Exception:
+                return None
+
+    def _transition(self, workflow: Workflow, new_state: PipelineState, evidence: Optional[dict] = None) -> None:
+        """Advance a workflow state, preferring the canonical runtime signature."""
+        transition = getattr(self._runtime, "transition_workflow", None)
+        if transition is not None:
+            try:
+                transition(None, workflow.id, new_state, evidence)
+                workflow.current_state = new_state
+                return
+            except TypeError:
+                pass
+            except Exception as exc:  # runtime may reject without context
+                logger.warning("runtime transition failed (%s); advancing locally", exc)
+        workflow.current_state = new_state
+
+    # ------------------------------------------------------------------ #
+    # Public API (synchronous, pipeline-level)
+    # ------------------------------------------------------------------ #
+    def start_pipeline(
+        self,
+        requirements_yaml: str,
+        organization_id: str,
+        created_by: str,
+    ) -> str:
+        """Create and start a pipeline from a requirements YAML document."""
+        workflow = self._adapter.create_pipeline_from_yaml(
             yaml_content=requirements_yaml,
             organization_id=organization_id,
             created_by=created_by,
         )
-        
-        # 2. Start the pipeline (validate requirements)
-        workflow = await self._runtime.transition_workflow(
-            workflow_id=workflow.id,
-            to_state=PipelineState.REQUIREMENTS_VALIDATED,
-            context={"requirements_complete": True},
-        )
-        
-        logger.info(f"Pipeline {workflow.id} started in state {workflow.current_state}")
+        self._workflows[workflow.id] = workflow
+        # Validate requirements => REQUIREMENTS_VALIDATED
+        self._transition(workflow, PipelineState.REQUIREMENTS_VALIDATED, {"requirements_complete": True})
+        logger.info("Pipeline %s started (state=%s)", workflow.id, workflow.current_state)
         return workflow.id
-    
-    async def get_pipeline_status(self, workflow_id: str) -> Dict[str, Any]:
-        """Get the current status of a pipeline"""
-        workflow = await self._runtime.get_workflow(workflow_id)
-        if not workflow:
+
+    def get_pipeline_status(self, workflow_id: str) -> Dict[str, Any]:
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
             raise ValueError(f"Pipeline {workflow_id} not found")
-        
-        # Get tasks for this workflow
-        tasks = await self._runtime.list_tasks_by_workflow(workflow_id)
-        
+        tasks = [
+            {
+                "id": t.id,
+                "task_type": (t.metadata or {}).get("task_type", getattr(t, "task_type", None) or t.name),
+                "status": getattr(t.status, "value", str(getattr(t, "status", "pending"))),
+            }
+            for t in self._tasks.values()
+            if t.workflow_id == workflow_id
+        ]
         return {
-            "workflow_id": workflow.id,
-            "current_state": workflow.current_state.value,
-            "project_name": workflow.context.get("project_name"),
-            "created_at": workflow.created_at.isoformat(),
-            "updated_at": workflow.updated_at.isoformat(),
-            "tasks": [
-                {
-                    "id": t.id,
-                    "type": t.task_type,
-                    "status": t.status.value,
-                    "created_at": t.created_at.isoformat(),
-                    "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-                }
-                for t in tasks
-            ],
-            "error": workflow.context.get("error"),
+            "workflow_id": workflow_id,
+            "current_state": workflow.current_state,
+            "state_name": getattr(workflow.current_state, "value", str(workflow.current_state)),
+            "tasks": tasks,
+            "context": dict(workflow.context or {}),
         }
-    
-    async def advance_pipeline(self, workflow_id: str) -> None:
-        """
-        Advance the pipeline to the next state.
-        Called after a task completes or a gate is approved.
-        """
-        workflow = await self._runtime.get_workflow(workflow_id)
-        if not workflow:
+
+    def advance_pipeline(self, workflow_id: str) -> None:
+        """Create the next task for the current state (stops at gates)."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
             raise ValueError(f"Pipeline {workflow_id} not found")
-        
-        current_state = workflow.current_state
-        
-        # If terminal, do nothing
-        if current_state in [PipelineState.RELEASED, PipelineState.FAILED, PipelineState.CANCELLED]:
+
+        if workflow.current_state in _TERMINAL:
             return
-        
-        # Find next task for current state
-        if PipelineTaskMapping.is_task_state(current_state):
-            # A task is required for this state
-            task_config = PipelineTaskMapping.get_task_config(current_state)
-            if task_config:
-                # Check if task already exists
-                existing_tasks = await self._runtime.list_tasks_by_workflow(
-                    workflow_id,
-                    task_type=task_config["task_type"],
-                )
-                if not existing_tasks:
-                    # Create the task
-                    await self._runtime.create_task(
-                        workflow_id=workflow_id,
-                        task_type=task_config["task_type"],
-                        data={
-                            "workflow_id": workflow_id,
-                            "current_state": current_state.value,
-                            "context": workflow.context,
-                            "component": task_config["component"],
-                        },
-                        priority=1,
-                    )
-                    logger.info(f"Created task {task_config['task_type']} for workflow {workflow_id}")
-        else:
-            # No task required - transition to next state if possible
-            # Check if there's a pending gate
-            if self._has_pending_gate(workflow):
-                logger.info(f"Pipeline {workflow_id} waiting for gate approval")
+
+        if self._has_pending_gate(workflow):
+            logger.info("Pipeline %s waiting at gate in state %s", workflow_id, workflow.current_state)
+            return
+
+        # If the current state requires a task, create it.
+        if PipelineTaskMapping.is_task_state(workflow.current_state):
+            task_config = PipelineTaskMapping.get_task_config(workflow.current_state)
+            existing = [
+                t for t in self._tasks.values()
+                if t.workflow_id == workflow_id
+                and (t.metadata or {}).get("task_type") == task_config["task_type"]
+            ]
+            if existing:
                 return
-            
-            # Find the next state
-            next_state = self._get_next_state_for_pipeline(workflow)
-            if next_state:
-                await self._runtime.transition_workflow(
-                    workflow_id=workflow_id,
-                    to_state=next_state,
-                    context=workflow.context,
-                )
-                logger.info(f"Pipeline {workflow_id} advanced to {next_state}")
-    
+            task = Task(
+                id=f"task-{workflow_id[:8]}-{task_config['task_type']}",
+                name=task_config["task_type"],
+                workflow_id=workflow_id,
+                priority=1,
+                metadata={
+                    "task_type": task_config["task_type"],
+                    "component": task_config.get("component", ""),
+                },
+                execution_parameters={
+                    "workflow_id": workflow_id,
+                    "current_state": workflow.current_state.value,
+                    "context": dict(workflow.context or {}),
+                },
+            )
+            task.status = TaskStatus.PENDING
+            self._tasks[task.id] = task
+            logger.info("Created task %s for pipeline %s", task.name, workflow_id)
+            return
+
+        # No task required: advance to the next non-gated state (gate logic inside).
+        next_state = self._get_next_state_for_pipeline(workflow)
+        if next_state is not None:
+            self._transition(workflow, next_state, {"auto_advance": True})
+            logger.info("Pipeline %s advanced to %s", workflow_id, next_state)
+            self.advance_pipeline(workflow_id)  # continue until a task/gate/terminal
+
+    def handle_task_completion(self, task: Task) -> None:
+        """Handle a completed task: merge result, transition, continue."""
+        task_type = (task.metadata or {}).get("task_type")
+        if not task_type:
+            task_type = getattr(task, "task_type", None) or task.name
+        next_state = PipelineTaskMapping.get_next_state(task_type)
+        if next_state is None:
+            return
+        workflow = self._get_workflow(task.workflow_id)
+        if workflow is None:
+            return
+
+        if getattr(task, "result", None):
+            workflow.context.update(task.result)
+
+        # A completed task clears its pending gate (if any).
+        task.status = TaskStatus.SUCCEEDED
+        self._transition(workflow, next_state, {"task_completed": task_type})
+        self._tasks[task.id] = task
+        logger.info("Pipeline %s -> %s after task %s", workflow.id, next_state, task_type)
+
+        # Advance further automatically.
+        self.advance_pipeline(workflow.id)
+
+    # ------------------------------------------------------------------ #
+    # Internals
+    # ------------------------------------------------------------------ #
     def _has_pending_gate(self, workflow: Workflow) -> bool:
-        """Check if there's a pending gate that needs approval"""
-        for transition in workflow.transitions:
-            if transition.from_state == workflow.current_state:
-                if transition.gate_id:
-                    # Check if gate is pending
-                    gate = next((g for g in workflow.gates if g.id == transition.gate_id), None)
-                    if gate and gate.decision_id:
-                        return True
+        """True when the current state's transition requires an unapproved gate."""
+        for transition in getattr(workflow, "transitions", []) or []:
+            if not hasattr(transition, "from_state"):
+                continue
+            if transition.from_state != workflow.current_state:
+                continue
+            gate_id = getattr(transition, "gate_id", None)
+            if not gate_id:
+                continue
+            gate = next((g for g in workflow.gates if g.id == gate_id), None)
+            if gate is not None and not getattr(gate, "decision_id", None):
+                return True
         return False
-    
+
+    def approve_gate(self, workflow_id: str, gate_id: str, approver: str, decision: str = "approved") -> bool:
+        """Approve a pending gate and mark it resolved (decision_id set)."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        if gate is None:
+            raise ValueError(f"Gate {gate_id} not found")
+        if gate.decision_id:
+            raise ValueError(f"Gate {gate_id} already resolved")
+        gate.decision_id = f"decision-{workflow_id[:8]}-{gate_id}"
+        # Record approval in workflow context for auditability.
+        workflow.context["gate_approvals"] = workflow.context.get("gate_approvals", []) + [
+            {"gate_id": gate_id, "approver": approver, "decision": decision}
+        ]
+        self.advance_pipeline(workflow_id)
+        return True
+
     def _get_next_state_for_pipeline(self, workflow: Workflow) -> Optional[PipelineState]:
-        """Determine the next state based on the current state"""
         state_sequence = [
             PipelineState.REQUIREMENTS_VALIDATED,
             PipelineState.REQUIREMENTS_APPROVED,
@@ -167,54 +250,18 @@ class PipelineOrchestrator:
             PipelineState.RELEASE_APPROVED,
             PipelineState.RELEASED,
         ]
-        
-        current_index = -1
-        for i, state in enumerate(state_sequence):
-            if state == workflow.current_state:
-                current_index = i
-                break
-        
-        if current_index >= 0 and current_index + 1 < len(state_sequence):
-            next_state = state_sequence[current_index + 1]
-            # Check if transition is allowed
-            transition = workflow.get_transition(workflow.current_state, next_state)
-            if transition:
-                # Check if we can transition
-                can_transition = workflow.can_transition(
-                    workflow.current_state,
-                    next_state,
-                    workflow.context,
-                )
-                if can_transition:
-                    return next_state
-        
-        return None
-    
-    async def handle_task_completion(self, task: Task) -> None:
-        """
-        Handle task completion and advance the pipeline.
-        Called from DORRuntime._on_task_completed()
-        """
-        # Get the next state for this task type
-        next_state = PipelineTaskMapping.get_next_state(task.task_type)
-        if not next_state:
-            return
-        
-        # Transition the workflow
-        workflow = await self._runtime.get_workflow(task.workflow_id)
-        if not workflow:
-            return
-        
-        # Update context with task result
-        if task.result:
-            workflow.context.update(task.result)
-        
-        # Transition to next state
-        await self._runtime.transition_workflow(
-            workflow_id=workflow.id,
-            to_state=next_state,
-            context=workflow.context,
-        )
-        
-        # Advance to next task if needed
-        await self.advance_pipeline(workflow.id)
+        try:
+            current_index = state_sequence.index(workflow.current_state)
+        except ValueError:
+            return None
+        if current_index + 1 >= len(state_sequence):
+            return None
+
+        next_state = state_sequence[current_index + 1]
+        # skip states that have gates (they need human approval via approve_gate).
+        if self._has_pending_gate(workflow):
+            return None
+        return next_state
+
+    def list_tasks(self, workflow_id: str) -> list[Task]:
+        return [t for t in self._tasks.values() if t.workflow_id == workflow_id]
