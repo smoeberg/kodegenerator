@@ -19,7 +19,7 @@ from services.llm_adapters import BaseLLMAdapter, OpenAIAdapter
 
 
 class PipelineExecutorConfigurationError(RuntimeError):
-    pass
+    """Raised when an executor lacks mandatory fail-closed configuration."""
 
 
 class TaskExecutor(Protocol):
@@ -29,6 +29,13 @@ class TaskExecutor(Protocol):
 
 
 class DeployService(Protocol):
+    """Backend boundary used by :class:`DeployExecutor`.
+
+    Implementations receive generated files and deployment metadata. Credentials
+    must be resolved outside the payload, normally from workload identity or a
+    process-level credential helper.
+    """
+
     def deploy(
         self,
         files: list[Mapping[str, str]],
@@ -39,22 +46,38 @@ class DeployService(Protocol):
 
 
 class DockerDeployService:
-    """Build and push generated source as a Docker image."""
+    """Materialize generated files, then build and push a Docker image.
+
+    ``DOR_PIPELINE_DOCKER_REGISTRY`` supplies the optional registry prefix.
+    Authentication is intentionally delegated to Docker's credential store.
+    ``DOR_PIPELINE_DEPLOY_URL`` may be a format string using ``project_name``,
+    ``environment``, ``target``, and ``image_tag``.
+    """
 
     def __init__(self, registry: str | None = None) -> None:
-        self._registry = (registry or os.getenv("DOR_PIPELINE_DOCKER_REGISTRY", "")).strip().rstrip("/")
+        self._registry = (
+            (registry or os.getenv("DOR_PIPELINE_DOCKER_REGISTRY", ""))
+            .strip()
+            .rstrip("/")
+        )
 
     @staticmethod
     def _safe_name(value: str) -> str:
         value = value.strip().lower()
-        safe = "".join(char if char.isalnum() or char in "._-" else "-" for char in value)
+        safe = "".join(
+            char if char.isalnum() or char in "._-" else "-" for char in value
+        )
         return safe.strip(".-") or "app"
 
     @staticmethod
     def _write_files(root: Path, files: list[Mapping[str, str]]) -> None:
         for item in files:
             path = str(item.get("path", ""))
-            if not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+            if (
+                not path
+                or PurePosixPath(path).is_absolute()
+                or ".." in PurePosixPath(path).parts
+            ):
                 raise ValueError(f"invalid generated file path: {path!r}")
             destination = root.joinpath(*PurePosixPath(path).parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +94,13 @@ class DockerDeployService:
         environment: str,
         target: str,
     ) -> dict[str, str]:
+        """Build and push one immutable environment tag.
+
+        Raises:
+            ValueError: A generated path is unsafe or no Dockerfile is present.
+            RuntimeError: Docker build or push returns a non-zero exit status.
+            subprocess.TimeoutExpired: Build or push exceeds 900 seconds.
+        """
         project = self._safe_name(project_name)
         env = self._safe_name(environment)
         repository = f"{self._registry}/{project}" if self._registry else project
@@ -241,6 +271,8 @@ class TestsExecutor(_AIExecutor):
 
 
 class RunTestsExecutor:
+    """Run the configured test command in the bounded pipeline workspace."""
+
     task_type = "run_tests"
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -266,18 +298,33 @@ class RunTestsExecutor:
 
 
 class DeployExecutor(TaskExecutor):
+    """Validate the canonical deploy payload and invoke a deployment backend.
+
+    Required payload keys are ``files``, ``project_name``, ``environment``, and
+    ``target``. The default backend builds and pushes a Docker image. Inject a
+    :class:`DeployService` for other runtimes or deterministic tests.
+    """
+
     task_type = "deploy"
 
-    def __init__(self, backend: DeployService | None = None):
+    def __init__(self, backend: DeployService | None = None) -> None:
         self._backend = backend or DockerDeployService()
 
     def execute(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Deploy generated files and return auditable deployment metadata."""
         files = data.get("files")
         project_name = data.get("project_name")
         environment = data.get("environment")
         target = data.get("target")
-        if not isinstance(files, list) or not project_name or not environment or not target:
-            raise ValueError("deploy payload requires files, project_name, environment and target")
+        if (
+            not isinstance(files, list)
+            or not project_name
+            or not environment
+            or not target
+        ):
+            raise ValueError(
+                "deploy payload requires files, project_name, environment and target"
+            )
 
         deployment = self._backend.deploy(files, project_name, environment, target)
         return {
@@ -290,9 +337,17 @@ class DeployExecutor(TaskExecutor):
 
 
 class ReleaseExecutor:
+    """Materialize the terminal release marker for an approved workflow.
+
+    This executor does not create or merge a pull request. Git publication is
+    owned by :class:`services.git_pr_publisher.GitPRPublisher`; callers retain
+    its ``PRResult`` as release evidence before invoking this marker.
+    """
+
     task_type = "release"
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return a stable release result bound to ``payload.workflow_id``."""
         return {
             "status": "success",
             "release": {

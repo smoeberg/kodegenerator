@@ -21,13 +21,11 @@ from phase4.authority.grants import VerifiedAuthorityGrant
 from services.github_pr_api import GitHubAPIClientMixin
 from services.github_pr_auth import GitHubAuthenticator
 from services.github_pr_contracts import (
-    ChangelogEntry,
     GitHubConfig,
     PatchInfo,
     PRMetadata,
     PRResult,
     PRStatus,
-    TokenAuthConfig,
 )
 from services.github_pr_formatting import GitHubPRFormatter
 from services.github_pr_workflow import GitHubPRWorkflowMixin
@@ -61,10 +59,14 @@ class GitWorktreeManager:
     def __init__(self, repo_root: Path | str) -> None:
         self.repo_root = Path(repo_root).resolve()
         if not (self.repo_root / ".git").exists():
-            raise WorktreeExecutionError(f"Not a valid git repository: {self.repo_root}")
+            raise WorktreeExecutionError(
+                f"Not a valid git repository: {self.repo_root}"
+            )
 
-    def create_worktree(self, branch_name: str, base_branch: str = "main") -> WorktreeSession:
-        """Create a new ephemeral worktree detached on a new branch derived from base_branch."""
+    def create_worktree(
+        self, branch_name: str, base_branch: str = "main"
+    ) -> WorktreeSession:
+        """Create an ephemeral worktree on a branch derived from ``base_branch``."""
         session_id = str(uuid4())[:8]
         temp_dir = Path(tempfile.mkdtemp(prefix=f"worktree_{session_id}_"))
 
@@ -84,7 +86,9 @@ class GitWorktreeManager:
         except Exception as exc:
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            raise WorktreeExecutionError(f"Failed to create git worktree for branch {branch_name}: {exc}") from exc
+            raise WorktreeExecutionError(
+                f"Failed to create git worktree for branch {branch_name}: {exc}"
+            ) from exc
 
         return WorktreeSession(
             session_id=session_id,
@@ -103,7 +107,11 @@ class GitWorktreeManager:
             cmd.append(str(session.worktree_path))
             self._run_git(cmd, cwd=self.repo_root)
         except Exception as exc:
-            logger.warning(f"Error executing git worktree remove: {exc}. Falling back to manual cleanup.")
+            logger.warning(
+                "Error executing git worktree remove: %s. "
+                "Falling back to manual cleanup.",
+                exc,
+            )
             if session.worktree_path.exists():
                 shutil.rmtree(session.worktree_path, ignore_errors=True)
             try:
@@ -120,9 +128,14 @@ class GitWorktreeManager:
         try:
             patch_file.write_text(patch_content, encoding="utf-8")
             # Apply via git apply with whitespace fix
-            self._run_git(["git", "apply", "--whitespace=nowarn", str(patch_file)], cwd=session.worktree_path)
+            self._run_git(
+                ["git", "apply", "--whitespace=nowarn", str(patch_file)],
+                cwd=session.worktree_path,
+            )
         except Exception as exc:
-            raise WorktreeExecutionError(f"Patch application failed in worktree: {exc}") from exc
+            raise WorktreeExecutionError(
+                f"Patch application failed in worktree: {exc}"
+            ) from exc
         finally:
             if patch_file.exists():
                 patch_file.unlink(missing_ok=True)
@@ -138,10 +151,14 @@ class GitWorktreeManager:
         self._run_git(["git", "add", "-A"], cwd=session.worktree_path)
 
         # Check if there are changes to commit
-        status_out = self._run_git(["git", "status", "--porcelain"], cwd=session.worktree_path)
+        status_out = self._run_git(
+            ["git", "status", "--porcelain"], cwd=session.worktree_path
+        )
         if not status_out.strip():
             # No changes to commit
-            return self._run_git(["git", "rev-parse", "HEAD"], cwd=session.worktree_path).strip()
+            return self._run_git(
+                ["git", "rev-parse", "HEAD"], cwd=session.worktree_path
+            ).strip()
 
         env = os.environ.copy()
         env["GIT_AUTHOR_NAME"] = author_name
@@ -151,17 +168,23 @@ class GitWorktreeManager:
 
         cmd = ["git", "commit", "-m", message]
         self._run_git(cmd, cwd=session.worktree_path, env=env)
-        commit_sha = self._run_git(["git", "rev-parse", "HEAD"], cwd=session.worktree_path).strip()
+        commit_sha = self._run_git(
+            ["git", "rev-parse", "HEAD"], cwd=session.worktree_path
+        ).strip()
         return commit_sha
 
-    def push_branch(self, session: WorktreeSession, remote: str = "origin", force: bool = False) -> None:
+    def push_branch(
+        self, session: WorktreeSession, remote: str = "origin", force: bool = False
+    ) -> None:
         """Push branch from worktree to remote."""
         cmd = ["git", "push", "-u", remote, session.branch_name]
         if force:
             cmd.insert(2, "--force")
         self._run_git(cmd, cwd=session.worktree_path)
 
-    def _run_git(self, cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> str:
+    def _run_git(
+        self, cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None
+    ) -> str:
         """Run a git subcommand and return stdout."""
         res = subprocess.run(
             cmd,
@@ -173,12 +196,21 @@ class GitWorktreeManager:
             check=False,
         )
         if res.returncode != 0:
-            raise WorktreeExecutionError(f"Git command failed: {' '.join(cmd)}\nStderr: {res.stderr}\nStdout: {res.stdout}")
+            raise WorktreeExecutionError(
+                f"Git command failed: {' '.join(cmd)}\n"
+                f"Stderr: {res.stderr}\nStdout: {res.stdout}"
+            )
         return res.stdout
 
 
 class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
-    """End-to-end publisher coordinating worktrees, patch commits, and GitHub PR creation."""
+    """Publish a verified patch through an isolated Git worktree and GitHub PR.
+
+    The API token authenticates GitHub REST calls only. Git push credentials
+    must be configured independently on the repository remote or credential
+    helper. The publisher never merges the pull request or bypasses protected
+    branch rules.
+    """
 
     def __init__(
         self,
@@ -189,6 +221,17 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         repo_root: Optional[Path | str] = None,
         config: Optional[GitHubConfig] = None,
     ) -> None:
+        """Configure a repository-scoped publisher.
+
+        Args:
+            owner: GitHub repository owner.
+            repo: GitHub repository name.
+            token: Secret token with contents and pull-request write access.
+                The value is retained only by the authentication boundary and
+                must not be logged or included in task payloads.
+            repo_root: Local Git checkout used to create ephemeral worktrees.
+            config: Optional API URL, retry, timeout, and user-agent policy.
+        """
         self.owner = owner
         self.repo = repo
         self.repo_full_name = f"{owner}/{repo}"
@@ -208,12 +251,20 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
     ) -> PRResult:
         """Execute full isolated worktree lifecycle and create GitHub Pull Request.
 
-        Guaranteed Fail-Closed: Requires VerifiedAuthorityGrant if provided and validates patch content.
+        The lifecycle validates authority and patch content, creates a unique
+        worktree/branch, applies and commits the diff, optionally pushes it,
+        creates the PR, posts a status comment, and always cleans up the
+        worktree. An unverified or expired supplied grant fails closed.
+
+        ``push_remote=False`` is intended for tests. Production publication
+        normally requires ``True`` so the GitHub API can resolve the head ref.
         """
         # 1. Security & Authority Check
         if authority_grant is not None:
             if not authority_grant.verified:
-                raise WorktreeSecurityError("Authority grant failed cryptographic verification")
+                raise WorktreeSecurityError(
+                    "Authority grant failed cryptographic verification"
+                )
             if authority_grant.is_expired():
                 raise WorktreeSecurityError("Authority grant is expired")
 
@@ -239,7 +290,11 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
             self.worktree_manager.apply_patch(session, patch.patch_content)
 
             # 4. Commit changes with attribution
-            commit_msg = f"{pr_metadata.title}\n\nTask: {patch.patch_id}\nAuthor: {patch.author}\n\n{patch.summary}"
+            commit_msg = (
+                f"{pr_metadata.title}\n\n"
+                f"Task: {patch.patch_id}\nAuthor: {patch.author}\n\n"
+                f"{patch.summary}"
+            )
             commit_sha = self.worktree_manager.stage_and_commit(
                 session=session,
                 message=commit_msg,
