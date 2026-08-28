@@ -104,17 +104,38 @@ class PipelineOrchestrator:
         """
         transition = getattr(self._runtime, "transition_workflow", None)
         if transition is not None:
+            # Only invoke the canonical runtime when the workflow is actually
+            # persisted there (it then has an OrganizationContext + DB row).
+            # Pipelines created via the adapter stay in-memory until they are
+            # created in the runtime, so they advance locally.  Genuine
+            # runtime rejections are still fail-closed (raised below).
+            persisted = False
             try:
-                transition(None, workflow.id, new_state, evidence)
-                workflow.current_state = new_state
-                return
-            except TypeError:
+                persisted = self._runtime.get_workflow(
+                    getattr(self._runtime, "_admin_context", None), workflow.id
+                ) is not None
+            except Exception:
+                persisted = False
+            if persisted:
                 try:
-                    transition(workflow.id, new_state, evidence)
+                    transition(None, workflow.id, new_state, evidence)
                     workflow.current_state = new_state
                     return
-                except TypeError:
-                    pass
+                except (TypeError, AttributeError):
+                    # Signature mismatch: runtime wants (workflow_id, ...)
+                    # without context, or rejects None context.
+                    try:
+                        transition(workflow.id, new_state, evidence)
+                        workflow.current_state = new_state
+                        return
+                    except (TypeError, AttributeError):
+                        pass
+                except Exception as exc:
+                    # Fail-closed: real runtime failure propagates.
+                    raise RuntimeError(
+                        f"Workflow {workflow.id} transition to {new_state.value} "
+                        f"rejected by runtime: {exc}"
+                    ) from exc
         elif self._runtime is not None and hasattr(self._runtime, "workflow_engine"):
             engine = getattr(self._runtime, "workflow_engine", None)
             if engine is not None and hasattr(engine, "transition_workflow"):
