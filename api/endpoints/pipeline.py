@@ -9,6 +9,8 @@ from api.dependencies import get_dor
 from api.schemas.pipeline import (
     PipelineListResponse,
     PipelineStatusResponse,
+    PipelineWorkerClaimRequest,
+    PipelineWorkerCompleteRequest,
     StartPipelineRequest,
 )
 from domain.principal import Principal
@@ -21,6 +23,30 @@ router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 def _create_pipeline_orchestrator(runtime: DORRuntime) -> PipelineOrchestrator:
     return get_pipeline_registry(runtime).orchestrator
+
+
+def _require_pipeline_access(
+    orchestrator: PipelineOrchestrator,
+    workflow_id: str,
+    current_user: User,
+    organization_id: str,
+):
+    """Resolve one workflow without leaking another tenant's pipeline."""
+    workflow = orchestrator._get_workflow(workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
+        )
+    metadata = dict(workflow.metadata or {})
+    if metadata.get("organization_id") != organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
+        )
+    if metadata.get("created_by") != current_user.username:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Pipeline access denied"
+        )
+    return workflow
 
 
 @router.post("/start", response_model=PipelineStatusResponse)
@@ -39,8 +65,8 @@ def start_pipeline(
             created_by=current_user.username,
         )
         orchestrator.advance_pipeline(workflow_id)
-        status = orchestrator.get_pipeline_status(workflow_id)
-        return PipelineStatusResponse(**status)
+        pipeline_status = orchestrator.get_pipeline_status(workflow_id)
+        return PipelineStatusResponse(**pipeline_status)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -57,10 +83,14 @@ def get_pipeline_status(
     workflow_id: str,
     runtime: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
+    organization_id: str = Query(...),
 ) -> PipelineStatusResponse:
     """Get the status of a pipeline."""
     try:
         orchestrator = _create_pipeline_orchestrator(runtime)
+        _require_pipeline_access(
+            orchestrator, workflow_id, current_user, organization_id
+        )
         return PipelineStatusResponse(**orchestrator.get_pipeline_status(workflow_id))
     except ValueError as exc:
         raise HTTPException(
@@ -73,10 +103,14 @@ def advance_pipeline(
     workflow_id: str,
     runtime: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
+    organization_id: str = Query(...),
 ) -> dict:
     """Manually advance a pipeline to the next state (useful after gate approval)."""
     try:
         orchestrator = _create_pipeline_orchestrator(runtime)
+        _require_pipeline_access(
+            orchestrator, workflow_id, current_user, organization_id
+        )
         orchestrator.advance_pipeline(workflow_id)
         return {"status": "ok", "message": "Pipeline advanced"}
     except Exception as exc:
@@ -127,3 +161,78 @@ def list_pipelines(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post("/workers/claim")
+def claim_pipeline_task(
+    request: PipelineWorkerClaimRequest,
+    runtime: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, object]:
+    """Claim work from the queue that advances pipeline domain state."""
+    queue = get_pipeline_registry(runtime).queue
+    task = queue.claim_next_task(request.worker_id, request.capabilities)
+    if task is None:
+        return {"claimed": False, "task": None}
+    metadata = dict(task.metadata or {})
+    if (
+        metadata.get("organization_id") != request.organization_id
+        or metadata.get("actor_id") != current_user.username
+    ):
+        queue.fail_task(
+            task.task_id,
+            request.worker_id,
+            "worker pipeline scope mismatch",
+            retry=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Pipeline task access denied"
+        )
+    return {
+        "claimed": True,
+        "task": {
+            "task_id": task.task_id,
+            "name": task.name,
+            "status": task.status.value,
+            "metadata": metadata,
+        },
+    }
+
+
+@router.post("/workers/complete")
+def complete_pipeline_task(
+    request: PipelineWorkerCompleteRequest,
+    runtime: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, object]:
+    """Complete claimed work and advance its pipeline."""
+    queue = get_pipeline_registry(runtime).queue
+    try:
+        task = queue.get_task(request.task_id)
+        metadata = dict(task.metadata or {}) if task is not None else {}
+        if (
+            metadata.get("organization_id") != request.organization_id
+            or metadata.get("actor_id") != current_user.username
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Pipeline task access denied",
+            )
+        if request.success:
+            queue.complete_task(
+                request.task_id, request.worker_id, request.result or {}
+            )
+        else:
+            queue.fail_task(
+                request.task_id,
+                request.worker_id,
+                request.error or "worker failure",
+                retry=False,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    return {"ok": True, "task_id": request.task_id}

@@ -153,3 +153,6 @@ replay are documented in
 Exactly-once coordination for Docker/deployment and pull-request side effects is
 documented in
 [docs/TERMINAL_SIDE_EFFECTS.md](docs/TERMINAL_SIDE_EFFECTS.md).
+
+The real TCP/Uvicorn pipeline acceptance gate and worker HTTP contract are
+documented in [docs/HTTP_ACCEPTANCE.md](docs/HTTP_ACCEPTANCE.md).

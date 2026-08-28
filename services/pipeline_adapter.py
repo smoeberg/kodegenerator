@@ -1,32 +1,33 @@
 # services/pipeline_adapter.py
 
-from typing import Dict, Any, Optional
-import yaml
-import uuid
-from datetime import datetime
 import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from domain.workflow import Workflow
+import yaml
+
+from domain.pipeline_gates import get_pipeline_gates
 from domain.pipeline_states import PipelineState
 from domain.pipeline_transitions import get_pipeline_transitions
-from domain.pipeline_gates import get_pipeline_gates
+from domain.workflow import Workflow
 from infrastructure.persistence.repositories import WorkflowRepository
-from typing import Optional, List
 
 logger = logging.getLogger(__name__)
+
 
 class PipelineAdapter:
     """
     Adapter that takes a YAML requirements specification and creates
     a fully configured Workflow for the software factory pipeline.
     """
-    
+
     def __init__(self, workflow_repository: Optional[WorkflowRepository] = None):
         # Repo is optional: when absent we keep workflows in memory so the
         # pipeline can run end-to-end without a database session.
         self._workflow_repo = workflow_repository
         self._memory_cache: dict[str, Workflow] = {}
-    
+
     def create_pipeline_from_yaml(
         self,
         yaml_content: str,
@@ -41,10 +42,10 @@ class PipelineAdapter:
             spec = yaml.safe_load(yaml_content)
             if not spec:
                 raise ValueError("Empty or invalid YAML content")
-            
+
             # 2. Validate requirements
             self._validate_spec(spec)
-            
+
             # 3. Create workflow with all pipeline states
             workflow = Workflow(
                 id=str(uuid.uuid4()),
@@ -74,8 +75,8 @@ class PipelineAdapter:
                     "test_execution_enabled": True,
                     "deployment_enabled": True,
                 },
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 metadata={
                     "organization_id": organization_id,
                     "created_by": created_by,
@@ -83,28 +84,32 @@ class PipelineAdapter:
                     "requirements_version": spec.get("version", "1.0"),
                 },
             )
-            
+
             # 4. Set organization and creator
             workflow.organization_id = organization_id
             workflow.created_by = created_by
-            
+
             # 5. Save to repository (or in-memory cache when no repo is wired)
             if self._workflow_repo is not None:
                 self._workflow_repo.add(workflow, organization_id)
             self._memory_cache[workflow.id] = workflow
-            
-            logger.info(f"Created pipeline workflow {workflow.id} for project {spec.get('project_name')}")
+
+            logger.info(
+                "Created pipeline workflow %s for project %s",
+                workflow.id,
+                spec.get("project_name"),
+            )
             return workflow
-            
+
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML: {str(e)}")
         except Exception as e:
             logger.error(f"Failed to create pipeline: {str(e)}")
             raise
-    
+
     def _validate_spec(self, spec: Dict[str, Any]) -> None:
         """Validate that requirements spec has required fields"""
-        
+
         required_fields = [
             "project_name",
             "project_description",
@@ -113,21 +118,25 @@ class PipelineAdapter:
         for field in required_fields:
             if field not in spec:
                 raise ValueError(f"Missing required field: {field}")
-        
+
         # Validate requirements list
         if not isinstance(spec["requirements"], list):
             raise ValueError("'requirements' must be a list")
-        
+
         if len(spec["requirements"]) == 0:
             raise ValueError("At least one requirement is required")
-        
+
         # Validate each requirement
         for req in spec.get("requirements", []):
             if "id" not in req:
                 raise ValueError("Each requirement must have an 'id' field")
             if "acceptance_criteria" not in req:
-                raise ValueError(f"Requirement {req['id']} missing 'acceptance_criteria'")
+                raise ValueError(
+                    f"Requirement {req['id']} missing 'acceptance_criteria'"
+                )
             if not req.get("acceptance_criteria"):
-                raise ValueError(f"Requirement {req['id']} has empty acceptance criteria")
+                raise ValueError(
+                    f"Requirement {req['id']} has empty acceptance criteria"
+                )
             if not req.get("description"):
                 raise ValueError(f"Requirement {req['id']} missing 'description'")

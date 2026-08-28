@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.auth import User, get_current_active_user
@@ -60,15 +60,26 @@ def approve_gate(
     request: ApproveGateRequest,
     _: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
+    organization_id: str = Query(...),
 ) -> GateApprovalResponse:
     orch = _orchestrator(dor)
     try:
+        workflow = orch._get_workflow(request.workflow_id)
+        if (
+            workflow is None
+            or dict(workflow.metadata or {}).get("organization_id") != organization_id
+        ):
+            raise HTTPException(status_code=404, detail="Pipeline not found")
+        if dict(workflow.metadata or {}).get("created_by") != _.username:
+            raise HTTPException(status_code=403, detail="Pipeline access denied")
         approved = orch.approve_gate(
             request.workflow_id,
             request.gate_id,
             approver=_.username,
             decision=request.decision,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -92,6 +103,7 @@ def list_gates(
     workflow_id: str,
     _: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
+    organization_id: str = Query(...),
 ) -> List[Dict[str, Any]]:
     orch = _orchestrator(dor)
     workflow = orch._get_workflow(workflow_id)
@@ -99,12 +111,23 @@ def list_gates(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
         )
+    metadata = dict(workflow.metadata or {})
+    if metadata.get("organization_id") != organization_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    if metadata.get("created_by") != _.username:
+        raise HTTPException(status_code=403, detail="Pipeline access denied")
+    pending_gate_ids = {
+        transition.gate_id
+        for transition in workflow.transitions
+        if transition.from_state == workflow.current_state and transition.gate_id
+    }
     return [
         {
             "id": gate.id,
             "name": gate.name,
             "description": gate.description,
             "resolved": gate.decision_id is not None,
+            "pending": gate.id in pending_gate_ids and gate.decision_id is None,
         }
         for gate in workflow.gates
     ]
