@@ -11,24 +11,31 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from threading import RLock
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .llm_adapters import LLMResponse, SchemaValidationError
+from .llm_replay import (
+    GovernedLLMError,
+    InMemoryLLMReplayStore,
+    LLMReplayConflictError,
+    LLMReplayStore,
+)
 
-
-class GovernedLLMError(RuntimeError):
-    """Base error for the governed model boundary."""
+__all__ = [
+    "GovernedLLMRequest",
+    "GovernedLLMResult",
+    "GovernedLLMRuntime",
+    "GovernedLLMError",
+    "LLMBudgetExceededError",
+    "LLMProvenance",
+    "LLMReplayConflictError",
+]
 
 
 class LLMBudgetExceededError(GovernedLLMError):
     """The request exceeded its input or output token budget."""
-
-
-class LLMReplayConflictError(GovernedLLMError):
-    """An idempotency key was reused for different immutable input."""
 
 
 class StructuredLLMProvider(Protocol):
@@ -96,14 +103,17 @@ class GovernedLLMResult:
 class GovernedLLMRuntime:
     """Execute bounded structured model calls exactly once per command."""
 
-    def __init__(self, provider: StructuredLLMProvider) -> None:
+    def __init__(
+        self,
+        provider: StructuredLLMProvider,
+        replay_store: LLMReplayStore | None = None,
+    ) -> None:
         if not getattr(provider, "provider", "").strip():
             raise ValueError("provider must declare provider")
         if not getattr(provider, "model", "").strip():
             raise ValueError("provider must declare model")
         self._provider = provider
-        self._results: dict[str, tuple[str, GovernedLLMResult]] = {}
-        self._lock = RLock()
+        self._replay_store = replay_store or InMemoryLLMReplayStore()
 
     def generate(self, request: GovernedLLMRequest) -> GovernedLLMResult:
         """Return one schema-valid proposal, or fail without partial output."""
@@ -120,16 +130,16 @@ class GovernedLLMRuntime:
                 "prompt exceeds max_input_tokens; provider was not called"
             )
         fingerprint = _digest(prompt)
-        with self._lock:
-            previous = self._results.get(request.idempotency_key)
-            if previous is not None:
-                if previous[0] != fingerprint:
-                    raise LLMReplayConflictError(
-                        "idempotency key is bound to different input"
-                    )
-                result = previous[1]
-                return GovernedLLMResult(result.value, result.provenance, replayed=True)
-
+        claim = self._replay_store.claim(
+            request.organization_id, request.idempotency_key, fingerprint
+        )
+        if claim.replayed:
+            assert claim.value is not None and claim.provenance is not None
+            return GovernedLLMResult(
+                claim.value, LLMProvenance(**claim.provenance), replayed=True
+            )
+        assert claim.fencing_token is not None
+        try:
             response = self._provider.generate(prompt, request.output_schema, 0.0)
             completion_tokens = response.completion_tokens or _estimate_tokens(
                 response.text
@@ -154,8 +164,24 @@ class GovernedLLMRuntime:
                 or response.prompt_tokens + completion_tokens,
             )
             result = GovernedLLMResult(dict(value), provenance)
-            self._results[request.idempotency_key] = (fingerprint, result)
+            self._replay_store.complete(
+                request.organization_id,
+                request.idempotency_key,
+                fingerprint,
+                claim.fencing_token,
+                dict(result.value),
+                provenance.__dict__,
+            )
             return result
+        except Exception as exc:
+            self._replay_store.fail(
+                request.organization_id,
+                request.idempotency_key,
+                fingerprint,
+                claim.fencing_token,
+                type(exc).__name__,
+            )
+            raise
 
 
 def _build_prompt(request: GovernedLLMRequest) -> str:
