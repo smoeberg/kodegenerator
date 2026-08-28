@@ -156,9 +156,13 @@ class PipelineTaskSynthesizer:
         )
         payload: dict[str, Any] = {
             "name": name,
+            "project_name": name,
             "task_id": task.task_id,
             "task_type": task_type,
             "workflow_id": workflow_id,
+            "organization_id": meta.get("organization_id")
+            or context.get("organization_id"),
+            "actor_id": meta.get("actor_id") or context.get("actor_id"),
             "component": meta.get("component", ""),
             "requirements": context.get("requirements")
             or context.get("requirements_yaml")
