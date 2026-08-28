@@ -8,9 +8,37 @@ from time import sleep
 from typing import Optional
 from uuid import uuid4
 
-from alembic import command
-from alembic.config import Config
+import sys
+
 from sqlalchemy.exc import IntegrityError
+
+
+def _import_alembic():
+    """Import the installed Alembic package, not the local migrations directory.
+
+    With ``PYTHONPATH=.`` the repo-root ``alembic/`` folder becomes a namespace
+    package that shadows the installed distribution. Prefer site-packages.
+    """
+    root = Path(__file__).resolve().parents[1]
+    filtered = []
+    for entry in sys.path:
+        try:
+            if Path(entry).resolve() == root:
+                continue
+        except OSError:
+            pass
+        filtered.append(entry)
+    saved = list(sys.path)
+    try:
+        sys.path[:] = filtered
+        from alembic import command as _command
+        from alembic.config import Config as _Config
+        return _command, _Config
+    finally:
+        sys.path[:] = saved
+
+
+command, Config = _import_alembic()
 
 from domain.actor import Actor
 from domain.authorization_audit import create_authorization_audit_event
