@@ -109,12 +109,22 @@ def test_run_tests_uses_sandbox_registry(tmp_path):
 
 
 def test_deploy_executor_uses_git_docker_backend():
+    grant = MagicMock()
+    grant.verified = True
+    grant.action = "pipeline.deploy"
+    grant.resource = "https://github.test/demo.git"
+    grant.parameters = (
+        ("environment", "test"),
+        ("target", "https://demo"),
+        ("release", ""),
+    )
     result = DeployExecutor(FakeDeployBackend()).execute(
         {
             "repository": "https://github.test/demo.git",
             "project_name": "demo",
             "environment": "test",
             "target": "https://demo",
+            "authority_grant": grant,
         }
     )
     assert result["deployment"]["image_tag"] == "demo:test"

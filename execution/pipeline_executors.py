@@ -17,6 +17,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
 
+import yaml
+
 from generation.project_renderer import ProjectRenderer
 from generation.project_spec import ArchitectureKind, ProjectDefinition
 from generation.scaffold_engine import ScaffoldEngine, ScaffoldFile, ScaffoldPlan
@@ -220,8 +222,12 @@ class DockerDeployService(GeneratedFilesDockerDeployService):
             compose = root / (
                 target if target.endswith((".yml", ".yaml")) else "docker-compose.yml"
             )
+            compose = compose.resolve()
+            if not compose.is_relative_to(root):
+                raise ValueError("compose target must remain inside repository root")
             if not compose.exists():
                 raise ValueError(f"compose file not found: {compose}")
+            _validate_compose_policy(compose)
             result = self._run(
                 [
                     "docker",
@@ -292,6 +298,35 @@ class DockerDeployService(GeneratedFilesDockerDeployService):
 
 class GitDockerDeployBackend(DockerDeployService):
     """Named Git/Docker backend used by :class:`DeployExecutor`."""
+
+
+def _validate_compose_policy(compose: Path) -> None:
+    """Reject Compose capabilities that can escape the deployment boundary."""
+    try:
+        document = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"invalid compose file: {exc}") from exc
+    services = document.get("services")
+    if not isinstance(services, dict) or not services:
+        raise ValueError("compose file requires a non-empty services mapping")
+    for name, service in services.items():
+        if not isinstance(service, dict):
+            raise ValueError(f"compose service {name!r} must be a mapping")
+        if service.get("privileged") is True:
+            raise ValueError(f"compose service {name!r} requests privileged mode")
+        for key in ("network_mode", "pid", "ipc"):
+            if str(service.get(key, "")).lower() == "host":
+                raise ValueError(f"compose service {name!r} requests host {key}")
+        if service.get("devices"):
+            raise ValueError(f"compose service {name!r} requests host devices")
+        for volume in service.get("volumes") or ():
+            source = (
+                str(volume.get("source", ""))
+                if isinstance(volume, dict)
+                else str(volume).split(":", 1)[0]
+            )
+            if source.startswith("/") or "docker.sock" in source:
+                raise ValueError(f"compose service {name!r} requests a host volume")
 
 
 class ArchitectureExecutor:
@@ -519,6 +554,11 @@ class DeployExecutor(TaskExecutor):
         self._backend = backend or GitDockerDeployBackend()
 
     def execute(self, data: dict[str, Any]) -> dict[str, Any]:
+        authority_grant = data.get("authority_grant")
+        if authority_grant is None:
+            raise ValueError("deploy payload requires a verified authority_grant")
+        if not authority_grant.verified:
+            raise ValueError("deploy authority_grant is invalid or expired")
         repository = data.get("repository") or data.get("repo_url")
         project_name = data.get("project_name")
         environment = data.get("environment")
@@ -528,6 +568,15 @@ class DeployExecutor(TaskExecutor):
                 "deploy payload requires repository, project_name, "
                 "environment and target"
             )
+        parameters = dict(authority_grant.parameters)
+        if (
+            authority_grant.action != "pipeline.deploy"
+            or authority_grant.resource != repository
+            or parameters.get("environment") != environment
+            or parameters.get("target") != target
+            or parameters.get("release", "") != str(data.get("release") or "")
+        ):
+            raise ValueError("deploy authority_grant is not bound to this deployment")
 
         deployment = self._backend.deploy(
             repository,

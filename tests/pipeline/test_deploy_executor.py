@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from execution.pipeline_executors import DeployExecutor, DockerDeployService
 
@@ -14,6 +17,24 @@ class FakeDeployBackend:
         return {"deployed_at": "2026-08-28T00:00:00+00:00", "image_tag": "registry/demo:prod-abc123", "url": "https://demo.example"}
 
 
+def _grant(
+    repository="https://github.com/example/demo.git",
+    environment="prod",
+    target="docker-compose.yml",
+    release="v1.2.3",
+):
+    grant = MagicMock()
+    grant.verified = True
+    grant.action = "pipeline.deploy"
+    grant.resource = repository
+    grant.parameters = (
+        ("environment", environment),
+        ("target", target),
+        ("release", str(release or "")),
+    )
+    return grant
+
+
 def test_deploy_executor_is_injectable():
     backend = FakeDeployBackend()
     result = DeployExecutor(backend).execute({
@@ -23,6 +44,7 @@ def test_deploy_executor_is_injectable():
         "target": "docker-compose.yml",
         "release": "v1.2.3",
         "workspace": "/tmp/demo",
+        "authority_grant": _grant(),
     })
     assert result["status"] == "success"
     assert result["deployment"]["image_tag"] == "registry/demo:prod-abc123"
@@ -31,7 +53,7 @@ def test_deploy_executor_is_injectable():
 
 def test_deploy_executor_rejects_missing_repository():
     try:
-        DeployExecutor(FakeDeployBackend()).execute({"project_name": "demo", "target": "docker"})
+        DeployExecutor(FakeDeployBackend()).execute({"project_name": "demo", "target": "docker", "authority_grant": _grant()})
     except ValueError as exc:
         assert "repository" in str(exc)
     else:
@@ -52,7 +74,7 @@ def test_docker_service_checks_out_builds_pushes_and_composes(monkeypatch, tmp_p
     monkeypatch.setenv("DOR_PIPELINE_DOCKER_REGISTRY", "registry.example")
     service = DockerDeployService(runner=runner)
     (tmp_path / ".git").mkdir()
-    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    (tmp_path / "docker-compose.yml").write_text("services: {app: {image: demo}}\n")
     result = service.deploy("https://github.com/example/demo.git", "Demo", "prod", "docker-compose.yml", workspace=str(tmp_path))
 
     assert result["commit_sha"] == "abcdef1234567890"
@@ -80,7 +102,7 @@ def test_docker_service_reports_deploy_failure_and_attempts_rollback(monkeypatch
     monkeypatch.setenv("DOR_PIPELINE_ROLLBACK_IMAGE", "registry.example/demo:prod-oldimage")
     service = DockerDeployService(runner=runner)
     (tmp_path / ".git").mkdir()
-    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    (tmp_path / "docker-compose.yml").write_text("services: {app: {image: demo}}\n")
 
     try:
         service.deploy("repo", "demo", "prod", "docker-compose.yml", workspace=str(tmp_path))
@@ -91,3 +113,28 @@ def test_docker_service_reports_deploy_failure_and_attempts_rollback(monkeypatch
         raise AssertionError("expected deployment failure")
 
     assert sum(c[:3] == ["docker", "compose", "-f"] for c in calls) == 2
+
+
+def test_docker_service_rejects_compose_path_traversal(tmp_path):
+    service = DockerDeployService(runner=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="abcdef1234567890\n", stderr=""))
+    (tmp_path / ".git").mkdir()
+    outside = tmp_path.parent / "outside.yml"
+    outside.write_text("services: {app: {image: demo}}\n")
+    with pytest.raises(ValueError, match="inside repository"):
+        service.deploy("repo", "demo", "prod", "../outside.yml", release="main", workspace=str(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "compose",
+    [
+        "services: {app: {privileged: true}}\n",
+        "services: {app: {network_mode: host}}\n",
+        "services: {app: {volumes: ['/var/run/docker.sock:/var/run/docker.sock']}}\n",
+    ],
+)
+def test_docker_service_rejects_host_escape_capabilities(tmp_path, compose):
+    service = DockerDeployService(runner=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="abcdef1234567890\n", stderr=""))
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "docker-compose.yml").write_text(compose)
+    with pytest.raises(ValueError, match="requests"):
+        service.deploy("repo", "demo", "prod", "docker-compose.yml", release="main", workspace=str(tmp_path))
