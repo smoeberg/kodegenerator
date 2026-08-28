@@ -214,7 +214,7 @@ class PipelineOrchestrator:
                     "task_type", getattr(t, "task_type", None) or t.name
                 ),
                 "status": getattr(
-                    t.status, "value", str(getattr(t, "status", "pending"))
+                    t.status, "name", str(getattr(t, "status", "pending"))
                 ),
             }
             for t in self._tasks.values()
@@ -222,12 +222,18 @@ class PipelineOrchestrator:
         ]
         return {
             "workflow_id": workflow_id,
-            "current_state": workflow.current_state,
+            "current_state": getattr(
+                workflow.current_state, "value", str(workflow.current_state)
+            ),
             "state_name": getattr(
                 workflow.current_state, "value", str(workflow.current_state)
             ),
             "tasks": tasks,
             "context": dict(workflow.context or {}),
+            "project_name": (workflow.context or {}).get("project_name"),
+            "created_at": workflow.created_at.isoformat(),
+            "updated_at": workflow.updated_at.isoformat(),
+            "error": (workflow.context or {}).get("error"),
         }
 
     def advance_pipeline(self, workflow_id: str) -> None:

@@ -1,17 +1,17 @@
 # services/pipeline_adapter.py
 
-from typing import Dict, Any, Optional
-import yaml
-import uuid
-from datetime import datetime
 import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from domain.workflow import Workflow
+import yaml
+
+from domain.pipeline_gates import get_pipeline_gates
 from domain.pipeline_states import PipelineState
 from domain.pipeline_transitions import get_pipeline_transitions
-from domain.pipeline_gates import get_pipeline_gates
+from domain.workflow import Workflow
 from infrastructure.persistence.repositories import WorkflowRepository
-from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,8 @@ class PipelineAdapter:
                     "test_execution_enabled": True,
                     "deployment_enabled": True,
                 },
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 metadata={
                     "organization_id": organization_id,
                     "created_by": created_by,
@@ -93,7 +93,11 @@ class PipelineAdapter:
                 self._workflow_repo.add(workflow, organization_id)
             self._memory_cache[workflow.id] = workflow
             
-            logger.info(f"Created pipeline workflow {workflow.id} for project {spec.get('project_name')}")
+            logger.info(
+                "Created pipeline workflow %s for project %s",
+                workflow.id,
+                spec.get("project_name"),
+            )
             return workflow
             
         except yaml.YAMLError as e:
@@ -126,8 +130,12 @@ class PipelineAdapter:
             if "id" not in req:
                 raise ValueError("Each requirement must have an 'id' field")
             if "acceptance_criteria" not in req:
-                raise ValueError(f"Requirement {req['id']} missing 'acceptance_criteria'")
+                raise ValueError(
+                    f"Requirement {req['id']} missing 'acceptance_criteria'"
+                )
             if not req.get("acceptance_criteria"):
-                raise ValueError(f"Requirement {req['id']} has empty acceptance criteria")
+                raise ValueError(
+                    f"Requirement {req['id']} has empty acceptance criteria"
+                )
             if not req.get("description"):
                 raise ValueError(f"Requirement {req['id']} missing 'description'")
