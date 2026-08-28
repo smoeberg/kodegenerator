@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
+
 import uvicorn
 
 from infrastructure.persistence.database import Database
@@ -20,7 +20,9 @@ logger = logging.getLogger("runtime.main")
 
 
 def main() -> None:
-    host = os.environ.get("DOR_HOST", "0.0.0.0")
+    # Safe local default. Container/orchestrator deployments must opt in to an
+    # externally reachable listener with DOR_HOST=0.0.0.0.
+    host = os.environ.get("DOR_HOST", "127.0.0.1")
     port = int(os.environ.get("DOR_PORT", "8000"))
     
     logger.info("Initializing DOR Database schema...")
