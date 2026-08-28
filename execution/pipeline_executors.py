@@ -19,9 +19,12 @@ from urllib.parse import urlparse
 
 import yaml
 
+from generation.contract_generator import ContractGenerator, GeneratedContracts
 from generation.project_renderer import ProjectRenderer
 from generation.project_spec import ArchitectureKind, ProjectDefinition
+from generation.requirement_analysis import analyze_requirements
 from generation.scaffold_engine import ScaffoldEngine, ScaffoldFile, ScaffoldPlan
+from generation.test_generator import ContractTestGenerator
 from phase4.agent_registry import (
     AgentRegistry,
     AgentRole,
@@ -352,6 +355,11 @@ class ArchitectureExecutor:
             database=str(payload.get("database", "postgresql")),
         )
         plan = self._backend.generate(project)
+        analysis = analyze_requirements(
+            payload.get("requirements")
+            or payload.get("context", {}).get("requirements"),
+            project_name=project.name,
+        )
         if violations := plan.validate():
             raise ValueError(f"architecture scaffold verification failed: {violations}")
         return {
@@ -362,6 +370,13 @@ class ArchitectureExecutor:
                 "files": [asdict(item) for item in plan.files],
                 "architecture_contract": list(plan.architecture_contract),
                 "fingerprint": plan.fingerprint,
+                "requirements_fingerprint": analysis.fingerprint,
+                "criteria": [asdict(item) for item in analysis.criteria],
+                "decisions": [
+                    "Use hexagonal boundaries",
+                    f"Expose {project.api} transport adapters",
+                    f"Persist through {project.database} ports",
+                ],
             },
         }
 
@@ -372,8 +387,13 @@ class ContractsExecutor:
     task_type = "generate_contracts"
     component = "generation/project_renderer"
 
-    def __init__(self, backend: ProjectRenderer | None = None) -> None:
+    def __init__(
+        self,
+        backend: ProjectRenderer | None = None,
+        contract_backend: ContractGenerator | None = None,
+    ) -> None:
         self._backend = backend or ProjectRenderer()
+        self._contract_backend = contract_backend or ContractGenerator()
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         architecture = payload.get("architecture") or payload.get("context", {}).get(
@@ -388,6 +408,14 @@ class ContractsExecutor:
             architecture_contract=tuple(architecture["architecture_contract"]),
         )
         rendered = self._backend.render(plan)
+        analysis = analyze_requirements(
+            payload.get("requirements")
+            or payload.get("context", {}).get("requirements"),
+            project_name=project.name,
+        )
+        if analysis.fingerprint != architecture.get("requirements_fingerprint"):
+            raise ValueError("requirements changed after architecture generation")
+        generated = self._contract_backend.generate(analysis)
         return {
             "status": "success",
             "component": self.component,
@@ -395,6 +423,9 @@ class ContractsExecutor:
                 "files": [asdict(item) for item in rendered.files],
                 "manifest": list(rendered.manifest),
                 "fingerprint": rendered.fingerprint,
+                "openapi": generated.openapi,
+                "traceability": list(generated.traceability),
+                "contract_fingerprint": generated.fingerprint,
             },
         }
 
@@ -458,10 +489,33 @@ class TestGeneratorExecutor:
     task_type = "generate_tests"
     component = "phase4/verification"
 
-    def __init__(self, backend: VerifierSelector | None = None) -> None:
+    def __init__(
+        self,
+        backend: VerifierSelector | None = None,
+        generator: ContractTestGenerator | None = None,
+    ) -> None:
         self._backend = backend or _default_verifier_selector()
+        self._generator = generator or ContractTestGenerator()
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        contracts = payload.get("contracts") or payload.get("context", {}).get(
+            "contracts"
+        )
+        if not isinstance(contracts, dict) or not isinstance(
+            contracts.get("openapi"), dict
+        ):
+            raise ValueError("test generation requires generated contracts")
+        generated_contracts = GeneratedContracts(
+            openapi=contracts["openapi"],
+            traceability=tuple(contracts.get("traceability") or ()),
+            fingerprint=str(contracts.get("contract_fingerprint") or ""),
+        )
+        suite = self._generator.generate(generated_contracts)
+        expected = {
+            item["criterion_id"] for item in generated_contracts.traceability
+        }
+        if set(suite.covered_criteria) != expected:
+            raise ValueError("generated tests do not cover every contract criterion")
         selection = self._backend.select(
             claim_id=str(payload.get("claim_id") or payload.get("task_id")),
             policy_id=str(payload.get("verification_policy_id", "pipeline.tests.v1")),
@@ -471,7 +525,12 @@ class TestGeneratorExecutor:
         return {
             "status": "success",
             "component": self.component,
-            "tests": asdict(selection),
+            "tests": {
+                "selection": asdict(selection),
+                "files": [{"path": suite.path, "content": suite.content}],
+                "covered_criteria": list(suite.covered_criteria),
+                "fingerprint": suite.fingerprint,
+            },
         }
 
 
