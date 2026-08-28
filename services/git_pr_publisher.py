@@ -259,14 +259,24 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         ``push_remote=False`` is intended for tests. Production publication
         normally requires ``True`` so the GitHub API can resolve the head ref.
         """
-        # 1. Security & Authority Check
-        if authority_grant is not None:
-            if not authority_grant.verified:
-                raise WorktreeSecurityError(
-                    "Authority grant failed cryptographic verification"
-                )
-            if authority_grant.is_expired():
-                raise WorktreeSecurityError("Authority grant is expired")
+        # 1. Security & Authority Check. This boundary must fail closed even
+        # when callers bypass ReleaseExecutor and invoke the publisher directly.
+        if authority_grant is None:
+            raise WorktreeSecurityError("VerifiedAuthorityGrant is required")
+        if not authority_grant.verified:
+            raise WorktreeSecurityError(
+                "Authority grant failed cryptographic verification"
+            )
+        _validate_release_grant(
+            authority_grant,
+            repository=f"repository:{self.repo_full_name}",
+            patch_id=patch.patch_id,
+            base_branch=pr_metadata.base_branch,
+        )
+        if not _tests_passed(test_results):
+            raise WorktreeSecurityError(
+                "attested successful test evidence is required for publication"
+            )
 
         is_valid, errors = self.validate_patch(patch)
         if not is_valid:
@@ -276,7 +286,7 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
             )
 
         wbs_data = wbs_summary or {"task": patch.patch_id, "summary": patch.summary}
-        tests_data = test_results or {"status": "passed", "tests_run": 1, "failures": 0}
+        tests_data = dict(test_results)
 
         session: Optional[WorktreeSession] = None
         try:
@@ -359,6 +369,44 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         finally:
             if session is not None:
                 self.worktree_manager.cleanup_worktree(session)
+
+
+def _tests_passed(test_results: Optional[Dict[str, Any]]) -> bool:
+    """Accept only explicit, non-empty successful test evidence."""
+    if not isinstance(test_results, dict) or not test_results:
+        return False
+    summary = test_results.get("summary")
+    evidence = summary if isinstance(summary, dict) else test_results
+    status = str(evidence.get("status", test_results.get("status", ""))).lower()
+    failed = evidence.get("failed", evidence.get("failures"))
+    total = evidence.get("total", evidence.get("tests_run"))
+    passed = evidence.get("passed")
+    if status not in {"pass", "passed", "success", "succeeded"}:
+        return False
+    if failed not in (0, [], None):
+        return False
+    if total is not None and (not isinstance(total, int) or total < 1):
+        return False
+    if passed is not None and (not isinstance(passed, int) or passed < 1):
+        return False
+    return total is not None or passed is not None
+
+
+def _validate_release_grant(
+    grant: VerifiedAuthorityGrant,
+    *,
+    repository: str,
+    patch_id: str,
+    base_branch: str,
+) -> None:
+    """Require a grant scoped to this repository and exact release input."""
+    parameters = dict(grant.parameters)
+    if grant.action != "release.publish" or grant.resource != repository:
+        raise WorktreeSecurityError("authority grant is not scoped to this repository")
+    if parameters.get("patch_id") != patch_id:
+        raise WorktreeSecurityError("authority grant is not bound to this patch")
+    if parameters.get("base_branch") != base_branch:
+        raise WorktreeSecurityError("authority grant is not bound to the base branch")
 
 
 __all__ = [
