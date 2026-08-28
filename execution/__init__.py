@@ -1,5 +1,4 @@
-"""
-Execution module for pipeline task executors.
+"""Execution module for pipeline task executors.
 
 This package contains task executors used by the software factory pipeline.
 """
@@ -8,7 +7,7 @@ from execution.pipeline_executors import (
     ArchitectureExecutor,
     ContractsExecutor,
     CodeExecutor,
-    TestGeneratorExecutor,
+    TestsExecutor,
     RunTestsExecutor,
     DeployExecutor,
     ReleaseExecutor,
@@ -19,7 +18,7 @@ __all__ = [
     "ArchitectureExecutor",
     "ContractsExecutor",
     "CodeExecutor",
-    "TestGeneratorExecutor",
+    "TestsExecutor",
     "RunTestsExecutor",
     "DeployExecutor",
     "ReleaseExecutor",
