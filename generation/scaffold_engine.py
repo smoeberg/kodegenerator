@@ -28,7 +28,12 @@ class ScaffoldPlan:
         actual = {item.path for item in self.files}
         missing = sorted(set(self.architecture_contract) - actual)
         invalid = sorted(path for path in actual if not _safe_relative_path(path))
-        return tuple([*(f"missing:{path}" for path in missing), *(f"unsafe:{path}" for path in invalid)])
+        return tuple(
+            [
+                *(f"missing:{path}" for path in missing),
+                *(f"unsafe:{path}" for path in invalid),
+            ]
+        )
 
 
 class ScaffoldEngine:
@@ -63,7 +68,14 @@ class ScaffoldEngine:
             ScaffoldFile("tests/__init__.py", ""),
             ScaffoldFile(
                 "tests/test_architecture.py",
-                "def test_hexagonal_boundaries_exist():\n    assert True\n",
+                "def test_hexagonal_packages_import():\n"
+                "    import src.adapters\n"
+                "    import src.application\n"
+                "    import src.domain\n"
+                "    import src.ports\n\n"
+                "    assert {src.adapters.__package__, src.application.__package__, "
+                "src.domain.__package__, src.ports.__package__} == "
+                "{'src.adapters', 'src.application', 'src.domain', 'src.ports'}\n",
             ),
             ScaffoldFile(
                 "pyproject.toml",
@@ -71,7 +83,8 @@ class ScaffoldEngine:
             ),
             ScaffoldFile(
                 "README.md",
-                f"# {project.name}\n\nGenerated from the DOR P3-15 hexagonal architecture contract.\n",
+                f"# {project.name}\n\n"
+                "Generated from the DOR P3-15 hexagonal architecture contract.\n",
             ),
             ScaffoldFile(".gitignore", "__pycache__/\n.pytest_cache/\n.venv/\n"),
         )
@@ -89,7 +102,9 @@ class ScaffoldEngine:
             "README.md",
             ".gitignore",
         )
-        plan = ScaffoldPlan(project=project, files=files, architecture_contract=contract)
+        plan = ScaffoldPlan(
+            project=project, files=files, architecture_contract=contract
+        )
         violations = plan.validate()
         if violations:
             raise ValueError(f"invalid scaffold plan: {violations}")
@@ -98,4 +113,8 @@ class ScaffoldEngine:
 
 def _safe_relative_path(path: str) -> bool:
     parsed = PurePosixPath(path)
-    return not parsed.is_absolute() and ".." not in parsed.parts and "" not in parsed.parts
+    return (
+        not parsed.is_absolute()
+        and ".." not in parsed.parts
+        and "" not in parsed.parts
+    )

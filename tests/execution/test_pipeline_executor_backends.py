@@ -70,6 +70,29 @@ class FakePublisher:
         )
 
 
+CONTRACTS = {
+    "openapi": {
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "req_1_health",
+                    "responses": {"200": {"description": "ok"}},
+                    "x-criterion-id": "REQ-1-AC-001",
+                }
+            }
+        }
+    },
+    "traceability": [
+        {
+            "criterion_id": "REQ-1-AC-001",
+            "requirement_id": "REQ-1",
+            "operation_id": "req_1_health",
+        }
+    ],
+    "contract_fingerprint": "contract-1",
+}
+
+
 def test_code_executor_uses_implementation_agent_runtime():
     result = CodeExecutor(FakeImplementationRuntime()).execute(
         {
@@ -85,14 +108,17 @@ def test_code_executor_uses_implementation_agent_runtime():
 
 def test_test_generator_uses_verifier_selector():
     result = PipelineTestGeneratorExecutor(FakeSelector()).execute(
-        {"task_id": "task-1"}
+        {"task_id": "task-1", "contracts": CONTRACTS}
     )
-    assert result["tests"]["selected_ids"] == ("agent-1",)
+    assert result["tests"]["selection"]["selected_ids"] == ("agent-1",)
+    assert result["tests"]["covered_criteria"] == ["REQ-1-AC-001"]
 
 
 def test_default_test_generator_selects_registered_verifier():
-    result = PipelineTestGeneratorExecutor().execute({"task_id": "task-default"})
-    assert len(result["tests"]["selected_ids"]) == 1
+    result = PipelineTestGeneratorExecutor().execute(
+        {"task_id": "task-default", "contracts": CONTRACTS}
+    )
+    assert len(result["tests"]["selection"]["selected_ids"]) == 1
 
 
 def test_run_tests_uses_sandbox_registry(tmp_path):
