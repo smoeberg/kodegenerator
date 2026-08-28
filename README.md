@@ -109,6 +109,29 @@ DOR følger en lagdelt arkitektur med klare adskillelser mellem domain, applicat
 
 Yderligere: [docs/PHASE4_ARCHITECTURE.md](docs/PHASE4_ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md).
 
+### Deployment and releases
+
+The software-factory pipeline can build and push generated Docker images and
+publish verified patches as governed GitHub pull requests. Configuration,
+credential boundaries, payload examples, expected PR format, and troubleshooting
+are documented in [Deployment and release operations](docs/DEPLOYMENT_AND_RELEASE.md).
+
+Minimal deployment example:
+
+```python
+from execution.pipeline_executors import DeployExecutor
+
+result = DeployExecutor().execute({
+    "project_name": "orders-api",
+    "environment": "staging",
+    "target": "https://orders-staging.example.com",
+    "files": [
+        {"path": "Dockerfile", "content": "FROM python:3.12-slim\nCOPY . /app\n"},
+        {"path": "app.py", "content": "print('ready')\n"},
+    ],
+})
+```
+
 ---
 
 ## 📜 Changelog
