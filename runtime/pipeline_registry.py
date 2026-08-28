@@ -11,16 +11,21 @@ Usage::
     registry.orchestrator.advance_pipeline(workflow_id)  # enqueues tasks
     queued = registry.queue.claim_next_task(worker_id, capabilities)
 """
+
 from __future__ import annotations
 
+import os
 import threading
-from typing import Any, Optional, TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from runtime.pipeline_orchestrator import PipelineOrchestrator
 
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
+from runtime.pipeline_state_store import PipelineStateStore
+from services.swarm_persistence import SQLiteTaskQueue
 from services.swarm_task_queue import SwarmTaskQueue
 
 _lock = threading.RLock()
@@ -34,7 +39,9 @@ class PipelineAwareQueue:
     On complete, the orchestrator advances the pipeline (handle_task_completion).
     """
 
-    def __init__(self, queue: SwarmTaskQueue, orchestrator: "PipelineOrchestrator") -> None:
+    def __init__(
+        self, queue: SwarmTaskQueue, orchestrator: "PipelineOrchestrator"
+    ) -> None:
         self._queue = queue
         self._orchestrator = orchestrator
 
@@ -60,7 +67,9 @@ class PipelineAwareQueue:
             domain_task.result = patch_result  # type: ignore[attr-defined]
             domain_task.metadata = {
                 **dict(domain_task.metadata or {}),
-                "execution_result": patch_result if isinstance(patch_result, dict) else {"value": patch_result},
+                "execution_result": patch_result
+                if isinstance(patch_result, dict)
+                else {"value": patch_result},
             }
         self._orchestrator.handle_task_completion(domain_task)
 
@@ -87,8 +96,14 @@ class PipelineRegistry:
 
     def __init__(self, runtime: DORRuntime, *, lease_seconds: int = 300) -> None:
         self.runtime = runtime
-        self._raw_queue = SwarmTaskQueue(lease_seconds=lease_seconds)
-        self.orchestrator = PipelineOrchestrator(runtime, task_queue=self._raw_queue)
+        queue_path = Path(os.getenv("DOR_PIPELINE_QUEUE_PATH", "pipeline_tasks.db"))
+        state_path = Path(os.getenv("DOR_PIPELINE_STATE_PATH", "pipeline_state.json"))
+        self._raw_queue = SQLiteTaskQueue(queue_path, lease_seconds=lease_seconds)
+        self.orchestrator = PipelineOrchestrator(
+            runtime,
+            task_queue=self._raw_queue,
+            state_store=PipelineStateStore(state_path),
+        )
         # Workers see the aware queue so complete_task advances the pipeline.
         self.queue = PipelineAwareQueue(self._raw_queue, self.orchestrator)
 
@@ -96,6 +111,9 @@ class PipelineRegistry:
         """Clear workflows/tasks/queue — test only."""
         self.orchestrator._workflows.clear()
         self.orchestrator._tasks.clear()
+        close = getattr(self._raw_queue, "close", None)
+        if callable(close):
+            close()
         self._raw_queue = SwarmTaskQueue(lease_seconds=self._raw_queue.lease_seconds)
         self.orchestrator.bind_task_queue(self._raw_queue)
         self.queue = PipelineAwareQueue(self._raw_queue, self.orchestrator)
