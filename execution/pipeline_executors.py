@@ -14,7 +14,7 @@ import tempfile
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from generation.project_renderer import ProjectRenderer
 from generation.project_spec import ArchitectureKind, ProjectDefinition
@@ -37,7 +37,7 @@ from phase6.execution.sandbox import (
     SandboxRegistry,
 )
 from services.git_pr_publisher import GitPRPublisher
-from services.github_pr_contracts import PatchInfo, PRMetadata, PRStatus
+from services.github_pr_contracts import GitHubConfig, PatchInfo, PRMetadata, PRStatus
 
 
 class PipelineExecutorConfigurationError(RuntimeError):
@@ -62,7 +62,7 @@ class DeployService(Protocol):
     ) -> dict[str, str]: ...
 
 
-class DockerDeployService:
+class GeneratedFilesDockerDeployService:
     """Build and push generated source as a Docker image."""
 
     def __init__(self, registry: str | None = None) -> None:
@@ -152,7 +152,7 @@ class DockerDeployService:
         }
 
 
-class GitDockerDeployBackend(DockerDeployService):
+class DockerDeployService(GeneratedFilesDockerDeployService):
     """Checkout a governed Git release, build/push it, and deploy with Compose."""
 
     def __init__(self, runner: Any = subprocess.run) -> None:
@@ -239,9 +239,34 @@ class GitDockerDeployBackend(DockerDeployService):
                 check=False,
             )
             if result.returncode:
-                raise RuntimeError(
-                    f"docker compose deployment failed: {result.stderr[-4000:]}"
-                )
+                rollback = os.getenv("DOR_PIPELINE_ROLLBACK_IMAGE")
+                rollback_error = None
+                if rollback:
+                    rollback_result = self._run(
+                        [
+                            "docker",
+                            "compose",
+                            "-f",
+                            str(compose),
+                            "up",
+                            "-d",
+                            "--remove-orphans",
+                        ],
+                        cwd=root,
+                        env={**os.environ, "DOR_IMAGE_TAG": rollback},
+                        capture_output=True,
+                        text=True,
+                        timeout=900,
+                        check=False,
+                    )
+                    if rollback_result.returncode:
+                        rollback_error = rollback_result.stderr[-4000:]
+                detail = f"deployment failed: {result.stderr[-4000:]}"
+                if rollback:
+                    detail += "; rollback=" + (
+                        f"failed: {rollback_error}" if rollback_error else "attempted"
+                    )
+                raise RuntimeError(detail)
             base_url = os.getenv("DOR_PIPELINE_DEPLOY_URL", "").rstrip("/")
             url = (
                 base_url.format(
@@ -262,6 +287,10 @@ class GitDockerDeployBackend(DockerDeployService):
         finally:
             if temporary:
                 temporary.cleanup()
+
+
+class GitDockerDeployBackend(DockerDeployService):
+    """Named Git/Docker backend used by :class:`DeployExecutor`."""
 
 
 class ArchitectureExecutor:
@@ -517,12 +546,22 @@ class DeployExecutor(TaskExecutor):
 
 
 class ReleaseExecutor:
+    """Publish either a governed patch proposal or a conventional release PR."""
+
     task_type = "release"
 
-    def __init__(self, backend: GitPRPublisher | None = None) -> None:
+    def __init__(
+        self,
+        backend: GitPRPublisher | None = None,
+        publisher_factory: Callable[..., Any] | None = None,
+    ) -> None:
         self._backend = backend
+        self._publisher_factory = publisher_factory
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._publisher_factory is not None:
+            return self._publish_conventional_release(payload)
+
         backend = self._backend
         if backend is None:
             backend = GitPRPublisher(
@@ -556,6 +595,73 @@ class ReleaseExecutor:
                 "pr_number": result.pr_number,
                 "pr_url": result.pr_url,
                 "commit_hash": result.commit_hash,
+            },
+        }
+
+    def _publish_conventional_release(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Map the public release payload to ``GitPRPublisher.publish_patch_pr``."""
+        owner = payload.get("owner")
+        repo = payload.get("repo")
+        repository = payload.get("repository") or payload.get("repo_url")
+        if (not owner or not repo) and repository and "github.com/" in repository:
+            slug = repository.rstrip("/")
+            if slug.endswith(".git"):
+                slug = slug[:-4]
+            parts = slug.split("github.com/", 1)[1].split("/")
+            if len(parts) >= 2:
+                owner, repo = parts[0], parts[1]
+        if not repo:
+            raise ValueError("release payload requires repo")
+        owner = owner or os.getenv("GITHUB_OWNER", "dor-factory")
+        token = payload.get("token") or os.getenv("GITHUB_TOKEN") or os.getenv(
+            "GH_TOKEN"
+        )
+        if not token:
+            raise PipelineExecutorConfigurationError(
+                "release requires token, GITHUB_TOKEN, or GH_TOKEN"
+            )
+
+        version = str(
+            payload.get("version") or payload.get("release") or "unversioned"
+        )
+        branch = payload.get("branch") or f"release/{version}"
+        title = payload.get("title") or f"Release {version}"
+        patch = PatchInfo(
+            patch_content=payload.get("patch_content") or payload.get("patch") or "",
+            patch_id=payload.get("patch_id") or f"patch-{version}",
+            author=payload.get("author") or "dor-software-factory",
+            summary=title,
+            files_changed=payload.get("files_changed") or [],
+        )
+        metadata = PRMetadata(
+            title=title,
+            description=payload.get("description")
+            or payload.get("body")
+            or f"Automated release PR for {version}",
+            branch=branch,
+            base_branch=payload.get("base_branch") or "main",
+            labels=payload.get("labels") or ["release", "automated"],
+            assignees=payload.get("assignees") or [],
+            reviewers=payload.get("reviewers") or [],
+            draft=bool(payload.get("draft", False)),
+        )
+        publisher = self._publisher_factory(
+            owner=owner,
+            repo=repo,
+            token=token,
+            repo_root=payload.get("repo_root") or payload.get("workspace"),
+            config=payload.get("config") or GitHubConfig(),
+        )
+        result = publisher.publish_patch_pr(patch, metadata)
+        return {
+            "status": "success",
+            "release": {
+                "component": "services/git_pr_publisher",
+                "workflow_id": payload.get("workflow_id"),
+                "version": version,
+                "branch": branch,
+                "base_branch": metadata.base_branch,
+                **result,
             },
         }
 
