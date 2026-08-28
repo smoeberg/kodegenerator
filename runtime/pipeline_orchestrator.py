@@ -97,7 +97,11 @@ class PipelineOrchestrator:
         new_state: PipelineState,
         evidence: Optional[dict] = None,
     ) -> None:
-        """Advance a workflow state, preferring the canonical runtime signature."""
+        """Advance a workflow state via canonical runtime transition.
+
+        Fail-closed: If runtime is attached and transition fails, raise the exception
+        instead of quietly mutating in-memory state.
+        """
         transition = getattr(self._runtime, "transition_workflow", None)
         if transition is not None:
             try:
@@ -105,9 +109,19 @@ class PipelineOrchestrator:
                 workflow.current_state = new_state
                 return
             except TypeError:
-                pass
-            except Exception as exc:  # runtime may reject without context
-                logger.warning("runtime transition failed (%s); advancing locally", exc)
+                try:
+                    transition(workflow.id, new_state, evidence)
+                    workflow.current_state = new_state
+                    return
+                except TypeError:
+                    pass
+        elif self._runtime is not None and hasattr(self._runtime, "workflow_engine"):
+            engine = getattr(self._runtime, "workflow_engine", None)
+            if engine is not None and hasattr(engine, "transition_workflow"):
+                engine.transition_workflow(workflow.id, new_state, evidence)
+                workflow.current_state = new_state
+                return
+
         workflow.current_state = new_state
 
     # ------------------------------------------------------------------ #
