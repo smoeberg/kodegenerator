@@ -1,16 +1,13 @@
-"""Execution module for pipeline task executors.
-
-This package contains task executors used by the software factory pipeline.
-"""
+"""Execution modules and pipeline executor exports."""
 
 from execution.pipeline_executors import (
     ArchitectureExecutor,
-    ContractsExecutor,
     CodeExecutor,
-    TestsExecutor,
-    RunTestsExecutor,
+    ContractsExecutor,
     DeployExecutor,
     ReleaseExecutor,
+    RunTestsExecutor,
+    TestsExecutor,
     build_pipeline_executor_registry,
 )
 
