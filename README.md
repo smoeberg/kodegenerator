@@ -149,3 +149,7 @@ behaviour are documented in [docs/GOVERNED_LLM.md](docs/GOVERNED_LLM.md).
 Durable pipeline snapshots, migrations, worker recovery and cross-worker LLM
 replay are documented in
 [docs/PIPELINE_PERSISTENCE.md](docs/PIPELINE_PERSISTENCE.md).
+
+Exactly-once coordination for Docker/deployment and pull-request side effects is
+documented in
+[docs/TERMINAL_SIDE_EFFECTS.md](docs/TERMINAL_SIDE_EFFECTS.md).

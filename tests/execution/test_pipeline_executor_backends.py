@@ -146,6 +146,8 @@ def test_deploy_executor_uses_git_docker_backend():
     )
     result = DeployExecutor(FakeDeployBackend()).execute(
         {
+            "task_id": "deploy-task-1",
+            "organization_id": "org-1",
             "repository": "https://github.test/demo.git",
             "project_name": "demo",
             "environment": "test",
@@ -163,6 +165,7 @@ def test_release_executor_uses_git_pr_publisher():
     result = ReleaseExecutor(FakePublisher()).execute(
         {
             "workflow_id": "workflow-1",
+            "organization_id": "org-1",
             "patch": {"patch_id": "task-1", "patch_content": "diff", "author": "bot"},
             "pr_metadata": {
                 "title": "feat: demo",

@@ -45,6 +45,7 @@ from phase6.execution.sandbox import (
 from services.git_pr_publisher import GitPRPublisher
 from services.github_pr_contracts import GitHubConfig, PatchInfo, PRMetadata, PRStatus
 from services.governed_llm import GovernedLLMRequest, GovernedLLMRuntime
+from services.side_effects import SideEffectCoordinator
 
 
 class PipelineExecutorConfigurationError(RuntimeError):
@@ -725,8 +726,13 @@ class RunTestsExecutor:
 class DeployExecutor(TaskExecutor):
     task_type = "deploy"
 
-    def __init__(self, backend: DeployService | None = None):
+    def __init__(
+        self,
+        backend: DeployService | None = None,
+        side_effects: SideEffectCoordinator | None = None,
+    ) -> None:
         self._backend = backend or GitDockerDeployBackend()
+        self._side_effects = side_effects or SideEffectCoordinator()
 
     def execute(self, data: dict[str, Any]) -> dict[str, Any]:
         authority_grant = data.get("authority_grant")
@@ -753,18 +759,42 @@ class DeployExecutor(TaskExecutor):
         ):
             raise ValueError("deploy authority_grant is not bound to this deployment")
 
-        deployment = self._backend.deploy(
-            repository,
-            project_name,
-            environment,
-            target,
-            data.get("release"),
-            data.get("workspace"),
+        request_data = {
+            "repository": repository,
+            "project_name": project_name,
+            "environment": environment,
+            "target": target,
+            "release": data.get("release"),
+        }
+        organization_id = data.get("organization_id")
+        operation_key = (
+            data.get("side_effect_idempotency_key")
+            or data.get("task_id")
+            or data.get("workflow_id")
+        )
+        if not organization_id or not operation_key:
+            raise ValueError(
+                "deploy requires organization_id and a task/workflow idempotency key"
+            )
+        deployment, replayed = self._side_effects.execute(
+            organization_id=str(organization_id),
+            action="pipeline.deploy",
+            idempotency_key=operation_key,
+            request_data=request_data,
+            operation=lambda: self._backend.deploy(
+                repository,
+                project_name,
+                environment,
+                target,
+                data.get("release"),
+                data.get("workspace"),
+            ),
         )
         return {
             "status": "success",
             "deployment": {
                 "component": "services/docker",
+                "replayed": replayed,
                 **deployment,
             },
         }
@@ -779,11 +809,42 @@ class ReleaseExecutor:
         self,
         backend: GitPRPublisher | None = None,
         publisher_factory: Callable[..., Any] | None = None,
+        side_effects: SideEffectCoordinator | None = None,
     ) -> None:
         self._backend = backend
         self._publisher_factory = publisher_factory
+        self._side_effects = side_effects or SideEffectCoordinator()
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._publisher_factory is None and payload.get("authority_grant") is None:
+            raise ValueError("release payload requires a verified authority_grant")
+        request_data = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"token", "authority_grant", "config"}
+        }
+        organization_id = payload.get("organization_id")
+        operation_key = (
+            payload.get("side_effect_idempotency_key")
+            or payload.get("task_id")
+            or payload.get("workflow_id")
+        )
+        if not organization_id or not operation_key:
+            raise ValueError(
+                "release requires organization_id and a task/workflow idempotency key"
+            )
+        result, replayed = self._side_effects.execute(
+            organization_id=str(organization_id),
+            action="release.publish",
+            idempotency_key=operation_key,
+            request_data=request_data,
+            operation=lambda: self._execute_once(payload),
+        )
+        result["release"]["replayed"] = replayed
+        return result
+
+    def _execute_once(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Perform publication after the side-effect claim is held."""
         if self._publisher_factory is not None:
             return self._publish_conventional_release(payload)
 
@@ -891,13 +952,26 @@ class ReleaseExecutor:
 
 
 def build_pipeline_executor_registry() -> dict[str, Any]:
+    from infrastructure.persistence.side_effect_store import (
+        SQLAlchemySideEffectStore,
+    )
+    from infrastructure.runtime.db import build_session_factory
+
+    side_effects = SideEffectCoordinator(
+        SQLAlchemySideEffectStore(
+            build_session_factory(
+                os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
+            ),
+            lease_seconds=int(os.getenv("DOR_SIDE_EFFECT_LEASE_SECONDS", "1800")),
+        )
+    )
     executors = [
         ArchitectureExecutor(),
         ContractsExecutor(),
         CodeExecutor(),
         TestGeneratorExecutor(),
         RunTestsExecutor(),
-        DeployExecutor(),
-        ReleaseExecutor(),
+        DeployExecutor(side_effects=side_effects),
+        ReleaseExecutor(side_effects=side_effects),
     ]
     return {executor.task_type: executor for executor in executors}
