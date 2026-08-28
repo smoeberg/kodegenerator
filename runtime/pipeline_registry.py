@@ -59,19 +59,19 @@ class PipelineAwareQueue:
         self._queue.heartbeat(task_id, agent_id)
 
     def complete_task(self, task_id: str, agent_id: str, patch_result: Any) -> None:
-        self._queue.complete_task(task_id, agent_id, patch_result)
         domain_task = self._orchestrator._tasks.get(task_id)
-        if domain_task is None:
-            return
-        if patch_result is not None:
-            domain_task.result = patch_result  # type: ignore[attr-defined]
-            domain_task.metadata = {
-                **dict(domain_task.metadata or {}),
-                "execution_result": patch_result
-                if isinstance(patch_result, dict)
-                else {"value": patch_result},
-            }
-        self._orchestrator.handle_task_completion(domain_task)
+        if domain_task is not None:
+            if patch_result is not None:
+                domain_task.result = patch_result  # type: ignore[attr-defined]
+                domain_task.metadata = {
+                    **dict(domain_task.metadata or {}),
+                    "execution_result": patch_result
+                    if isinstance(patch_result, dict)
+                    else {"value": patch_result},
+                }
+            # Advance orchestrator & pipeline transition first before acking complete in queue
+            self._orchestrator.handle_task_completion(domain_task)
+        self._queue.complete_task(task_id, agent_id, patch_result)
 
     def fail_task(
         self, task_id: str, agent_id: str, error: str, retry: bool = True
