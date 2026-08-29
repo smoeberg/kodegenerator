@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from execution.pipeline_executors import ReleaseExecutor
-from services.github_pr_contracts import PatchInfo, PRMetadata
 
 
 class FakePublisher:
@@ -15,13 +16,25 @@ class FakePublisher:
         self.config = config
         self.published = []
 
-    def publish_patch_pr(self, patch: PatchInfo, metadata: PRMetadata):
-        self.published.append((patch, metadata))
-        return {
-            "pr_number": 42,
-            "pr_url": f"https://github.com/{self.owner}/{self.repo}/pull/42",
-            "branch": metadata.branch,
-        }
+    def publish_patch_as_pr(self, **kwargs):
+        self.published.append((kwargs["patch"], kwargs["pr_metadata"]))
+        from services.github_pr_contracts import PRResult, PRStatus
+
+        return PRResult(
+            status=PRStatus.CREATED,
+            pr_number=42,
+            pr_url=f"https://github.com/{self.owner}/{self.repo}/pull/42",
+            commit_hash="abc123",
+        )
+
+
+def release_grant(patch_id: str, base_branch: str = "main") -> MagicMock:
+    grant = MagicMock()
+    grant.verified = True
+    grant.action = "release.publish"
+    grant.resource = "repository:smoeberg/kodegenerator"
+    grant.parameters = (("patch_id", patch_id), ("base_branch", base_branch))
+    return grant
 
 
 def test_release_executor_publishes_pr_successfully():
@@ -47,6 +60,9 @@ def test_release_executor_publishes_pr_successfully():
         "files_changed": ["a.txt"],
         "workflow_id": "wf-123",
         "organization_id": "org-1",
+        "patch_id": "patch-1.0.0",
+        "authority_grant": release_grant("patch-1.0.0"),
+        "test_results": {"status": "passed", "failures": 0},
     }
 
     result = executor.execute(payload)
@@ -81,6 +97,8 @@ def test_release_executor_parses_repo_url_and_env_token(monkeypatch):
         "organization_id": "org-1",
         "repo_url": "https://github.com/smoeberg/kodegenerator.git",
         "version": "2.0.0",
+        "authority_grant": release_grant("patch-2.0.0"),
+        "test_results": {"status": "passed", "failures": 0},
     }
 
     result = executor.execute(payload)
@@ -95,5 +113,18 @@ def test_release_executor_fails_without_repo():
     executor = ReleaseExecutor(publisher_factory=FakePublisher)
     with pytest.raises(ValueError, match="release payload requires repo"):
         executor.execute(
-            {"task_id": "release-3", "organization_id": "org-1", "token": "secret"}
+            {
+                "task_id": "release-3",
+                "organization_id": "org-1",
+                "token": "secret",
+                "authority_grant": release_grant("patch-unversioned"),
+                "test_results": {"status": "passed", "failures": 0},
+            }
+        )
+
+
+def test_release_executor_rejects_factory_path_without_authority() -> None:
+    with pytest.raises(ValueError, match="authority_grant"):
+        ReleaseExecutor(publisher_factory=FakePublisher).execute(
+            {"task_id": "release-4", "organization_id": "org-1"}
         )

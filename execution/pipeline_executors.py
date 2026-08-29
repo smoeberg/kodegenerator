@@ -816,7 +816,7 @@ class ReleaseExecutor:
         self._side_effects = side_effects or SideEffectCoordinator()
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if self._publisher_factory is None and payload.get("authority_grant") is None:
+        if payload.get("authority_grant") is None:
             raise ValueError("release payload requires a verified authority_grant")
         request_data = {
             key: value
@@ -885,7 +885,7 @@ class ReleaseExecutor:
         }
 
     def _publish_conventional_release(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Map the public release payload to ``GitPRPublisher.publish_patch_pr``."""
+        """Map the conventional payload onto the same governed publisher API."""
         owner = payload.get("owner")
         repo = payload.get("repo")
         repository = payload.get("repository") or payload.get("repo_url")
@@ -930,6 +930,14 @@ class ReleaseExecutor:
             reviewers=payload.get("reviewers") or [],
             draft=bool(payload.get("draft", False)),
         )
+        authority_grant = payload["authority_grant"]
+        _validate_executor_release_evidence(
+            authority_grant,
+            repository=f"repository:{owner}/{repo}",
+            patch_id=patch.patch_id,
+            base_branch=metadata.base_branch,
+            test_results=payload.get("test_results"),
+        )
         publisher = self._publisher_factory(
             owner=owner,
             repo=repo,
@@ -937,7 +945,18 @@ class ReleaseExecutor:
             repo_root=payload.get("repo_root") or payload.get("workspace"),
             config=payload.get("config") or GitHubConfig(),
         )
-        result = publisher.publish_patch_pr(patch, metadata)
+        result = publisher.publish_patch_as_pr(
+            patch=patch,
+            pr_metadata=metadata,
+            wbs_summary=payload.get("wbs_summary"),
+            test_results=payload.get("test_results"),
+            authority_grant=authority_grant,
+            push_remote=bool(payload.get("push_remote", True)),
+        )
+        if result.status is not PRStatus.CREATED:
+            raise RuntimeError(
+                "release PR publication failed: " + "; ".join(result.errors)
+            )
         return {
             "status": "success",
             "release": {
@@ -946,9 +965,35 @@ class ReleaseExecutor:
                 "version": version,
                 "branch": branch,
                 "base_branch": metadata.base_branch,
-                **result,
+                "pr_number": result.pr_number,
+                "pr_url": result.pr_url,
+                "commit_hash": result.commit_hash,
             },
         }
+
+
+def _validate_executor_release_evidence(
+    grant: Any,
+    *,
+    repository: str,
+    patch_id: str,
+    base_branch: str,
+    test_results: Mapping[str, Any] | None,
+) -> None:
+    """Fail closed before even an injected publisher can perform a mutation."""
+    if not grant.verified:
+        raise ValueError("release authority_grant is invalid or expired")
+    parameters = dict(grant.parameters)
+    if (
+        grant.action != "release.publish"
+        or grant.resource != repository
+        or parameters.get("patch_id") != patch_id
+        or parameters.get("base_branch") != base_branch
+    ):
+        raise ValueError("release authority_grant is not bound to this publication")
+    evidence = dict(test_results or {})
+    if evidence.get("status") != "passed" or int(evidence.get("failures", 0)) != 0:
+        raise ValueError("attested successful test evidence is required")
 
 
 def build_pipeline_executor_registry() -> dict[str, Any]:

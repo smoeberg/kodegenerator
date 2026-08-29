@@ -8,7 +8,9 @@ from api import main as api_main
 
 
 @pytest.mark.asyncio
-async def test_readiness_does_not_disclose_database_exception(monkeypatch, caplog) -> None:
+async def test_readiness_does_not_disclose_database_exception(
+    monkeypatch, caplog
+) -> None:
     class FailingDatabase:
         @contextmanager
         def session(self):
@@ -19,7 +21,8 @@ async def test_readiness_does_not_disclose_database_exception(monkeypatch, caplo
 
     response = await api_main.health_ready()
 
-    assert response == {"status": "error", "database": "error"}
+    assert response.status_code == 503
+    assert response.body == b'{"status":"error","database":"error"}'
     assert "secret" not in str(response)
     assert "readiness database check failed" in caplog.text
 

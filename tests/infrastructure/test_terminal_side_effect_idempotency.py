@@ -97,15 +97,30 @@ class BlockingPublisher:
     def __init__(self, **kwargs) -> None:
         pass
 
-    def publish_patch_pr(self, patch, metadata):
+    def publish_patch_as_pr(self, **kwargs):
+        from services.github_pr_contracts import PRResult, PRStatus
+
         type(self).calls += 1
         type(self).entered.set()
         assert type(self).release.wait(timeout=5)
-        return {
-            "pr_number": 42,
-            "pr_url": "https://github.com/acme/app/pull/42",
-            "branch": metadata.branch,
-        }
+        return PRResult(
+            status=PRStatus.CREATED,
+            pr_number=42,
+            pr_url="https://github.com/acme/app/pull/42",
+            commit_hash="abc123",
+        )
+
+
+def release_grant() -> MagicMock:
+    grant = MagicMock()
+    grant.verified = True
+    grant.action = "release.publish"
+    grant.resource = "repository:acme/app"
+    grant.parameters = (
+        ("patch_id", "patch-1.0.0"),
+        ("base_branch", "main"),
+    )
+    return grant
 
 
 def test_two_workers_publish_one_pull_request(coordinator) -> None:
@@ -125,7 +140,10 @@ def test_two_workers_publish_one_pull_request(coordinator) -> None:
         "repo": "app",
         "token": "never-persist-this",
         "version": "1.0.0",
+        "patch_id": "patch-1.0.0",
         "patch_content": "diff --git a/a b/a\n",
+        "authority_grant": release_grant(),
+        "test_results": {"status": "passed", "failures": 0},
     }
     outcome: list[dict] = []
     worker = threading.Thread(target=lambda: outcome.append(first.execute(payload)))
