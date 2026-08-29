@@ -100,11 +100,15 @@ class WorkflowEngine:
         # Tjek betingelsen (hvis den findes)
         if transition.condition:
             try:
-                from domain.condition_evaluator import ConditionEvaluator
+                from domain.condition_evaluator import (
+                    ConditionEvaluationError,
+                    ConditionEvaluator,
+                )
                 evaluator = ConditionEvaluator()
                 if not evaluator.evaluate(transition.condition, self._get_context(actor, artifact)):
                     return False
-            except:
+            except ConditionEvaluationError:
+                # Invalid/unsafe conditions fail closed (deny transition).
                 return False
 
         # Tjek Gate (hvis den findes)

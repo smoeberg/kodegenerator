@@ -13,10 +13,20 @@ __all__ = ["app", "run"]
 
 
 def run() -> None:
-    """Run the canonical API with development-safe defaults."""
+    """Run the canonical API with development-safe defaults.
+
+    Bind defaults match ``runtime.main``: loopback unless ``DOR_HOST`` /
+    ``DOR_PORT`` opt into a wider listener (containers should set
+    ``DOR_HOST=0.0.0.0`` explicitly, as the Dockerfile already does via
+    uvicorn CLI).
+    """
+    import os
+
     import uvicorn
 
-    uvicorn.run("api.main:app", host="0.0.0.0", port=8000)
+    host = os.environ.get("DOR_HOST", "127.0.0.1")
+    port = int(os.environ.get("DOR_PORT", "8000"))
+    uvicorn.run("api.main:app", host=host, port=port)
 
 
 if __name__ == "__main__":

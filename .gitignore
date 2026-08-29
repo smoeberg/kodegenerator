@@ -19,3 +19,6 @@ htmlcov/
 *.salt
 data/fleet_master.key
 data/fleet_salt
+
+# Local git bundle artifacts (never commit)
+*.bundle
