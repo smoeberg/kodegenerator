@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from infrastructure.persistence.database import Database
@@ -38,8 +39,8 @@ validate_production_security_configuration()
 # Initialize database for health checks
 _db = Database()
 
-from api.auth import User, get_current_active_user
-from api.endpoints import (
+from api.auth import User, get_current_active_user  # noqa: E402
+from api.endpoints import (  # noqa: E402
     auth,
     control_plane,
     decisions,
@@ -51,6 +52,7 @@ from api.endpoints import (
     swarm_websocket,
     workflows,
 )
+
 HAS_AUTH = True
 
 app = FastAPI(
@@ -71,7 +73,7 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/health/ready", tags=["system"])
-async def health_ready() -> dict:
+async def health_ready() -> Any:
     """Return readiness status including database connectivity check."""
     try:
         with _db.session() as session:
@@ -79,7 +81,10 @@ async def health_ready() -> dict:
         return {"status": "ready", "database": "ok"}
     except Exception:
         logger.exception("readiness database check failed")
-        return {"status": "error", "database": "error"}
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "error", "database": "error"},
+        )
 
 
 if HAS_AUTH:

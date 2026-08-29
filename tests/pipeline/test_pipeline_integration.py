@@ -35,7 +35,7 @@ project_description: A demo pipeline
 requirements:
   - id: R1
     description: User can log in
-    acceptance_criteria: ["Login works"]
+    acceptance_criteria: ["GET /health returns 200"]
 """
 
 
@@ -56,8 +56,12 @@ def test_pipeline_executor_registry_covers_all_states(orch):
         "release",
     ]:
         assert task_type in registry, f"missing executor: {task_type}"
-    architecture = registry["generate_architecture"].execute({"name": "demo"})
-    contracts = registry["generate_contracts"].execute(architecture)
+    architecture = registry["generate_architecture"].execute(
+        {"name": "demo", "requirements": YAML_SPEC}
+    )
+    contracts = registry["generate_contracts"].execute(
+        {**architecture, "requirements": YAML_SPEC}
+    )
     assert contracts["status"] == "success"
 
 
@@ -109,7 +113,9 @@ def test_task_completion_advances_to_next_state(orch):
 
 def test_canonical_factory_dispatches_pipeline_tasks():
     factory = DictTaskExecutorFactory(executors=build_pipeline_executor_registry())
-    result = factory.get("generate_architecture").execute({"name": "demo"})
+    result = factory.get("generate_architecture").execute(
+        {"name": "demo", "requirements": YAML_SPEC}
+    )
     assert result["status"] == "success"
     with pytest.raises(LookupError):
         factory.get("unknown_type")
