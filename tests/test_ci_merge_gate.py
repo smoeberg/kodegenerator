@@ -1,7 +1,18 @@
 import os
+import subprocess
 import tempfile
-import pytest
+
 from scripts.ci_merge_gate import MergeGateChecker
+
+
+def _git(repo_dir, *args):
+    subprocess.run(
+        ["git", *args],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 def test_merge_gate_sandbox_root_bind_violation():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -23,6 +34,37 @@ def test_merge_gate_ghost_file_violation():
         checker.check_ghost_commits(["services/ghost.py"])
         assert len(checker.errors) > 0
         assert any("HALLUCINATION VIOLATION (Rule 2)" in err for err in checker.errors)
+
+
+def test_merge_gate_excludes_intentionally_deleted_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _git(tmpdir, "init", "-q")
+        _git(tmpdir, "config", "user.email", "merge-gate@example.invalid")
+        _git(tmpdir, "config", "user.name", "Merge Gate Test")
+
+        deleted_path = os.path.join(tmpdir, "obsolete.bundle")
+        with open(deleted_path, "w", encoding="utf-8") as f:
+            f.write("obsolete artifact\n")
+        _git(tmpdir, "add", "obsolete.bundle")
+        _git(tmpdir, "commit", "-qm", "add obsolete artifact")
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        os.remove(deleted_path)
+        _git(tmpdir, "add", "obsolete.bundle")
+        _git(tmpdir, "commit", "-qm", "remove obsolete artifact")
+
+        checker = MergeGateChecker(base=base, head="HEAD", repo_dir=tmpdir)
+        files = checker.get_diff_files()
+        checker.check_ghost_commits(files)
+
+        assert "obsolete.bundle" not in files
+        assert checker.errors == []
 
 def test_merge_gate_dummy_test_violation():
     with tempfile.TemporaryDirectory() as tmpdir:
