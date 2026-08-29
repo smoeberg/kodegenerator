@@ -1,8 +1,14 @@
 """Authentication primitives for the DOR API.
 
-Authentication is separate from Phase 3 runtime authorization. A bootstrap user
-may be configured through environment variables so the token endpoint is usable
-without embedding credentials in source control.
+Authentication is separate from Phase 3 runtime authorization. The HTTP user
+store is **process-local** (in-memory): it is intentionally limited to a
+bootstrap admin configured via environment variables so the token endpoint is
+usable without embedding credentials in source control.
+
+Production must set ``DOR_JWT_SECRET_KEY`` and ``DOR_ADMIN_PASSWORD`` (enforced
+at import of ``api.main``). Multi-instance or durable identity requires an
+external IdP or a future persistent principal store — do not treat this module
+as a multi-tenant user directory.
 """
 
 import hashlib
@@ -26,7 +32,10 @@ if IS_PRODUCTION and not SECRET_KEY:
     raise RuntimeError("DOR_JWT_SECRET_KEY must be configured in production before starting the API")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+# Process-local bootstrap store. Not durable across restarts or instances.
 _users: dict[str, dict] = {}
+# Public alias kept for tests and the token endpoint; prefer treating this as
+# an ephemeral bootstrap map, not a general user directory.
 fake_users_db = _users
 _PBKDF2_ITERATIONS = 600_000
 
@@ -71,10 +80,21 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def bootstrap_configured_admin() -> None:
-    """Synchronize the explicitly configured bootstrap user from environment settings."""
+    """Synchronize the explicitly configured bootstrap user from environment settings.
+
+    In production, a missing password is already rejected by
+    ``api.main.validate_production_security_configuration``. This helper still
+    no-ops without credentials in development so unit tests can inject users
+    directly into the process-local store.
+    """
     username = os.getenv("DOR_ADMIN_USERNAME", "admin").strip()
     password = os.getenv("DOR_ADMIN_PASSWORD")
     if not username or not password:
+        if IS_PRODUCTION:
+            raise RuntimeError(
+                "DOR_ADMIN_USERNAME and DOR_ADMIN_PASSWORD must both be set "
+                "in production before bootstrapping the API user store"
+            )
         return
     _users[username] = {
         "username": username,
