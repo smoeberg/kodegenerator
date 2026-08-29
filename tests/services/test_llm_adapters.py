@@ -15,13 +15,17 @@ def test_mock_adapter_returns_normalized_response_and_tokens():
 
 
 def test_json_mode_recovers_valid_json():
-    response = MockLLMAdapter('{"answer":"ok"}').generate("p", {"type": "object", "required": ["answer"]})
+    response = MockLLMAdapter('{"answer":"ok"}').generate(
+        "p", {"type": "object", "required": ["answer"]}
+    )
     assert json.loads(response.text) == {"answer": "ok"}
 
 
 def test_json_mode_is_fail_safe_for_invalid_payload():
     with pytest.raises(SchemaValidationError):
-        MockLLMAdapter("not-json").generate("p", {"type": "object", "required": ["answer"]})
+        MockLLMAdapter("not-json").generate(
+            "p", {"type": "object", "required": ["answer"]}
+        )
 
 
 def test_router_selects_provider_and_fallback():
@@ -30,6 +34,12 @@ def test_router_selects_provider_and_fallback():
     router = LLMRouter({"mock": selected}, fallback)
     assert router.generate("mock", "p").text == "selected"
     assert router.generate("missing", "p").text == "fallback"
+
+
+def test_router_fails_closed_without_explicit_fallback():
+    router = LLMRouter({})
+    with pytest.raises(LookupError, match="not configured"):
+        router.generate("missing", "p")
 
 
 def test_stream_exposes_response_as_chunks():

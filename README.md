@@ -140,3 +140,16 @@ result = DeployExecutor().execute({
 * **1.2.0** (2026-08-18) – README aligned to implemented control plane modules; SECURITY.md; P4-01 ledger overview; legacy API warning.
 * **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface.
 * **1.0.0** (2026-08-03) – Initial DOR specification and architecture.
+# Governed LLM proposals
+
+Architecture, contract and test stages can optionally request schema-validated,
+side-effect-free model proposals. Configuration, payloads, provenance and failure
+behaviour are documented in [docs/GOVERNED_LLM.md](docs/GOVERNED_LLM.md).
+
+Durable pipeline snapshots, migrations, worker recovery and cross-worker LLM
+replay are documented in
+[docs/PIPELINE_PERSISTENCE.md](docs/PIPELINE_PERSISTENCE.md).
+
+Exactly-once coordination for Docker/deployment and pull-request side effects is
+documented in
+[docs/TERMINAL_SIDE_EFFECTS.md](docs/TERMINAL_SIDE_EFFECTS.md).
