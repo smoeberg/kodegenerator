@@ -23,10 +23,25 @@ class MergeGateChecker:
         return res.stdout.strip()
 
     def get_diff_files(self) -> List[str]:
-        output = self.run_git(["git", "diff", "--name-only", f"{self.base}...{self.head}"])
+        # Rule 2 validates that files introduced or retained by the proposed
+        # head actually exist.  Deleted paths are legitimate diff entries but,
+        # by definition, must not exist on disk at HEAD.
+        output = self.run_git([
+            "git",
+            "diff",
+            "--diff-filter=ACMRTUXB",
+            "--name-only",
+            f"{self.base}...{self.head}",
+        ])
         if not output:
             # Fallback to staged + unstaged if base...head fails
-            output = self.run_git(["git", "diff", "--name-only", "HEAD"])
+            output = self.run_git([
+                "git",
+                "diff",
+                "--diff-filter=ACMRTUXB",
+                "--name-only",
+                "HEAD",
+            ])
         if not output:
             output = self.run_git(["git", "ls-files"])
         return [line.strip() for line in output.splitlines() if line.strip()]
