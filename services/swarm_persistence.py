@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_ready ON tasks(status,priority DESC,task_id
                 self._conn.execute("INSERT OR IGNORE INTO tasks(task_id,name,status,capabilities,priority,max_retries,metadata) VALUES(?,?,?,?,?,?,?)",(t.task_id,t.name,t.status.value,json.dumps(t.capabilities),t.priority,t.max_retries,json.dumps(t.metadata)))
                 for d in t.dependencies: self._conn.execute("INSERT OR IGNORE INTO dependencies VALUES(?,?)",(t.task_id,d))
                 self._audit(t.task_id,"submitted",None,{}); self._conn.commit()
-            except: self._conn.rollback(); raise
+            except Exception: self._conn.rollback(); raise
         return t.task_id
     def enqueue_wbs_plan(self, plan):
         before=self._conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_ready ON tasks(status,priority DESC,task_id
                 if not chosen: self._conn.commit(); return None
                 self._conn.execute("UPDATE tasks SET status='CLAIMED',agent_id=?,heartbeat_at=?,lease_expires_at=? WHERE task_id=?",(agent_id,_iso(now),_iso(exp),chosen['task_id']))
                 self._conn.execute("INSERT INTO claims(task_id,agent_id,claimed_at,lease_expires_at) VALUES(?,?,?,?)",(chosen['task_id'],agent_id,_iso(now),_iso(exp))); self._audit(chosen['task_id'],"claimed",agent_id,{"lease_expires_at":_iso(exp)}); self._conn.commit(); return self.get_task(chosen['task_id'])
-            except: self._conn.rollback(); raise
+            except Exception: self._conn.rollback(); raise
     def heartbeat(self, task_id, agent_id):
         self._transition(task_id,agent_id,"heartbeat")
     def complete_task(self, task_id, agent_id, patch_result): self._transition(task_id,agent_id,"complete",patch_result)
@@ -59,12 +59,12 @@ CREATE INDEX IF NOT EXISTS idx_tasks_ready ON tasks(status,priority DESC,task_id
             try:
                 r=self._owned(task_id,agent_id,now); n=r['retry_count']+1; s='PENDING' if retry and n<=r['max_retries'] else 'FAILED'
                 self._conn.execute("UPDATE tasks SET status=?,retry_count=?,error=?,agent_id=NULL,lease_expires_at=NULL,heartbeat_at=? WHERE task_id=?",(s,n,error,_iso(now),task_id)); self._audit(task_id,"failed",agent_id,{"error":error}); self._conn.commit()
-            except: self._conn.rollback(); raise
+            except Exception: self._conn.rollback(); raise
     def reclaim_expired(self):
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try: n=self._reclaim(self._clock()); self._conn.commit(); return n
-            except: self._conn.rollback(); raise
+            except Exception: self._conn.rollback(); raise
     def get_queue_stats(self):
         self.reclaim_expired(); return {r['status'].lower():r['n'] for r in self._conn.execute("SELECT status,COUNT(*) n FROM tasks GROUP BY status")}
     def pending_count(self): return self.get_queue_stats().get('pending',0)
@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_ready ON tasks(status,priority DESC,task_id
                 if kind=="heartbeat": exp=now+timedelta(seconds=self.lease_seconds); self._conn.execute("UPDATE tasks SET heartbeat_at=?,lease_expires_at=? WHERE task_id=?",(_iso(now),_iso(exp),tid)); details={"lease_expires_at":_iso(exp)}
                 else: self._conn.execute("UPDATE tasks SET status='COMPLETED',patch_result=?,agent_id=NULL,lease_expires_at=NULL,heartbeat_at=? WHERE task_id=?",(json.dumps(result),_iso(now),tid)); details={}
                 self._audit(tid,kind,agent,details); self._conn.commit()
-            except: self._conn.rollback(); raise
+            except Exception: self._conn.rollback(); raise
     def _owned(self,tid,agent,now):
         r=self._conn.execute("SELECT * FROM tasks WHERE task_id=?",(tid,)).fetchone()
         if not r: raise KeyError(tid)
