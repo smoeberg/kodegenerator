@@ -26,10 +26,10 @@ DEFAULT_CLAIM_LEASE_SECONDS = 300
 
 class ExecutionReplayLedgerModel(Base):
     __tablename__ = "execution_replay_ledger"
-    execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     organization_id: Mapped[str] = mapped_column(
         String(128), primary_key=True, nullable=False, index=True
     )
+    execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     grant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
