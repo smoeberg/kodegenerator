@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/smoeberg/kodegenerator/main/ci/schemas/platform_skip_manifest.schema.json",
+  "title": "Kodegenerator platform-skip manifest (Phase 7)",
+  "description": "Auditable registry of environment-dependent test skips. Entries must be precise, versioned, and owned.",
+  "type": "object",
+  "required": ["version", "schema", "policy", "environments", "skips"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "schema": { "type": "string", "format": "uri" },
+    "policy": {
+      "type": "object",
+      "required": ["description", "review"],
+      "properties": {
+        "description": { "type": "string" },
+        "review": { "type": "string" }
+      }
+    },
+    "environments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "signal"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "description": { "type": "string" },
+          "signal": { "type": "string" }
+        }
+      }
+    },
+    "skips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "reason", "test_ids", "environment", "type", "owner"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^env-[0-9]+$" },
+          "reason": { "type": "string", "minLength": 10 },
+          "test_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^tests/.+$" }
+          },
+          "environment": { "type": "string" },
+          "type": {
+            "enum": ["auto-heal", "matrix-variant", "integration-only", "hardware-gated"]
+          },
+          "owner": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

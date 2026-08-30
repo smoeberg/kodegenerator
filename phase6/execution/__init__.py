@@ -29,3 +29,10 @@ __all__ = [
     "SandboxRegistry",
     "StructuredAuditLogger",
 ]
+
+from .audit_harness import (
+    AuditHarness,
+    ChainIntegrityError,
+    GENESIS_HASH,
+    HashChainEntry,
+)

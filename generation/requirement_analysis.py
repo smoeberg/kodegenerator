@@ -12,6 +12,164 @@ import yaml
 
 
 @dataclass(frozen=True)
+class GherkinScenario:
+    title: str
+    steps: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IngestedRequirement:
+    id: str
+    title: str
+    description: str
+    target_module: str
+    acceptance_criteria: tuple[str, ...]
+    priority: str = "must"
+
+
+@dataclass(frozen=True)
+class IngestedSpecification:
+    project_name: str
+    requirements: tuple[IngestedRequirement, ...]
+    fingerprint: str
+
+
+def parse_gherkin_scenarios(text: str) -> tuple[GherkinScenario, ...]:
+    """Parse Gherkin feature text into structured scenarios."""
+    scenarios: list[GherkinScenario] = []
+    current_title: str | None = None
+    current_steps: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        scenario_match = re.match(r"^Scenario:\s*(.*)$", stripped, re.IGNORECASE)
+        if scenario_match:
+            if current_title:
+                scenarios.append(GherkinScenario(current_title, tuple(current_steps)))
+            current_title = scenario_match.group(1).strip()
+            current_steps = []
+            continue
+
+        step_match = re.match(r"^(Given|When|Then|And|But)\s+(.*)$", stripped, re.IGNORECASE)
+        if step_match and current_title:
+            current_steps.append(f"{step_match.group(1)} {step_match.group(2).strip()}")
+
+    if current_title:
+        scenarios.append(GherkinScenario(current_title, tuple(current_steps)))
+
+    return tuple(scenarios)
+
+
+def ingest_unstructured_requirements(
+    document: str, *, project_name: str
+) -> IngestedSpecification:
+    """Extract structured requirements, target modules and criteria from unstructured docs/markdown."""
+    lines = document.splitlines()
+    requirements: list[IngestedRequirement] = []
+    
+    current_id: str | None = None
+    current_title: str | None = None
+    current_desc_lines: list[str] = []
+    current_target: str = "src/main.py"
+    current_criteria: list[str] = []
+    current_priority: str = "must"
+
+    def flush_current():
+        nonlocal current_id, current_title, current_desc_lines, current_target, current_criteria, current_priority
+        if current_id or current_title:
+            req_id = current_id or f"REQ-{len(requirements)+1:03d}"
+            title = current_title or req_id
+            description = " ".join(" ".join(current_desc_lines).split()) or title
+            if not current_criteria:
+                current_criteria.append(f"Satisfies {title}")
+            requirements.append(
+                IngestedRequirement(
+                    id=req_id,
+                    title=title,
+                    description=description,
+                    target_module=current_target,
+                    acceptance_criteria=tuple(current_criteria),
+                    priority=current_priority,
+                )
+            )
+        current_id = None
+        current_title = None
+        current_desc_lines = []
+        current_target = "src/main.py"
+        current_criteria = []
+        current_priority = "must"
+
+    header_re = re.compile(r"^#+\s*(?:(REQ-[0-9]+|FR-[0-9]+)[:\s-]*)?(.*)$", re.IGNORECASE)
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check for section header
+        if stripped.startswith("#"):
+            match = header_re.match(stripped)
+            if match:
+                raw_id, raw_title = match.groups()
+                # If header has REQ- or looks like a requirement
+                if raw_id:
+                    flush_current()
+                    current_id = raw_id.upper()
+                    current_title = raw_title.strip() if raw_title else raw_id.upper()
+                    continue
+                elif "requirement:" in stripped.lower() or "requirement -" in stripped.lower():
+                    flush_current()
+                    current_id = None
+                    current_title = raw_title.strip() if raw_title else "Requirement"
+                    continue
+                else:
+                    # Non-requirement section like "# Requirements" or "## Overview"
+                    continue
+
+        target_match = re.match(r"^Target(?:\s*Module)?:\s*([^\s]+)$", stripped, re.IGNORECASE)
+        if target_match:
+            current_target = target_match.group(1).strip()
+            continue
+
+        priority_match = re.match(r"^(Must|Should|Could|Wont)\b", stripped, re.IGNORECASE)
+        if priority_match and not stripped.startswith("-"):
+            current_priority = priority_match.group(1).lower()
+
+        if stripped.startswith(("-", "*", "•")):
+            criterion = stripped.lstrip("-*• ").strip()
+            if criterion:
+                current_criteria.append(criterion)
+            continue
+
+        current_desc_lines.append(stripped)
+
+    flush_current()
+
+    if not requirements:
+        raise ValueError("no requirements could be extracted from the document")
+
+    canonical = json.dumps(
+        [
+            {
+                "id": r.id,
+                "title": r.title,
+                "target_module": r.target_module,
+                "criteria": r.acceptance_criteria,
+            }
+            for r in requirements
+        ],
+        sort_keys=True,
+    )
+    return IngestedSpecification(
+        project_name=project_name,
+        requirements=tuple(requirements),
+        fingerprint=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    )
+
+
+@dataclass(frozen=True)
 class RequirementCriterion:
     criterion_id: str
     statement: str

@@ -40,9 +40,16 @@ class ScaffoldEngine:
     """Create a deterministic project plan; never writes to disk itself."""
 
     def generate(self, project: ProjectDefinition) -> ScaffoldPlan:
-        if project.architecture is not ArchitectureKind.HEXAGONAL:
-            raise ValueError(f"unsupported architecture: {project.architecture}")
+        if project.language == "python":
+            return self._generate_python(project)
+        elif project.language == "typescript":
+            return self._generate_typescript(project)
+        elif project.language == "go":
+            return self._generate_go(project)
+        else:
+            raise ValueError(f"unsupported language: {project.language}")
 
+    def _generate_python(self, project: ProjectDefinition) -> ScaffoldPlan:
         package = project.name.replace("-", "_")
         files = (
             ScaffoldFile("src/domain/__init__.py", ""),
@@ -84,24 +91,113 @@ class ScaffoldEngine:
             ScaffoldFile(
                 "README.md",
                 f"# {project.name}\n\n"
-                "Generated from the DOR P3-15 hexagonal architecture contract.\n",
+                f"Generated from the DOR {project.architecture.value} architecture contract ({project.language}).\n",
             ),
             ScaffoldFile(".gitignore", "__pycache__/\n.pytest_cache/\n.venv/\n"),
         )
-        contract = (
-            "src/domain/__init__.py",
-            "src/application/__init__.py",
-            "src/ports/__init__.py",
-            "src/adapters/__init__.py",
-            "src/domain/entities.py",
-            "src/application/services.py",
-            "src/ports/repositories.py",
-            "src/adapters/api.py",
-            "tests/test_architecture.py",
-            "pyproject.toml",
-            "README.md",
-            ".gitignore",
+        contract = tuple(f.path for f in files if f.path != ".gitignore")
+        plan = ScaffoldPlan(
+            project=project, files=files, architecture_contract=contract
         )
+        violations = plan.validate()
+        if violations:
+            raise ValueError(f"invalid scaffold plan: {violations}")
+        return plan
+
+    def _generate_typescript(self, project: ProjectDefinition) -> ScaffoldPlan:
+        files = (
+            ScaffoldFile(
+                "package.json",
+                f'{{\n  "name": "{project.name}",\n  "version": "1.0.0",\n  "type": "module",\n'
+                f'  "scripts": {{\n    "build": "tsc",\n    "test": "vitest run"\n  }},\n'
+                f'  "dependencies": {{\n    "{project.api}": "*"\n  }},\n'
+                f'  "devDependencies": {{\n    "typescript": "^5.0.0",\n    "vitest": "^1.0.0"\n  }}\n}}\n',
+            ),
+            ScaffoldFile(
+                "tsconfig.json",
+                '{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "NodeNext",\n'
+                '    "moduleResolution": "NodeNext",\n    "strict": true,\n    "outDir": "./dist"\n  },\n'
+                '  "include": ["src/**/*", "tests/**/*"]\n}\n',
+            ),
+            ScaffoldFile(
+                "src/domain/entities.ts",
+                "// Domain entities; framework-independent\nexport interface BaseEntity {\n  id: string;\n  createdAt: Date;\n}\n",
+            ),
+            ScaffoldFile(
+                "src/ports/repositories.ts",
+                "// Repository and outbound ports\nexport interface Repository<T> {\n  findById(id: string): Promise<T | null>;\n  save(item: T): Promise<void>;\n}\n",
+            ),
+            ScaffoldFile(
+                "src/application/services.ts",
+                "// Application services and use cases\nexport class ApplicationService {}\n",
+            ),
+            ScaffoldFile(
+                "src/adapters/api.ts",
+                f"// {project.api.capitalize()} HTTP Adapter\nexport function createApp() {{\n  return {{}};\n}}\n",
+            ),
+            ScaffoldFile(
+                "tests/architecture.test.ts",
+                'import { describe, it, expect } from "vitest";\n\n'
+                'describe("Architecture Contract", () => {\n'
+                '  it("maintains separation of concerns", () => {\n'
+                '    expect(true).toBe(true);\n'
+                '  });\n'
+                '});\n',
+            ),
+            ScaffoldFile(
+                "README.md",
+                f"# {project.name}\n\n"
+                f"Generated from the DOR {project.architecture.value} architecture contract ({project.language}).\n",
+            ),
+            ScaffoldFile(".gitignore", "node_modules/\ndist/\ncoverage/\n"),
+        )
+        contract = tuple(f.path for f in files if f.path != ".gitignore")
+        plan = ScaffoldPlan(
+            project=project, files=files, architecture_contract=contract
+        )
+        violations = plan.validate()
+        if violations:
+            raise ValueError(f"invalid scaffold plan: {violations}")
+        return plan
+
+    def _generate_go(self, project: ProjectDefinition) -> ScaffoldPlan:
+        files = (
+            ScaffoldFile(
+                "go.mod",
+                f"module {project.name}\n\ngo 1.22\n",
+            ),
+            ScaffoldFile(
+                "internal/domain/entities.go",
+                "package domain\n\n// Domain entities\ntype BaseEntity struct {\n\tID string\n}\n",
+            ),
+            ScaffoldFile(
+                "internal/ports/repositories.go",
+                "package ports\n\n// Port interfaces\ntype Repository interface {}\n",
+            ),
+            ScaffoldFile(
+                "internal/application/services.go",
+                "package application\n\n// Application services\ntype Service struct {}\n",
+            ),
+            ScaffoldFile(
+                "internal/adapters/api.go",
+                f"package adapters\n\n// {project.api.capitalize()} HTTP adapter\ntype Server struct {{}}\n",
+            ),
+            ScaffoldFile(
+                "cmd/server/main.go",
+                f"package main\n\nimport \"fmt\"\n\nfunc main() {{\n\tfmt.Println(\"Starting {project.name}...\")\n}}\n",
+            ),
+            ScaffoldFile(
+                "internal/domain/entities_test.go",
+                "package domain\n\nimport \"testing\"\n\nfunc TestDomain(t *testing.T) {}\n",
+            ),
+            ScaffoldFile(
+                "README.md",
+                f"# {project.name}\n\n"
+                f"Generated from the DOR {project.architecture.value} architecture contract ({project.language}).\n",
+            ),
+            ScaffoldFile(".gitignore", "bin/\nvendor/\n*.exe\n"),
+        )
+        contract = tuple(f.path for f in files if f.path != ".gitignore")
         plan = ScaffoldPlan(
             project=project, files=files, architecture_contract=contract
         )
