@@ -9,6 +9,9 @@ in `docs/`.
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | SQLAlchemy database URL for persistence |
+| `DOR_IDENTITY_DATABASE_URL` | Optional separate SQLAlchemy URL for persistent HTTP principals; defaults to `DATABASE_URL` in production |
+| `DOR_JWT_SECRET_KEY` | Explicit JWT signing secret |
+| `DOR_ADMIN_PASSWORD` | One-time bootstrap credential for the initial persistent admin |
 | `DOR_AUTHORITY_SIGNING_KEY` | URL-safe base64 key (≥32 decoded bytes) shared by AI-3/AI-4 processes that exchange grants |
 | `OPENAI_API_KEY` | Only if Implementation Agent provider is enabled |
 | `DOR_IMPLEMENTATION_MODEL` | Model id for Implementation Agent |
@@ -61,6 +64,20 @@ Mounted with authentication (except health/auth):
 
 Those modules use ID-only lookups without `OrganizationContext` and are treated
 as **unsafe if exposed**.
+
+## Persistent HTTP identity
+
+Production authentication stores principals in `identity_principals`. The
+bootstrap administrator is inserted only when absent; subsequent logins do not
+replace its password hash. Each principal has a monotonically increasing
+`credential_version`, embedded as `cv` in JWTs. Password rotation and account
+disablement increment the version, immediately invalidating previously issued
+tokens across all API instances.
+
+The process-local `fake_users_db` alias remains solely for development and
+legacy test fixtures. Production startup requires `DATABASE_URL` and never
+uses that map as its identity authority. Apply Alembic migrations before
+starting the canonical API.
 
 ## Tenant isolation
 

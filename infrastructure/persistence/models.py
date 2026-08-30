@@ -57,6 +57,27 @@ class ActorModel(Base):
     )
 
 
+class IdentityPrincipalModel(Base):
+    """Persistent HTTP authentication principal shared by all API instances."""
+
+    __tablename__ = "identity_principals"
+
+    username: Mapped[str] = mapped_column(String(128), primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
+    disabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    credential_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class RoleDefinitionModel(Base):
     __tablename__ = "role_definitions"
 

@@ -34,3 +34,13 @@ def test_production_requires_admin_password(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="DOR_ADMIN_PASSWORD"):
         api_main.validate_production_security_configuration()
+
+
+def test_production_requires_persistent_identity_database(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "IS_PRODUCTION", True)
+    monkeypatch.setenv("DOR_JWT_SECRET_KEY", "configured")
+    monkeypatch.setenv("DOR_ADMIN_PASSWORD", "configured")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        api_main.validate_production_security_configuration()

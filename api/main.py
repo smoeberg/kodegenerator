@@ -24,7 +24,7 @@ def validate_production_security_configuration() -> None:
         return
     missing = [
         name
-        for name in ("DOR_JWT_SECRET_KEY", "DOR_ADMIN_PASSWORD")
+        for name in ("DOR_JWT_SECRET_KEY", "DOR_ADMIN_PASSWORD", "DATABASE_URL")
         if not os.environ.get(name, "").strip()
     ]
     if missing:
