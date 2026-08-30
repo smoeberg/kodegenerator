@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "schema": "https://raw.githubusercontent.com/smoeberg/kodegenerator/main/ci/schemas/platform_skip_manifest.schema.json",
+  "policy": {
+    "description": "Controlled, auditable platform skips for environment-dependent tests. Every entry must reference a real test id, a real environment signal, and an owner. Skipping is only permitted when the dedicated integration runner does not satisfy the environment requirement; core logic is never skipped. A test path may be listed once per environment; entries must be reviewed by the owner at least every 90 days.",
+    "review": "owners must re-verify at least every 90 days"
+  },
+  "environments": [
+    {
+      "id": "linux-bwrap",
+      "description": "GitHub-hosted ubuntu-latest runner with unprivileged user namespaces enabled and Bubblewrap installed",
+      "signal": "bwrap"
+    },
+    {
+      "id": "integration",
+      "description": "Dedicated integration runner with full Docker, real Postgres, long-running daemons and network",
+      "signal": "DOR_INTEGRATION_RUNNER=1"
+    }
+  ],
+  "skips": [
+    {
+      "id": "env-01",
+      "reason": "Bubblewrap (bwrap) must be installed and executable on the runner; the setup step auto-heals by installing it, but a locked-down runner may still lack it. Covers the process sandbox and filesystem/network confinement suites.",
+      "test_ids": ["tests/phase6/test_process_sandbox.py", "tests/phase6/test_process_sandbox_hardening.py", "tests/phase6/test_p6_05_filesystem_network.py", "tests/phase4/test_bubblewrap_tool_runner.py"],
+      "environment": "linux-bwrap",
+      "type": "auto-heal",
+      "owner": "core-platform"
+    },
+    {
+      "id": "env-02",
+      "reason": "Unprivileged user namespaces must be enabled before Bubblewrap can execute; the preparation step performs the sysctl toggle on GitHub runners. Covers the execution sandbox and resource limit suites.",
+      "test_ids": ["tests/phase6/test_p6_02_execution_sandbox.py", "tests/phase6/test_p6_04_resource_limits.py"],
+      "environment": "linux-bwrap",
+      "type": "auto-heal",
+      "owner": "core-platform"
+    },
+    {
+      "id": "env-03",
+      "reason": "The SDK test matrix runs twice (with and without proxy environment variables) to prove transport neutrality; on a proxy-stripped runner only the explicit variant is authoritative.",
+      "test_ids": ["tests/sdk/test_proxy_matrix.py"],
+      "environment": "linux-bwrap",
+      "type": "matrix-variant",
+      "owner": "sdk"
+    },
+    {
+      "id": "env-04",
+      "reason": "Dedicated integration runner is the only environment where the full swarm E2E pipeline exercises real worker daemons and queue draining.",
+      "test_ids": ["tests/e2e/test_swarm_e2e_pipeline.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "swarm"
+    },
+    {
+      "id": "env-05",
+      "reason": "Chaos harness is deliberately excluded from the fast matrix runner because it needs long-running supervisor windows.",
+      "test_ids": ["tests/e2e/test_chaos_harness.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "reliability"
+    },
+    {
+      "id": "env-06",
+      "reason": "Real-system acceptance boot requires a free TCP port and live database adapter; the matrix runner keeps the suite hermetic.",
+      "test_ids": ["tests/acceptance/test_real_system.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "acceptance"
+    },
+    {
+      "id": "env-07",
+      "reason": "Deploy validation exercises DockerDeployService against a live daemon socket; matrix runner does not expose Docker.",
+      "test_ids": ["tests/pipeline/test_deploy_executor.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "platform"
+    },
+    {
+      "id": "env-08",
+      "reason": "Release executor certification lifecycle drives the real Docker registry contract; matrix runner has no registry.",
+      "test_ids": ["tests/pipeline/test_release_executor.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "release"
+    },
+    {
+      "id": "env-09",
+      "reason": "DR failover verification needs a second writable target; matrix runner is single-node.",
+      "test_ids": ["tests/services/test_dr_manager.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "reliability"
+    },
+    {
+      "id": "env-10",
+      "reason": "Redis task queue and supervised worker loops require a live Redis and long-lived daemons that the matrix runner strips.",
+      "test_ids": ["tests/services/test_redis_task_queue.py", "tests/services/test_pipeline_worker.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "swarm"
+    },
+    {
+      "id": "env-11",
+      "reason": "Swarm supervisor and worker agent daemons need long-running process windows and real scheduling.",
+      "test_ids": ["tests/services/test_swarm_supervisor.py", "tests/services/test_worker_agent_daemon.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "swarm"
+    },
+    {
+      "id": "env-12",
+      "reason": "JWT key rotation and re-encryption require the live API runtime boundary.",
+      "test_ids": ["tests/api/test_jwt_key_rotation.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "security"
+    },
+    {
+      "id": "env-13",
+      "reason": "Tenant RLS enforcement requires the Postgres-backed persistence adapter on the integration runner.",
+      "test_ids": ["tests/infrastructure/test_tenant_rls.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "security"
+    },
+    {
+      "id": "env-14",
+      "reason": "Database queue fencing and runtime primitives exercise durable, real-database semantics (advisory locks, fencing tokens) only available on the integration runner.",
+      "test_ids": ["tests/phase7/test_database_queue_fencing.py", "tests/phase7/test_runtime_primitives.py"],
+      "environment": "integration",
+      "type": "integration-only",
+      "owner": "data"
+    }
+  ]
+}
