@@ -23,8 +23,36 @@ def test_project_definition_rejects_unsupported_stack():
         ProjectDefinition(
             name="orders-api",
             architecture=ArchitectureKind.HEXAGONAL,
-            language="typescript",
+            language="ruby",
         )
+
+
+def test_project_definition_supports_typescript_and_go():
+    ts_proj = ProjectDefinition(
+        name="orders-ts",
+        architecture=ArchitectureKind.HEXAGONAL,
+        language="typescript",
+        api="express",
+        database="postgresql",
+    )
+    assert ts_proj.language == "typescript"
+    plan_ts = ScaffoldEngine().generate(ts_proj)
+    assert plan_ts.validate() == ()
+    assert any("package.json" in f.path for f in plan_ts.files)
+    assert any("tsconfig.json" in f.path for f in plan_ts.files)
+
+    go_proj = ProjectDefinition(
+        name="orders-go",
+        architecture=ArchitectureKind.HEXAGONAL,
+        language="go",
+        api="gin",
+        database="postgresql",
+    )
+    assert go_proj.language == "go"
+    plan_go = ScaffoldEngine().generate(go_proj)
+    assert plan_go.validate() == ()
+    assert any("go.mod" in f.path for f in plan_go.files)
+    assert any("cmd/server/main.go" in f.path for f in plan_go.files)
 
 
 def test_scaffold_contains_architecture_contract():
