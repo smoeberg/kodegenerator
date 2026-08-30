@@ -7,7 +7,7 @@ operations; those concerns belong to later governed adapters.
 
 from dataclasses import dataclass
 from hashlib import sha256
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from generation.scaffold_engine import ScaffoldFile, ScaffoldPlan
 
@@ -30,7 +30,7 @@ class RenderedProject:
 
 
 class ProjectRenderer:
-    """Render a validated scaffold plan without side effects."""
+    """Render a validated scaffold plan and optionally materialize it safely to disk."""
 
     def render(self, plan: ScaffoldPlan) -> RenderedProject:
         violations = plan.validate()
@@ -47,6 +47,27 @@ class ProjectRenderer:
         payload = "\n".join(f"{item.path}\0{item.content}" for item in files)
         fingerprint = sha256(payload.encode("utf-8")).hexdigest()
         return RenderedProject(files=files, manifest=manifest, fingerprint=fingerprint)
+
+    def write_to_disk(
+        self, rendered: RenderedProject, target_dir: str | Path
+    ) -> dict[str, Path]:
+        """Materialize rendered files onto the filesystem securely."""
+        root = Path(target_dir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        written: dict[str, Path] = {}
+
+        for item in rendered.files:
+            rel_path = PurePosixPath(item.path)
+            if rel_path.is_absolute() or ".." in rel_path.parts:
+                raise ValueError(f"unsafe relative path for disk materialization: {item.path}")
+            dest = root.joinpath(*rel_path.parts).resolve()
+            if not dest.is_relative_to(root):
+                raise ValueError(f"path escapes target directory: {item.path}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(item.content, encoding="utf-8")
+            written[item.path] = dest
+
+        return written
 
 
 def _normalize_content(content: str) -> str:
