@@ -100,8 +100,18 @@ store the JSON keyring in source control.
 ## Tenant isolation
 
 Canonical Phase 3 paths use `establish_context` and
-`get_for_organization(...)` queries. New repositories must not use bare
-`session.get(Model, id)` for tenant-owned rows without an organization scope.
+`get_for_organization(...)` queries. PostgreSQL additionally enables and
+forces row-level security on the canonical runtime tables. Every runtime
+transaction sets `dor.organization_id` with transaction-local `set_config`;
+missing or mismatched context therefore returns no tenant rows and cannot
+insert or update them. Connection-pool reuse cannot retain this setting.
+
+The initial RLS boundary covers actors, role definitions and assignments,
+workflows, projects, domain events, command receipts, and task-execution
+receipts. Pipeline, Council, identity, and operational stores have separate
+persistence lifecycles and are not represented as covered by this migration.
+They must retain explicit organization-scoped queries until separately moved
+behind the same enforced session contract.
 
 ## Local secrets
 

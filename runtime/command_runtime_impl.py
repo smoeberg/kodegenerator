@@ -12,7 +12,7 @@ def execute_command(runtime, context, command_request: AdvanceWorkflowCommand) -
     if command_request.organization_id != context.organization_id:
         raise ContextError("Command organization does not match runtime context")
 
-    with runtime.database.session() as session:
+    with runtime.database.session(context.organization_id) as session:
         with runtime._uow(session) as uow:
             existing = uow.commands.get(command_request.command_id)
             if existing is not None:

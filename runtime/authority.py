@@ -22,7 +22,7 @@ class AuthorityRuntime:
         self.runtime = runtime
 
     def _authorize(self, context: "OrganizationContext", capability_id: str, resource_id: str | None, resource_organization_id: str | None) -> AuthorizationDecision:
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             uow = UnitOfWork(session)
             return AuthorizationService(uow).authorize(principal=context.principal, actor_id=context.actor_id, organization_id=context.organization_id, capability_id=capability_id, resource_id=resource_id, resource_organization_id=resource_organization_id)
 
@@ -42,7 +42,7 @@ class AuthorityRuntime:
             allowed=False,
             aggregate_type=aggregate_type,
         )
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(decision.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.events.append(event)
         raise CommandAuthorizationError(decision)
@@ -94,7 +94,7 @@ class AuthorityRuntime:
             allowed=True,
             aggregate_type=aggregate_type,
         )
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.events.append(event)
         return decision
@@ -103,7 +103,7 @@ class AuthorityRuntime:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())
         decision = self._authorize(context, "authority.role.create", role.id, role.organization_id)
         if not decision.allowed: self._deny(decision, command_id, "role_created")
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.authority.add_role_definition(role)
                 uow.events.append(create_authority_mutation_audit_event(decision, command_id=command_id, action="role_created", role_definition_id=role.id))
@@ -113,7 +113,7 @@ class AuthorityRuntime:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())
         decision = self._authorize(context, "authority.role.assign", assignment.role_definition_id, assignment.organization_id)
         if not decision.allowed: self._deny(decision, command_id, "role_assigned")
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.authority.assign_role(assignment)
                 uow.events.append(create_authority_mutation_audit_event(decision, command_id=command_id, action="role_assigned", role_definition_id=assignment.role_definition_id, target_actor_id=assignment.actor_id))
@@ -129,7 +129,7 @@ class AuthorityRuntime:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())
         decision = self._authorize(context, capability_id, role_definition_id, context.organization_id)
         if not decision.allowed: self._deny(decision, command_id, action)
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.authority.set_role_definition_status(role_definition_id, context.organization_id, status)
                 uow.events.append(create_authority_mutation_audit_event(decision, command_id=command_id, action=action, role_definition_id=role_definition_id))
@@ -147,7 +147,7 @@ class AuthorityRuntime:
         self.runtime._require_ready(); command_id = command_id or str(uuid4())
         decision = self._authorize(context, capability_id, role_definition_id, context.organization_id)
         if not decision.allowed: self._deny(decision, command_id, action)
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.authority.set_assignment_status(actor_id, context.organization_id, role_definition_id, status)
                 uow.events.append(create_authority_mutation_audit_event(decision, command_id=command_id, action=action, role_definition_id=role_definition_id, target_actor_id=actor_id))

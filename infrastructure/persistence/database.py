@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,12 +21,37 @@ class Database:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
-        self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session)
+        self.session_factory = sessionmaker(
+            bind=self.engine,
+            expire_on_commit=False,
+            class_=Session,
+        )
 
     @contextmanager
-    def session(self) -> Iterator[Session]:
+    def session(self, organization_id: str | None = None) -> Iterator[Session]:
+        """Yield a session bound to one tenant for PostgreSQL RLS.
+
+        Tenant-owned canonical runtime tables are protected by PostgreSQL row
+        security. ``set_config(..., true)`` scopes the organization value to
+        the current transaction, so pooled connections cannot leak tenant
+        context into a later request. SQLite keeps the same explicit repository
+        filtering used by tests and local development.
+        """
+        if organization_id is not None:
+            organization_id = organization_id.strip()
+            if not organization_id or len(organization_id) > 128:
+                raise ValueError("organization_id must contain 1-128 characters")
         session = self.session_factory()
         try:
+            session.info["organization_id"] = organization_id
+            if organization_id is not None and self.engine.dialect.name == "postgresql":
+                session.execute(
+                    text(
+                        "SELECT set_config('dor.organization_id', "
+                        ":organization_id, true)"
+                    ),
+                    {"organization_id": organization_id},
+                )
             yield session
         finally:
             session.close()
