@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from .database import apply_tenant_context
 from .models import PipelineRuntimeStateModel
 
 
@@ -35,6 +36,7 @@ class SQLAlchemyPipelineStateStore:
 
     def load(self) -> dict[str, Any] | None:
         with self._session_factory() as session:
+            apply_tenant_context(session, self._organization_id)
             row = session.scalar(
                 select(PipelineRuntimeStateModel).where(
                     PipelineRuntimeStateModel.store_id == self._store_id,
@@ -50,6 +52,7 @@ class SQLAlchemyPipelineStateStore:
     def save(self, snapshot: dict[str, Any]) -> None:
         now = datetime.now(timezone.utc)
         with self._session_factory() as session, session.begin():
+            apply_tenant_context(session, self._organization_id)
             if self._revision is None:
                 existing = session.scalar(
                     select(PipelineRuntimeStateModel).where(
@@ -88,6 +91,7 @@ class SQLAlchemyPipelineStateStore:
 
     def clear(self) -> None:
         with self._session_factory() as session, session.begin():
+            apply_tenant_context(session, self._organization_id)
             session.execute(
                 delete(PipelineRuntimeStateModel).where(
                     PipelineRuntimeStateModel.store_id == self._store_id,

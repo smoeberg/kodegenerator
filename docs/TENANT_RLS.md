@@ -33,6 +33,15 @@ cannot read or mutate the RLS-protected tables.
 - `domain_events`
 - `command_executions`
 - `task_executions`
+- `pipeline_runtime_states`
+- `governed_llm_calls`
+- `terminal_side_effects`
+- `council_sessions`
+- `council_disputes`
+- `council_votes`
+- `council_evidence_bindings`
+- `council_failure_observations`
+- `council_outbox_events`
 
 ## Deployment
 
@@ -42,10 +51,12 @@ cannot read or mutate the RLS-protected tables.
 4. Verify Tenant A cannot select, update, or insert Tenant B rows using the
    application database role.
 5. Verify connection-pool reuse does not preserve the previous tenant.
-6. Roll back with `alembic downgrade 014_identity_principals` only during a
-   controlled maintenance window; this removes the database enforcement.
+6. Roll back extended Pipeline/Council enforcement with
+   `alembic downgrade 015_core_tenant_rls`. Roll back all RLS enforcement with
+   `alembic downgrade 014_identity_principals`. Either rollback requires a
+   controlled maintenance window because it removes database isolation.
 
-Pipeline, Council, identity, and operational stores are explicitly outside
-this first RLS boundary. Their existing organization filters remain required;
-they must not be described as database-enforced until their session factories
-adopt the same transaction-local context.
+Identity principals are intentionally global authentication records. Runtime
+queue and execution-replay tables do not yet contain `organization_id`; they
+remain outside the RLS boundary and must not be described as tenant-isolated
+until a datamodel migration supplies an enforceable tenant key.

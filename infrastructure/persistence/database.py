@@ -37,21 +37,32 @@ class Database:
         context into a later request. SQLite keeps the same explicit repository
         filtering used by tests and local development.
         """
-        if organization_id is not None:
-            organization_id = organization_id.strip()
-            if not organization_id or len(organization_id) > 128:
-                raise ValueError("organization_id must contain 1-128 characters")
         session = self.session_factory()
         try:
-            session.info["organization_id"] = organization_id
-            if organization_id is not None and self.engine.dialect.name == "postgresql":
-                session.execute(
-                    text(
-                        "SELECT set_config('dor.organization_id', "
-                        ":organization_id, true)"
-                    ),
-                    {"organization_id": organization_id},
-                )
+            if organization_id is not None:
+                apply_tenant_context(session, organization_id)
+            else:
+                session.info["organization_id"] = None
             yield session
         finally:
             session.close()
+
+
+def apply_tenant_context(session: Session, organization_id: str) -> str:
+    """Bind an existing SQLAlchemy transaction to exactly one organization."""
+    normalized = organization_id.strip()
+    if not normalized or len(normalized) > 128:
+        raise ValueError("organization_id must contain 1-128 characters")
+    existing = session.info.get("organization_id")
+    if existing not in (None, normalized):
+        raise RuntimeError("session is already bound to another organization")
+    session.info["organization_id"] = normalized
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text(
+                "SELECT set_config('dor.organization_id', "
+                ":organization_id, true)"
+            ),
+            {"organization_id": normalized},
+        )
+    return normalized

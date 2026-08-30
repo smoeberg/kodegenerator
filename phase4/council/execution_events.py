@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from infrastructure.persistence.database import apply_tenant_context
 from phase4.adaptation.anti_tube import AntiTubeTrigger
 from phase4.adaptation.models import (
     AdaptationAction,
@@ -70,6 +71,7 @@ class CouncilFailureEventHandler:
 
     def handle(self, event: ExecutionFailedEvent) -> AdaptationResult:
         with self.session_factory() as db:
+            apply_tenant_context(db, event.organization_id)
             existing = self._existing_result(db, event)
             if existing is not None:
                 return existing

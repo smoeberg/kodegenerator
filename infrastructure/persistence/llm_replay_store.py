@@ -16,6 +16,7 @@ from services.llm_replay import (
     LLMReplayConflictError,
 )
 
+from .database import apply_tenant_context
 from .models import GovernedLLMCallModel
 
 
@@ -52,11 +53,13 @@ class SQLAlchemyLLMReplayStore:
         )
         try:
             with self._session_factory() as session, session.begin():
+                apply_tenant_context(session, organization_id)
                 session.add(row)
             return LLMReplayClaim(token)
         except IntegrityError:
             pass
         with self._session_factory() as session, session.begin():
+            apply_tenant_context(session, organization_id)
             current = session.scalar(
                 select(GovernedLLMCallModel).where(
                     GovernedLLMCallModel.organization_id == organization_id,
@@ -150,6 +153,7 @@ class SQLAlchemyLLMReplayStore:
     ) -> None:
         now = self._clock()
         with self._session_factory() as session, session.begin():
+            apply_tenant_context(session, organization_id)
             statement = (
                 update(GovernedLLMCallModel)
                 .where(
