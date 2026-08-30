@@ -123,4 +123,17 @@ environment or secret stores over files in the working tree.
 
 Process isolation (e.g. Bubblewrap) is an **environment** requirement where
 enabled. Missing `bwrap` / user namespaces in CI is an infrastructure limit,
-not an authority-bypass in AI-4.
+not an authority-bypass in AI-4. Since Fase 7 such environment limits are
+governed by the controlled platform-skip manifest
+(`ci/manifests/platform_skips.json`) — each former "environment error" is
+either green on the correct runner or precisely skipped with an owner and a
+reason — instead of blanket CI skips.
+
+## Operational security runbooks
+
+Fase 8 ships the operational runbooks for container and database security
+hardening, key-material handling, restore-from-backup, and vendor switches in
+[`docs/RUNBOOKS.md`](docs/RUNBOOKS.md) (R-03 container hardening, R-04
+database hardening, R-05 restore, R-06/R-07/R-08 vendor switches). Staging
+certification and rollback are operated via
+[`ci/staging/reconcile_cli.py`](ci/staging/reconcile_cli.py).

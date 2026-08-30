@@ -248,3 +248,15 @@ hash, changelog, and publication metadata.
 - Replace `DockerDeployService` with a Kubernetes backend while preserving the
   stable `DeployExecutor` payload/result contract.
 
+## CI gate, staging certification and runbooks
+
+The reproducible production gate (`.github/workflows/phase7.yml`) and the
+controlled platform-skip manifest (`ci/manifests/platform_skips.json`) govern
+what may be merged and released — see the Fase 7 section in
+[README](../README.md).
+
+Staging certification, reconciliation of unknown PR / image / deployment
+status, rollback to a known digest, and the deploy-failure fire drill are
+documented in [RUNBOOKS.md](RUNBOOKS.md) and [FIRE_DRILL.md](FIRE_DRILL.md);
+the operator CLI is `ci/staging/reconcile_cli.py`.
+

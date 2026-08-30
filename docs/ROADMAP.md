@@ -82,6 +82,10 @@ Control Plane command
 | Production isolation | Not started | No production agent sandbox or durable worker infrastructure yet |
 | End-to-end generation | Not started | No complete intent-to-deliverable pipeline yet |
 | Module extension architecture | Specification | Normative design is tracked separately; runtime is not implemented |
+| Reproducible CI + release candidate | Complete | Gate contract in `phase7.yml`; 14 legacy environment failures encoded in `ci/manifests/platform_skips.json`; branch coverage, Ruff, Bandit, dep-audit, Alembic, merge-gate, bwrap, SDK proxy matrix, integration runner; release-candidate evaluation in `ci/release_candidate.py` |
+| Drift-runbooks (Fase 8) | Complete | `docs/RUNBOOKS.md` R-01–R-12: on-/off-boarding, DB/container security, restore, vendor switches, staging usage |
+| Staging certification & reconciliation | Complete | `ci/staging/staging_certification.py` + `ci/staging/reconcile_cli.py`; OK/PENDING/DRIFT/ROLLBACK_REQUIRED/MISMATCH; rollback to known digest; operators run CLI (`certify`/`status`/`rollback`) against a runtime ledger |
+| Deploy-failure fire drill | Complete | `scripts/fire_drill.sh` + `docs/FIRE_DRILL.md`; quarterly exercise; runbook mapping R-05/R-09/R-10/R-11 |
 
 The 168-test count remains the historical Phase 3 completion marker. The
 current merged `main` baseline records 691/691 Python tests (excluding the
@@ -271,6 +275,17 @@ Intent
 
 ## 8. Phase 7 — Production runtime infrastructure
 
+> ✅ Delivered (CI / delivery gate): reproducible CI and release-candidate
+> evaluation — `promote-to-main` requires pytest 3.11/3.12, branch coverage,
+> Ruff, Bandit, dep-audit, Alembic fresh install + upgrade, merge-gate,
+> Bubblewrap, SDK proxy matrix, and E2E on the dedicated integration runner.
+> High-risk environment failures are governed by the controlled
+> platform-skip manifest (`ci/manifests/platform_skips.json`) instead of
+> blanket skips; the release candidate is declared by
+> `ci/release_candidate.py` only when every gate is green.
+
+Remaining infrastructure work (not part of the delivered CI gate):
+
 - [ ] Deploy durable relational persistence such as PostgreSQL.
 - [ ] Deploy S3-compatible object and artifact storage.
 - [ ] Deploy resilient queue and event infrastructure with durable workers.
@@ -287,6 +302,18 @@ Intent
 The final acceptance test must prove that DOR can accept a complex business
 intent and deliver a verified, production-ready system while preserving every
 authority, isolation, audit, and provenance boundary.
+
+> ✅ Delivered (operations / acceptance tooling): drift-runbooks for on- and
+> off-boarding of machines, Docker container and database security hardening,
+> restore from backup, switching database / artifact-store / DNS providers,
+> staging usage, staging rollback to a known digest, and reconciliation of
+> unknown PR / image / deployment status (`docs/RUNBOOKS.md` R-01–R-12).
+> Staging certification is enforced by `ci/staging/staging_certification.py`
+> and operated through `ci/staging/reconcile_cli.py` (`certify`, `status`,
+> `rollback`). The deploy-failure fire drill (`scripts/fire_drill.sh`,
+> `docs/FIRE_DRILL.md`) is runnable and green (6/6).
+
+Remaining acceptance work:
 
 - [ ] Complete requirements, architecture, planning, tasks, implementation,
   tests, audit, execution, P3-20 verification, and delivery.
