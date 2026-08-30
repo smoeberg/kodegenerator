@@ -178,7 +178,7 @@ class OpenAIPlannerProvider:
                     headers=headers,
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310 - URL is explicitly restricted to HTTPS.
                     raw = json.loads(resp.read().decode("utf-8"))
                 text = raw.get("output_text") or ""
                 for item in raw.get("output") or []:
