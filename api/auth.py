@@ -23,6 +23,9 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+from infrastructure.runtime.db import build_session_factory
+from services.identity_store import IdentityStore
+
 IS_PRODUCTION = os.getenv("DOR_ENV", "development").lower() == "production"
 SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or ("" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx")
 ALGORITHM = os.getenv("DOR_JWT_ALGORITHM", "HS256")
@@ -58,6 +61,25 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
+    credential_version: int = 1
+
+
+_identity_store: IdentityStore | None = None
+_identity_store_url: str | None = None
+
+
+def get_identity_store() -> IdentityStore | None:
+    """Return the configured durable store, or the development test fallback."""
+    global _identity_store, _identity_store_url
+    database_url = os.getenv("DOR_IDENTITY_DATABASE_URL")
+    if IS_PRODUCTION and not database_url:
+        database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return None
+    if _identity_store is None or _identity_store_url != database_url:
+        _identity_store = IdentityStore(build_session_factory(database_url))
+        _identity_store_url = database_url
+    return _identity_store
 
 
 def get_password_hash(password: str) -> str:
@@ -96,13 +118,26 @@ def bootstrap_configured_admin() -> None:
                 "in production before bootstrapping the API user store"
             )
         return
-    _users[username] = {
+    store = get_identity_store()
+    if store is not None and store.get(username) is not None:
+        return
+    identity = {
         "username": username,
         "email": os.getenv("DOR_ADMIN_EMAIL"),
         "full_name": os.getenv("DOR_ADMIN_FULL_NAME", username),
         "disabled": False,
         "hashed_password": get_password_hash(password),
+        "credential_version": 1,
     }
+    if store is not None:
+        store.create_if_absent(
+            username=username,
+            hashed_password=identity["hashed_password"],
+            email=identity["email"],
+            full_name=identity["full_name"],
+        )
+        return
+    _users[username] = identity
 
 
 def get_user(db: dict, username: str) -> Optional[UserInDB]:
@@ -115,6 +150,24 @@ def authenticate_user(db: dict, username: str, password: str) -> Optional[UserIn
     """Authenticate a user against the supplied database."""
     user = get_user(db, username)
     if not user or not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+
+def get_configured_user(username: str) -> Optional[UserInDB]:
+    """Resolve a principal from durable production storage or the test map."""
+    store = get_identity_store()
+    if store is not None:
+        value = store.get(username)
+        return UserInDB(**value) if value else None
+    return get_user(fake_users_db, username)
+
+
+def authenticate_configured_user(
+    username: str, password: str
+) -> Optional[UserInDB]:
+    user = get_configured_user(username)
+    if not user or user.disabled or not verify_password(password, user.hashed_password):
         return None
     return user
 
@@ -148,9 +201,14 @@ def authenticate_access_token(token: str) -> User:
             raise credentials_exception
     except JWTError as exc:
         raise credentials_exception from exc
-    user = get_user(fake_users_db, username=username)
+    user = get_configured_user(username=username)
     if user is None or user.disabled:
         raise credentials_exception
+    store = get_identity_store()
+    if store is not None:
+        token_version = payload.get("cv")
+        if type(token_version) is not int or token_version != user.credential_version:
+            raise credentials_exception
     return user
 
 
