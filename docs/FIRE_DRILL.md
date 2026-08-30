@@ -6,7 +6,7 @@ a runnable, quarterly exercise. It is the operational proof that:
 - unknown PR / image / deployment status is **reconciled deterministically**
   (`R-11`),
 - an uncertified digest deployed to staging is **detected** and
-  **ROLLBACK_REQUIRED** (`R-02`/`R-10`),
+  **ROLLBACK_REQUIRED** (`R-10`),
 - staging can **roll back to a known digest** (`R-10`),
 - restore-from-backup is exercised on a fresh target (`R-05`).
 

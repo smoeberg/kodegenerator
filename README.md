@@ -1,8 +1,8 @@
 # 📚 Digital Organization Runtime (DOR) - Dokumentation
 
-**Version:** 1.3.0
+**Version:** 1.4.0
 
-**Senest opdateret:** 27. august 2026
+**Senest opdateret:** 30. august 2026
 
 ---
 
@@ -109,6 +109,13 @@ DOR følger en lagdelt arkitektur med klare adskillelser mellem domain, applicat
 
 Yderligere: [docs/PHASE4_ARCHITECTURE.md](docs/PHASE4_ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md).
 
+Fase 7 + Fase 8 (leveret 2026-08-30):
+- [docs/RUNBOOKS.md](docs/RUNBOOKS.md) — drift-runbooks R-01–R-12 (on-/off-boarding, sikkerhed, restore, leverandørskift, staging, rollback, reconciliation).
+- [docs/FIRE_DRILL.md](docs/FIRE_DRILL.md) — deploy-fiasko-fire drill (run `bash scripts/fire_drill.sh`).
+- [ci/manifests/platform_skips.json](ci/manifests/platform_skips.json) — kontrolleret platform-skip-manifest for de tidligere 14 miljøfejl.
+- [ci/release_candidate.py](ci/release_candidate.py) — release-candidate-evaluering fra alle CI-gates.
+- [ci/staging/reconcile_cli.py](ci/staging/reconcile_cli.py) — staging-certificering og reconciliation (`certify`, `status`, `rollback`).
+
 ### Deployment and releases
 
 The software-factory pipeline can build and push generated Docker images and
@@ -132,10 +139,34 @@ result = DeployExecutor().execute({
 })
 ```
 
+### CI / release gate and operational runbooks (Fase 7 + Fase 8)
+
+Promotion to `main` is governed by the reproducible production gate
+([`.github/workflows/phase7.yml`](.github/workflows/phase7.yml)): Python
+3.11/3.12, full pytest suite, branch coverage, Ruff, Bandit, dependency audit,
+Alembic fresh install + upgrade, merge-gate, Bubblewrap, SDK tests with and
+without proxy variables, and E2E on the dedicated integration runner. The 14
+legacy environment failures are encoded as a controlled, versioned
+platform-skip manifest
+([`ci/manifests/platform_skips.json`](ci/manifests/platform_skips.json)) with
+owner and reason; the release candidate is declared only when every gate is
+green ([`ci/release_candidate.py`](ci/release_candidate.py)).
+
+Operational runbooks for on-/off-boarding, database and container security
+hardening, restore from backup, database / artifact-store / DNS vendor
+switches, staging usage, staging rollback to a known digest, and
+reconciliation of unknown PR / image / deployment status are in
+[`docs/RUNBOOKS.md`](docs/RUNBOOKS.md). Staging certification is executed via
+[`ci/staging/reconcile_cli.py`](ci/staging/reconcile_cli.py) (`certify`,
+`status`, `rollback`), and the deploy-failure fire drill is run with
+[`scripts/fire_drill.sh`](scripts/fire_drill.sh) (see
+[`docs/FIRE_DRILL.md`](docs/FIRE_DRILL.md)).
+
 ---
 
 ## 📜 Changelog
 
+* **1.4.0** (2026-08-30) – Reproducible CI + release-candidate gate (Fase 7: platform-skip manifest, branch coverage, Ruff, SDK proxy matrix, integration runner, release-candidate evaluation) and production operations tooling (Fase 8: drift-runbooks, staging certification/reconciliation CLI, deploy-failure fire drill).
 * **1.3.0** (2026-08-27) – Durable dialectical Council runtime, content-addressed orchestrator turns, evidence-derived readiness and Anti-Tube preemption.
 * **1.2.0** (2026-08-18) – README aligned to implemented control plane modules; SECURITY.md; P4-01 ledger overview; legacy API warning.
 * **1.1.0** (2026-08-12) – Phase 4 redefined as EIRA Brain & Workforce Control Plane; LibreChat established as interaction surface.
