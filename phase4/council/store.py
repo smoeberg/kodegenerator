@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from infrastructure.persistence.database import apply_tenant_context
 from phase4.epistemics.models import Evidence, Hypothesis
 
 from .dispute import DisputeProtocol
@@ -61,6 +62,7 @@ class CouncilStore:
     ) -> PersistedDeliberation:
         now = datetime.now(timezone.utc)
         with self.session_factory() as db:
+            apply_tenant_context(db, binding.organization_id)
             db.add(
                 CouncilSessionModel(
                     session_id=session.session_id,
@@ -104,6 +106,7 @@ class CouncilStore:
         session_id: str,
     ) -> PersistedDeliberation | None:
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             row = db.scalar(
                 select(CouncilSessionModel).where(
                     CouncilSessionModel.organization_id == organization_id,
@@ -128,6 +131,7 @@ class CouncilStore:
     ) -> int:
         now = datetime.now(timezone.utc)
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             row = db.scalar(
                 select(CouncilSessionModel).where(
                     CouncilSessionModel.organization_id == organization_id,
@@ -195,6 +199,7 @@ class CouncilStore:
     ) -> dict[str, str]:
         """Return repository-derived evidence revisions for Authority readiness."""
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             rows = db.scalars(
                 select(CouncilEvidenceBindingModel).where(
                     CouncilEvidenceBindingModel.organization_id == organization_id,
@@ -210,6 +215,7 @@ class CouncilStore:
         limit: int = 100,
     ) -> tuple[CouncilOutboxEvent, ...]:
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             rows = db.scalars(
                 select(CouncilOutboxEventModel)
                 .where(
@@ -239,6 +245,7 @@ class CouncilStore:
     ) -> tuple[CouncilOutboxEvent, ...]:
         """Return durable aggregate signals regardless of publication status."""
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             rows = db.scalars(
                 select(CouncilOutboxEventModel)
                 .where(
@@ -262,6 +269,7 @@ class CouncilStore:
 
     def mark_published(self, organization_id: str, event_id: str) -> None:
         with self.session_factory() as db:
+            apply_tenant_context(db, organization_id)
             result = db.execute(
                 update(CouncilOutboxEventModel)
                 .where(

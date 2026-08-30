@@ -16,6 +16,7 @@ from services.side_effects import (
     SideEffectInProgressError,
 )
 
+from .database import apply_tenant_context
 from .models import TerminalSideEffectModel
 
 
@@ -45,6 +46,7 @@ class SQLAlchemySideEffectStore:
         now, token = self._clock(), secrets.token_hex(16)
         try:
             with self._sessions() as session, session.begin():
+                apply_tenant_context(session, organization_id)
                 session.add(
                     TerminalSideEffectModel(
                         organization_id=organization_id,
@@ -62,6 +64,7 @@ class SQLAlchemySideEffectStore:
         except IntegrityError:
             pass
         with self._sessions() as session, session.begin():
+            apply_tenant_context(session, organization_id)
             row = session.scalar(
                 select(TerminalSideEffectModel).where(
                     TerminalSideEffectModel.organization_id == organization_id,
@@ -157,6 +160,7 @@ class SQLAlchemySideEffectStore:
     ) -> None:
         now = self._clock()
         with self._sessions() as session, session.begin():
+            apply_tenant_context(session, organization_id)
             statement = (
                 update(TerminalSideEffectModel)
                 .where(

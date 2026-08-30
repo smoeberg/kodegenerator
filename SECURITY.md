@@ -106,12 +106,13 @@ transaction sets `dor.organization_id` with transaction-local `set_config`;
 missing or mismatched context therefore returns no tenant rows and cannot
 insert or update them. Connection-pool reuse cannot retain this setting.
 
-The initial RLS boundary covers actors, role definitions and assignments,
-workflows, projects, domain events, command receipts, and task-execution
-receipts. Pipeline, Council, identity, and operational stores have separate
-persistence lifecycles and are not represented as covered by this migration.
-They must retain explicit organization-scoped queries until separately moved
-behind the same enforced session contract.
+The RLS boundary covers actors, role definitions and assignments, workflows,
+projects, domain events, command and task-execution receipts, Pipeline state,
+governed LLM calls, terminal side effects, and all durable Council tables.
+Identity principals are global authentication records. Queue and execution
+replay tables currently lack `organization_id`; they are not represented as
+RLS-protected and require a datamodel migration before they can join this
+boundary.
 
 ## Local secrets
 

@@ -9,24 +9,31 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import text
 
-from infrastructure.persistence.database import Database
+from infrastructure.persistence.database import Database, apply_tenant_context
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "alembic" / "versions" / "015_core_tenant_rls.py"
+EXTENDED_MIGRATION = (
+    ROOT / "alembic" / "versions" / "016_extended_tenant_rls.py"
+)
 
 
 class _RecordingSession:
-    def __init__(self) -> None:
+    def __init__(self, dialect_name: str = "postgresql") -> None:
         self.info: dict[str, object] = {}
         self.executions: list[tuple[str, dict[str, str]]] = []
         self.closed = False
+        self._bind = SimpleNamespace(dialect=SimpleNamespace(name=dialect_name))
 
     def execute(self, statement, parameters):
         self.executions.append((str(statement), parameters))
 
     def close(self) -> None:
         self.closed = True
+
+    def get_bind(self):
+        return self._bind
 
 
 def test_postgres_session_sets_transaction_local_tenant() -> None:
@@ -93,6 +100,45 @@ def test_rls_migration_is_noop_for_sqlite() -> None:
     assert executed == []
 
 
+def test_extended_rls_covers_pipeline_and_council_tables() -> None:
+    migration = _load_migration(EXTENDED_MIGRATION)
+    executed: list[str] = []
+    migration.op = _FakeOp("postgresql", executed)
+
+    migration.upgrade()
+
+    assert len(migration.TENANT_TABLES) == 9
+    assert len(executed) == len(migration.TENANT_TABLES) * 3
+    for table in migration.TENANT_TABLES:
+        assert f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY' in executed
+        assert f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY' in executed
+
+
+def test_tenant_context_cannot_be_rebound_to_another_organization() -> None:
+    session = _RecordingSession("sqlite")
+    apply_tenant_context(session, "org-a")
+
+    with pytest.raises(RuntimeError, match="another organization"):
+        apply_tenant_context(session, "org-b")
+
+
+def test_separate_stores_apply_tenant_context_at_every_session_boundary() -> None:
+    paths = (
+        "infrastructure/persistence/pipeline_state_store.py",
+        "infrastructure/persistence/llm_replay_store.py",
+        "infrastructure/persistence/side_effect_store.py",
+        "phase4/council/store.py",
+        "phase4/council/execution_events.py",
+    )
+    for path in paths:
+        source = (ROOT / path).read_text(encoding="utf-8")
+        session_boundaries = source.count("() as session") + source.count(
+            "() as db"
+        )
+        assert session_boundaries > 0
+        assert source.count("apply_tenant_context(") == session_boundaries
+
+
 def test_canonical_runtime_never_opens_unscoped_tenant_sessions() -> None:
     authority = (ROOT / "runtime" / "authority.py").read_text(encoding="utf-8")
     projects = (ROOT / "runtime" / "project_runtime.py").read_text(encoding="utf-8")
@@ -121,8 +167,10 @@ class _FakeOp:
         self._executed.append(statement)
 
 
-def _load_migration():
-    spec = importlib.util.spec_from_file_location("tenant_rls_migration", MIGRATION)
+def _load_migration(path: Path = MIGRATION):
+    spec = importlib.util.spec_from_file_location(
+        f"tenant_rls_migration_{path.stem}", path
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
