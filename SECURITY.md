@@ -56,14 +56,15 @@ Mounted with authentication (except health/auth):
 
 - `control_plane`, `workflows`, `implementation_agent`
 
-**Not** part of the canonical public API (do not mount without a security redesign):
+The former task, artifact, organization, actor, capability, intent, role,
+workflow-template, and governance-gate routers were removed. Their ID-only
+lookups did not derive tenant scope from the authenticated principal. The
+canonical module inventory and retired path denylist live in
+`api/api_surface.py`; API startup and regression tests fail if the mounted
+router set drifts or a retired module/path is restored.
 
-- `api/endpoints/tasks.py`
-- `api/endpoints/artifacts.py`
-- other legacy routers under `api/endpoints/` not listed in `api/main.py`
-
-Those modules use ID-only lookups without `OrganizationContext` and are treated
-as **unsafe if exposed**.
+`api/endpoints/swarm_dashboard.py` remains an internal, unmounted component
+with an isolated test contract. It is not part of the canonical public API.
 
 ## Persistent HTTP identity
 

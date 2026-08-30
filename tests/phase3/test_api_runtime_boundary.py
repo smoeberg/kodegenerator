@@ -1,6 +1,16 @@
 """Integration boundary checks for the canonical runtime API."""
 
 import importlib
+import importlib.util
+
+import pytest
+
+from api.api_surface import (
+    CANONICAL_AUTHENTICATED_MODULES,
+    RETIRED_LEGACY_MODULES,
+    RETIRED_LEGACY_PATH_PREFIXES,
+    validate_canonical_modules,
+)
 
 
 def test_api_main_imports_with_canonical_runtime(monkeypatch):
@@ -75,3 +85,29 @@ def test_api_main_mounts_only_canonical_router_whitelist(monkeypatch):
     assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == 8
     # Pipeline gate approval endpoints are deliberately part of the canonical set.
     assert "/api/v1/pipeline-gates/approve" in paths
+
+
+def test_retired_legacy_router_modules_do_not_exist() -> None:
+    for module_name in RETIRED_LEGACY_MODULES:
+        assert importlib.util.find_spec(module_name) is None
+
+
+def test_retired_legacy_paths_are_not_mounted(monkeypatch) -> None:
+    monkeypatch.setenv("DOR_JWT_SECRET_KEY", "phase3-test-secret")
+    monkeypatch.setenv("DOR_ADMIN_PASSWORD", "phase3-test-password")
+
+    import api.main
+
+    paths = set(api.main.app.openapi()["paths"])
+    assert not {
+        path
+        for path in paths
+        if path.startswith(RETIRED_LEGACY_PATH_PREFIXES)
+    }
+
+
+def test_router_inventory_fails_closed_on_unexpected_module() -> None:
+    with pytest.raises(RuntimeError, match="unexpected"):
+        validate_canonical_modules(
+            (*CANONICAL_AUTHENTICATED_MODULES, "api.endpoints.tasks")
+        )
