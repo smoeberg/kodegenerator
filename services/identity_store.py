@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from infrastructure.persistence.models import IdentityPrincipalModel
