@@ -115,7 +115,7 @@ class DORRuntime:
 
     def register_actor(self, actor: Actor, organization_id: str) -> None:
         self._require_ready()
-        with self.database.session() as session:
+        with self.database.session(organization_id) as session:
             with UnitOfWork(session) as uow:
                 organization = uow.organizations.get(organization_id)
                 if organization is None:
@@ -126,7 +126,7 @@ class DORRuntime:
 
     def establish_context(self, principal: Principal, organization_id: str, actor_id: str) -> OrganizationContext:
         self._require_ready()
-        with self.database.session() as session:
+        with self.database.session(organization_id) as session:
             uow = UnitOfWork(session)
             organization = uow.organizations.get(organization_id)
             if organization is None:
@@ -141,7 +141,7 @@ class DORRuntime:
         self._require_ready()
         workflow = self._new_workflow(name=name, description=description, organization=context.organization)
         event = Event(event_type=EventType.WORKFLOW_CREATED, aggregate_id=workflow.id, aggregate_type="workflow", organization_id=context.organization_id, actor_id=context.actor_id, timestamp=datetime.now(timezone.utc), metadata={"workflow_id": workflow.id, "name": workflow.name})
-        with self.database.session() as session:
+        with self.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.workflows.add(workflow, context.organization_id)
                 uow.events.append(event)
@@ -150,7 +150,7 @@ class DORRuntime:
     def list_workflows(self, context: OrganizationContext) -> list[Workflow]:
         """Return only workflows owned by the authenticated organization context."""
         self._require_ready()
-        with self.database.session() as session:
+        with self.database.session(context.organization_id) as session:
             uow = UnitOfWork(session)
             workflows = uow.workflows.list_for_organization(context.organization_id)
             for workflow in workflows:
@@ -160,7 +160,7 @@ class DORRuntime:
 
     def get_workflow(self, context: OrganizationContext, workflow_id: str) -> Workflow:
         self._require_ready()
-        with self.database.session() as session:
+        with self.database.session(context.organization_id) as session:
             uow = UnitOfWork(session)
             workflow = uow.workflows.get_for_organization(workflow_id, context.organization_id)
             if workflow is None:
@@ -184,7 +184,7 @@ class DORRuntime:
         """Execute a command atomically, enforcing central authorization before mutation."""
         self._require_ready()
         if command_request.organization_id != context.organization_id:
-            with self.database.session() as session:
+            with self.database.session(context.organization_id) as session:
                 with UnitOfWork(session) as uow:
                     res_org_id = uow.workflows.get_organization_id(command_request.workflow_id)
             decision = AuthorizationDecision(allowed=False, reason="Command organization does not match runtime context", reason_code="command_organization_mismatch", actor_id=context.actor_id, principal_id=context.principal.id, organization_id=context.organization_id, capability_id="workflow.transition", resource_id=command_request.workflow_id, resource_organization_id=res_org_id or context.organization_id)
@@ -205,13 +205,13 @@ class DORRuntime:
 
     def _record_denied_authorization_audit(self, decision: AuthorizationDecision, command_request: AdvanceWorkflowCommand) -> None:
         audit_event = create_authorization_audit_event(decision, command_id=command_request.command_id, command_type=type(command_request).__name__, allowed=False)
-        with self.database.session() as audit_session:
+        with self.database.session(decision.organization_id) as audit_session:
             with UnitOfWork(audit_session) as audit_uow:
                 audit_uow.events.append(audit_event)
 
     def _execute_command_once(self, context: OrganizationContext, command_request: AdvanceWorkflowCommand) -> CommandResult:
         denied_decision: AuthorizationDecision | None = None
-        with self.database.session() as session:
+        with self.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 resource_organization_id = uow.workflows.get_organization_id(command_request.workflow_id)
                 decision = AuthorizationService(uow).authorize(principal=context.principal, actor_id=context.actor_id, organization_id=context.organization_id, capability_id="workflow.transition", resource_id=command_request.workflow_id, resource_organization_id=resource_organization_id)
@@ -257,7 +257,7 @@ class DORRuntime:
 
     def get_events(self, context: OrganizationContext, aggregate_id: str, *, include_authorization_audit: bool = False) -> list[Event]:
         self._require_ready()
-        with self.database.session() as session:
+        with self.database.session(context.organization_id) as session:
             events = UnitOfWork(session).events.for_aggregate(aggregate_id, context.organization_id)
         if include_authorization_audit:
             return events

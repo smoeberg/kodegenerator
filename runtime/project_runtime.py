@@ -140,7 +140,7 @@ class ProjectRuntime:
             allowed=False,
             aggregate_type="project",
         )
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(decision.organization_id) as session:
             with UnitOfWork(session) as uow:
                 uow.events.append(event)
         raise CommandAuthorizationError(decision)
@@ -224,7 +224,7 @@ class ProjectRuntime:
 
         denied: AuthorizationDecision | None = None
         result: ProjectCommandResult | None = None
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 decision = AuthorizationService(uow).authorize(
                     principal=context.principal,
@@ -360,7 +360,7 @@ class ProjectRuntime:
 
         denied: AuthorizationDecision | None = None
         result: ProjectCommandResult | None = None
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 resource_organization_id = uow.projects.get_organization_id(
                     command.project_id
@@ -477,7 +477,7 @@ class ProjectRuntime:
     ) -> None:
         from runtime.core import CommandAuthorizationError
 
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             uow = UnitOfWork(session)
             resource_organization_id = uow.projects.get_organization_id(project_id)
             decision = AuthorizationService(uow).authorize(
@@ -498,7 +498,7 @@ class ProjectRuntime:
     ) -> Project:
         self.runtime._require_ready()
         self._authorize_read(context, project_id)
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             project = UnitOfWork(session).projects.get_for_organization(
                 project_id,
                 context.organization_id,
@@ -519,7 +519,7 @@ class ProjectRuntime:
         if after_sequence < 0 or not 1 <= limit <= 100:
             raise ValueError("invalid project event cursor or limit")
         self.get_project(context, project_id)
-        with self.runtime.database.session() as session:
+        with self.runtime.database.session(context.organization_id) as session:
             events = UnitOfWork(session).events.for_aggregate(
                 project_id,
                 context.organization_id,
