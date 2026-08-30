@@ -24,14 +24,22 @@ def validate_production_security_configuration() -> None:
         return
     missing = [
         name
-        for name in ("DOR_JWT_SECRET_KEY", "DOR_ADMIN_PASSWORD", "DATABASE_URL")
+        for name in ("DOR_ADMIN_PASSWORD", "DATABASE_URL")
         if not os.environ.get(name, "").strip()
     ]
+    if not (
+        os.environ.get("DOR_JWT_SECRET_KEY", "").strip()
+        or os.environ.get("DOR_JWT_SIGNING_KEYS", "").strip()
+    ):
+        missing.append("DOR_JWT_SECRET_KEY or DOR_JWT_SIGNING_KEYS")
     if missing:
         raise RuntimeError(
             "Missing required production security configuration: "
             + ", ".join(missing)
         )
+    from services.jwt_keyring import JWTKeyRing
+
+    JWTKeyRing.from_environment(production=True)
 
 
 validate_production_security_configuration()

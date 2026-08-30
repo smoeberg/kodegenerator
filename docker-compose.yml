@@ -6,7 +6,10 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
-      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
       DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
       DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
@@ -37,7 +40,10 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
-      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
       DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
     volumes:
       - sqlite-data:/data
@@ -88,7 +94,10 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/kodegenerator.db
       REDIS_URL: redis://redis:6379/0
-      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?DOR_JWT_SECRET_KEY must be set}
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
     command: ["python", "-m", "services.tui"]
     volumes:
       - sqlite-data:/data
