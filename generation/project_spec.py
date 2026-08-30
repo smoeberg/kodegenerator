@@ -7,9 +7,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ArchitectureKind(StrEnum):
-    """Architectures supported by the first scaffold profile."""
+    """Architectures supported by the scaffold engine."""
 
     HEXAGONAL = "hexagonal"
+    CLEAN = "clean"
+    MODULAR = "modular"
+
+
+SUPPORTED_STACKS: dict[str, dict[str, list[str]]] = {
+    "python": {
+        "api": ["fastapi", "flask"],
+        "database": ["postgresql", "sqlite"],
+    },
+    "typescript": {
+        "api": ["express", "fastify", "nestjs"],
+        "database": ["postgresql", "sqlite", "mongodb"],
+    },
+    "go": {
+        "api": ["gin", "chi", "fiber"],
+        "database": ["postgresql", "sqlite"],
+    },
+}
 
 
 class ProjectDefinition(BaseModel):
@@ -18,7 +36,7 @@ class ProjectDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(min_length=1, max_length=80)
-    architecture: ArchitectureKind
+    architecture: ArchitectureKind = ArchitectureKind.HEXAGONAL
     language: str = "python"
     api: str = "fastapi"
     database: str = "postgresql"
@@ -38,20 +56,31 @@ class ProjectDefinition(BaseModel):
     @field_validator("language")
     @classmethod
     def supported_language(cls, value: str) -> str:
-        if value != "python":
-            raise ValueError("P3-15 currently supports only python")
+        if value not in SUPPORTED_STACKS:
+            supported = ", ".join(sorted(SUPPORTED_STACKS.keys()))
+            raise ValueError(f"Language '{value}' is not supported. Supported: {supported}")
         return value
 
     @field_validator("api")
     @classmethod
-    def supported_api(cls, value: str) -> str:
-        if value != "fastapi":
-            raise ValueError("P3-15 currently supports only fastapi")
+    def supported_api(cls, value: str, info) -> str:
+        lang = info.data.get("language", "python")
+        if lang in SUPPORTED_STACKS:
+            valid_apis = SUPPORTED_STACKS[lang]["api"]
+            if value not in valid_apis:
+                raise ValueError(
+                    f"API '{value}' is not supported for language '{lang}'. Supported: {', '.join(valid_apis)}"
+                )
         return value
 
     @field_validator("database")
     @classmethod
-    def supported_database(cls, value: str) -> str:
-        if value != "postgresql":
-            raise ValueError("P3-15 currently supports only postgresql")
+    def supported_database(cls, value: str, info) -> str:
+        lang = info.data.get("language", "python")
+        if lang in SUPPORTED_STACKS:
+            valid_dbs = SUPPORTED_STACKS[lang]["database"]
+            if value not in valid_dbs:
+                raise ValueError(
+                    f"Database '{value}' is not supported for language '{lang}'. Supported: {', '.join(valid_dbs)}"
+                )
         return value
