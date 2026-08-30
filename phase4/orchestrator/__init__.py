@@ -24,4 +24,10 @@ __all__ = [
     "decide",
 ]
 
-from .engine import OrchestratorEngine, RepairAdapter, StaticRepairAdapter
+from .engine import (
+    OrchestratorEngine,
+    RepairAdapter,
+    StaticRepairAdapter,
+    ExponentialBackoff,
+    ParallelRepairAdapter,
+)

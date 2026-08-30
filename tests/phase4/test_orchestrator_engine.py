@@ -1,7 +1,12 @@
 """Tests for the AI-7 orchestration repair-loop engine."""
 
 
-from phase4.orchestrator.engine import OrchestratorEngine, StaticRepairAdapter
+from phase4.orchestrator.engine import (
+    ExponentialBackoff,
+    OrchestratorEngine,
+    ParallelRepairAdapter,
+    StaticRepairAdapter,
+)
 from phase4.orchestrator.models import (
     IterationIdentity,
     LoopBounds,
@@ -123,3 +128,49 @@ def test_engine_never_mutates_outcome():
     final, _ = engine.run_loop(make_observation(outcome))
     assert final is not outcome  # observation is advanced, outcome untouched
     assert outcome.status is OutcomeStatus.FAILED
+
+
+def test_exponential_backoff_schedule():
+    from phase4.orchestrator.engine import ExponentialBackoff
+
+    backoff = ExponentialBackoff(base=1.0, cap=8.0)
+    assert backoff.delay(0) == 0.0
+    assert backoff.delay(1) == 1.0
+    assert backoff.delay(2) == 2.0
+    assert backoff.delay(3) == 4.0
+    assert backoff.delay(4) == 8.0
+    assert backoff.delay(5) == 8.0  # capped
+    assert backoff.delay(-1) == 0.0
+
+
+def test_engine_reports_backoff_delay():
+    engine = OrchestratorEngine(
+        adapter=StaticRepairAdapter(max_repairs=2),
+        bounds=LoopBounds(max_depth=5, max_retries=2),
+        backoff=ExponentialBackoff(base=0.25, cap=1.0),
+    )
+    assert engine.retry_delay(1) == 0.25
+    assert engine.retry_delay(2) == 0.5
+    assert engine.retry_delay(3) == 1.0
+
+
+def test_parallel_repair_adapter_returns_first_proposal():
+    from phase4.orchestrator.engine import ParallelRepairAdapter
+
+    slow = StaticRepairAdapter(max_repairs=1)
+    fast = StaticRepairAdapter(max_repairs=1)
+    adapter = ParallelRepairAdapter({"slow": slow, "fast": fast}, max_workers=2)
+    request = _make_request(make_outcome())
+    proposal = adapter.propose(request)
+    assert proposal is not None
+    assert proposal.action == "implement"
+
+
+def test_parallel_repair_adapter_exhausts_all_strategies():
+    from phase4.orchestrator.engine import ParallelRepairAdapter
+
+    adapter = ParallelRepairAdapter(
+        {"a": StaticRepairAdapter(max_repairs=0), "b": StaticRepairAdapter(max_repairs=0)},
+        max_workers=2,
+    )
+    assert adapter.propose(_make_request(make_outcome())) is None

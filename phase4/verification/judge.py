@@ -38,7 +38,14 @@ class VerdictProvider(Protocol):
 
 @dataclass(frozen=True)
 class JudgeVerdict:
-    """Immutable, bounded judge output for one evidence bundle."""
+    """Immutable, bounded judge output for one evidence bundle.
+
+    ``ac_coverage`` is the fraction of acceptance criteria the bundle
+    addresses (1.0 = full coverage).  A verdict of ``True`` with
+    ``ac_coverage < 1.0`` therefore means "all supplied evidence passed,
+    but the bundle is incomplete" — callers that require 100% AC coverage
+    must check ``ac_coverage == 1.0`` explicitly.
+    """
 
     candidate_id: str
     verdict: bool
@@ -47,12 +54,15 @@ class JudgeVerdict:
     judged_at: str
     provider: str
     fingerprint: str
+    ac_coverage: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip():
             raise ValueError("candidate_id must be non-empty")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be within [0.0, 1.0]")
+        if not 0.0 <= self.ac_coverage <= 1.0:
+            raise ValueError("ac_coverage must be within [0.0, 1.0]")
         if not self.fingerprint.strip():
             raise ValueError("fingerprint must be non-empty")
 
@@ -80,16 +90,45 @@ class DeterministicBaselineJudge:
             if isinstance(e, dict) and e.get("supports") is True
         ]
         verdict = bool(passed) and len(passed) == len(evidence)
+
+        # AC coverage: the bundle may declare the full acceptance-criteria
+        # list (from the spec); otherwise criteria are inferred from the
+        # evidence items themselves.  Coverage is the share of the full
+        # criteria list that has at least one passing evidence item.
+        declared_acs = [
+            str(ac)
+            for ac in (bundle.get("acceptance_criteria") or [])
+            if str(ac).strip()
+        ]
+        if declared_acs:
+            total_acs: set[str] = set(declared_acs)
+        else:
+            total_acs = set()
+        passed_acs: set[str] = set()
+        for item in evidence if isinstance(evidence, list) else []:
+            if not isinstance(item, dict):
+                continue
+            ac = str(item.get("acceptance_criterion") or item.get("ac_id") or "")
+            if ac:
+                if not total_acs:
+                    total_acs.add(ac)
+                if item.get("supports") is True:
+                    passed_acs.add(ac)
+        ac_coverage = (
+            len(passed_acs) / len(total_acs) if total_acs else (1.0 if verdict else 0.0)
+        )
+        coverage_note = f" (AC coverage {len(passed_acs)}/{len(total_acs)})" if total_acs else ""
         return {
             "candidate_id": candidate_id,
             "verdict": verdict,
             "confidence": 1.0 if verdict else 0.0,
             "reasoning": (
-                "baseline: all evidence passed"
+                f"baseline: all evidence passed{coverage_note}"
                 if verdict
-                else "baseline: one or more evidence items failed"
+                else f"baseline: one or more evidence items failed{coverage_note}"
             ),
             "provider": "baseline",
+            "ac_coverage": ac_coverage,
         }
 
 
@@ -194,6 +233,14 @@ class LLMJudge:
         evidence: Sequence[Evidence] | None = None,
         judged_at: str | None = None,
     ) -> JudgeVerdict:
+        evidence_items = list(evidence if evidence is not None else record.evidence)
+        acs = sorted(
+            {
+                ac
+                for e in evidence_items
+                if (ac := getattr(e, "acceptance_criterion", "") or "")
+            }
+        )
         bundle = {
             "candidate_id": record.record_id,
             "subject": record.subject,
@@ -204,16 +251,19 @@ class LLMJudge:
                     "source": e.source,
                     "content_digest": e.content_digest,
                     "supports": e.supports,
+                    "acceptance_criterion": getattr(e, "acceptance_criterion", "") or "",
                 }
-                for e in (evidence if evidence is not None else record.evidence)
+                for e in evidence_items
             ],
+            "acceptance_criteria": acs,
         }
         prompt = json.dumps(
             {
                 "role": (
                     "You are the DOR verification judge.  You evaluate ONE bounded "
                     "evidence bundle and return a strict JSON verdict.  You have no "
-                    "authority and perform no repository I/O."
+                    "authority and perform no repository I/O.  Judgement must require "
+                    "evidence for EVERY acceptance criterion (100% AC coverage)."
                 ),
                 "bundle": bundle,
             },
@@ -236,12 +286,30 @@ class LLMJudge:
         reasoning = str(candidate.get("reasoning") or "")
         provider = str(candidate.get("provider") or type(self._provider).__name__)
 
+        # AC coverage: fraction of criteria that has at least one passing item.
+        accepted_criteria: set[str] = set()
+        for e in evidence_items:
+            ac = getattr(e, "acceptance_criterion", "") or ""
+            if ac:
+                accepted_criteria.add(ac)
+        if accepted_criteria:
+            covered = sum(
+                1
+                for ac in accepted_criteria
+                if any(getattr(e, "acceptance_criterion", "") == ac and e.supports for e in evidence_items)
+            )
+            ac_coverage = covered / len(accepted_criteria)
+        else:
+            # No explicit criteria on the bundle: coverage is full iff verdict.
+            ac_coverage = 1.0 if verdict else 0.0
+
         canonical = json.dumps(
             {
                 "candidate_id": candidate_id,
                 "verdict": verdict,
                 "confidence": confidence,
                 "reasoning": reasoning,
+                "ac_coverage": ac_coverage,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -256,6 +324,7 @@ class LLMJudge:
             judged_at=judged_at or datetime.now(timezone.utc).isoformat(),
             provider=provider,
             fingerprint=fingerprint,
+            ac_coverage=ac_coverage,
         )
 
 

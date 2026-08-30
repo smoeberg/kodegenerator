@@ -2,6 +2,11 @@
 
 from .case import VerificationCase, VerificationCaseStatus
 from .engine import VerificationEngine, VerificationResult, result_to_state
+from .evidence_enforcer import (
+    EvidenceEnforcementResult,
+    EvidenceEnforcementStatus,
+    EvidenceEnforcer,
+)
 from .flow import BrainVerificationFlow, BrainVerificationOutcome
 from .judge import (
     DeterministicBaselineJudge,
@@ -17,6 +22,9 @@ __all__ = [
     "BrainVerificationFlow",
     "BrainVerificationOutcome",
     "DeterministicBaselineJudge",
+    "EvidenceEnforcementResult",
+    "EvidenceEnforcementStatus",
+    "EvidenceEnforcer",
     "JudgeInputError",
     "JudgeVerdict",
     "LLMJudge",
@@ -26,7 +34,7 @@ __all__ = [
     "VerificationCaseStatus",
     "VerificationEngine",
     "VerificationResult",
-    "result_to_state",
     "VerifierSelection",
     "VerifierSelector",
+    "result_to_state",
 ]

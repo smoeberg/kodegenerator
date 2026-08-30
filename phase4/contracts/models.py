@@ -50,12 +50,19 @@ class Assignment:
 
 @dataclass(frozen=True)
 class Evidence:
-    """Immutable evidence supporting or contradicting a claim."""
+    """Immutable evidence supporting or contradicting a claim.
+
+    ``acceptance_criterion`` optionally links the evidence item to one
+    acceptance criterion of the spec (an AC id or short label), which lets
+    judges report per-criterion coverage instead of a single all-or-nothing
+    verdict.
+    """
 
     evidence_id: str
     source: str
     content_digest: str
     supports: bool = True
+    acceptance_criterion: str = ""
 
     def __post_init__(self) -> None:
         if not self.evidence_id.strip():

@@ -94,6 +94,32 @@ def test_generated_plan_is_immutable_and_hashed():
     assert plan.request_fingerprint
 
 
+def test_collect_clarifications_for_ambiguous_spec():
+    questions = PlannerService().collect_clarifications({"title": "App"})
+    assert any("language" in q.lower() for q in questions)
+    assert any("acceptance" in q.lower() for q in questions)
+    assert all("title" not in q.lower() for q in questions)  # title given
+
+
+def test_collect_clarifications_requires_title():
+    questions = PlannerService().collect_clarifications({"language": "python"})
+    assert any("title" in q.lower() for q in questions)
+
+
+def test_plan_from_spec_merges_interactive_answers():
+    service = PlannerService()
+    plan = service.plan_from_spec(
+        {"title": "App"},
+        answers={"language": "python", "test_command": "pytest"},
+    )
+    assert plan.action == "implement"
+    assert plan.steps
+    assert any(
+        "language" in step.lower() or "python" in step.lower()
+        for step in plan.steps
+    )
+
+
 def test_openai_provider_requires_key():
     with pytest.raises(ValueError):
         OpenAIPlannerProvider(api_key="")

@@ -87,8 +87,14 @@ class DeterministicBaselinePlanner:
 
         # Cap the number of steps and derive a minimal bounded plan.
         bounded_steps = [str(s) for s in steps[:16] if str(s).strip()]
+        language = str(spec.get("language") or "").strip()
+        test_command = str(spec.get("test_command") or "").strip()
         if not bounded_steps:
             bounded_steps = [f"Implement `{resource}` from specification `{title}`"]
+            if language:
+                bounded_steps.append(f"Use {language} as the implementation language")
+            if test_command:
+                bounded_steps.append(f"Verify acceptance with: {test_command}")
 
         deterministic_signature = hashlib.sha256(
             json.dumps(
@@ -221,14 +227,23 @@ class PlannerService:
         *,
         fingerprint: str | None = None,
         created_at: str | None = None,
+        answers: dict[str, Any] | None = None,
     ) -> GeneratedPlan:
         if not isinstance(spec, dict) or not spec:
             raise ValueError("spec must be a non-empty object")
 
+        enriched = dict(spec)
+        if answers:
+            if not isinstance(answers, dict):
+                raise ValueError("answers must be a mapping")
+            for key, value in answers.items():
+                if value is not None and str(value).strip():
+                    enriched[key] = value
+
         prompt = json.dumps(
             {
                 "role": "You are the DOR AI-6 planner. You propose structured, bounded implementation plans. You never authorize execution.",
-                "spec": spec,
+                "spec": enriched,
                 "fingerprint": fingerprint,
             },
             sort_keys=True,
@@ -276,6 +291,42 @@ class PlannerService:
             confidence=confidence,
             created_at=created_at or datetime.now(timezone.utc).isoformat(),
         )
+
+    def collect_clarifications(self, spec: dict[str, Any]) -> list[str]:
+        """Return clarifying questions for ambiguous or empty spec fields.
+
+        Interactive mode calls this before planning: the caller presents the
+        questions to the user, collects answers, and passes them as
+        ``answers`` to :meth:`plan_from_spec`.  The planner itself stays
+        non-executing — it only converts answers into a bounded plan.
+        """
+        if not isinstance(spec, dict) or not spec:
+            raise ValueError("spec must be a non-empty object")
+
+        questions: list[str] = []
+        # A title is the minimum viable anchor for a plan.
+        title = str(spec.get("title") or "").strip()
+        if not title:
+            questions.append("What should the generated system be called? (title)")
+
+        # Language/framework decisions materially change the plan.
+        language = str(spec.get("language") or "").strip()
+        if not language:
+            questions.append("Which language or framework should be used?")
+
+        # Scope of the acceptance criteria: is there an explicit test path?
+        tests = spec.get("tests") or spec.get("test_command")
+        if tests is None or (isinstance(tests, str) and not tests.strip()):
+            questions.append(
+                "How should acceptance be verified (test command or test path)?"
+            )
+
+        # Ambiguity in target environment is cheap to surface now.
+        environment = spec.get("environment") or spec.get("target")
+        if environment is None or (isinstance(environment, str) and not environment.strip()):
+            questions.append("What is the target environment or runtime?")
+
+        return questions
 
     def plan_from_request(
         self,

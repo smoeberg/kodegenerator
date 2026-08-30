@@ -1,4 +1,4 @@
-"""AI-7 orchestration engine with a bounded repair loop.
+"""AI-7 orchestration engine with a bounded, backoff-aware repair loop.
 
 This engine drives an :class:`OrchestrationObservation` through the
 deterministic AI-7 safety gates (:func:`phase4.orchestrator.models.decide`)
@@ -10,10 +10,16 @@ orchestration contract requires.
 
 The engine never executes work, never authorizes, never mutates an AI-5
 outcome, and never constructs an action proposal itself.
+
+Exponential backoff between retries is available through
+:class:`ExponentialBackoff`; independent repair attempts can be dispatched
+in parallel via :class:`ParallelRepairAdapter` without ever granting those
+threads execution authority (they only produce immutable proposals).
 """
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Protocol
 
@@ -74,6 +80,71 @@ class StaticRepairAdapter:
         )
 
 
+class ExponentialBackoff:
+    """Deterministic exponential backoff schedule (1s, 2s, 4s, ...).
+
+    ``delay(retry_count)`` returns ``base * 2**(retry_count-1)`` capped at
+    ``cap`` seconds, so the first retry waits ``base``, the second ``2*base``
+    and so on.  Retry counts below ``1`` yield ``0.0`` (no wait).
+    """
+
+    def __init__(self, base: float = 1.0, cap: float = 8.0) -> None:
+        if base <= 0:
+            raise ValueError("backoff base must be positive")
+        if cap < base:
+            raise ValueError("backoff cap must be >= base")
+        self._base = base
+        self._cap = cap
+
+    @property
+    def base(self) -> float:
+        return self._base
+
+    @property
+    def cap(self) -> float:
+        return self._cap
+
+    def delay(self, retry_count: int) -> float:
+        if retry_count < 1:
+            return 0.0
+        return min(self._cap, self._base * (2 ** (retry_count - 1)))
+
+
+class ParallelRepairAdapter:
+    """Dispatch independent repair proposals concurrently.
+
+    ``propose`` fans the request out to ``strategies`` (a mapping of strategy
+    name to callable) in a bounded thread pool and returns the first
+    proposal that is not ``None``.  Threads only *propose* — they never
+    execute, authorize, or mutate anything — so this stays inside the AI-7
+    authority boundary.
+    """
+
+    def __init__(
+        self,
+        strategies: dict[str, RepairAdapter],
+        max_workers: int = 2,
+    ) -> None:
+        if not strategies:
+            raise ValueError("strategies must not be empty")
+        if max_workers < 1:
+            raise ValueError("max_workers must be positive")
+        self._strategies = dict(strategies)
+        self._max_workers = max_workers
+
+    def propose(self, request: PlanRequest) -> AgentActionProposal | None:
+        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+            futures = {
+                pool.submit(strategy.propose, request): name
+                for name, strategy in self._strategies.items()
+            }
+            for future in as_completed(futures):
+                proposal = future.result()
+                if proposal is not None:
+                    return proposal
+        return None
+
+
 class OrchestratorEngine:
     """AI-7 coordinator with a strict, stateless, bounded repair loop.
 
@@ -85,13 +156,23 @@ class OrchestratorEngine:
         self,
         adapter: RepairAdapter | None = None,
         bounds: LoopBounds | None = None,
+        backoff: ExponentialBackoff | None = None,
     ) -> None:
         self._adapter = adapter or StaticRepairAdapter()
         self._bounds = bounds or LoopBounds(max_depth=3, max_retries=2)
+        self._backoff = backoff or ExponentialBackoff()
 
     @property
     def bounds(self) -> LoopBounds:
         return self._bounds
+
+    @property
+    def backoff(self) -> ExponentialBackoff:
+        return self._backoff
+
+    def retry_delay(self, retry_count: int) -> float:
+        """Exponential delay in seconds for the next retry (0 for the first)."""
+        return self._backoff.delay(retry_count)
 
     def advance(self, observation: OrchestrationObservation) -> OrchestrationDecision:
         """Evaluate one observation through the AI-7 safety gates."""
@@ -142,7 +223,9 @@ class OrchestratorEngine:
 
 
 __all__ = [
+    "ExponentialBackoff",
     "OrchestratorEngine",
+    "ParallelRepairAdapter",
     "RepairAdapter",
     "StaticRepairAdapter",
 ]
