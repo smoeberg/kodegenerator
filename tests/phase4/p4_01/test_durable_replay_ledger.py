@@ -23,12 +23,14 @@ from phase4.execution.models import ExecutionResult
 from phase4.execution.replay_ledger import ClaimOutcomeKind, LedgerStatus
 
 
-def _make_ledger(url: str = "sqlite:///:memory:") -> tuple[SqlAlchemyReplayLedger, any]:
+def _make_ledger(
+    url: str = "sqlite:///:memory:", *, organization_id: str = "org-test"
+) -> tuple[SqlAlchemyReplayLedger, any]:
     engine = create_engine(url, future=True)
     assert ExecutionReplayLedgerModel.__tablename__ == "execution_replay_ledger"
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    return SqlAlchemyReplayLedger(sessions), engine
+    return SqlAlchemyReplayLedger(sessions, organization_id=organization_id), engine
 
 
 def _result(execution_id: str, status: ExecutionStatus) -> ExecutionResult:
@@ -99,7 +101,9 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
     db_path = tmp_path / "replay.sqlite"
     url = f"sqlite:///{db_path}"
 
-    ledger1, engine1 = _make_ledger(url)
+    ledger1, engine1 = _make_ledger(
+        url, organization_id="org:durable-replay-test"
+    )
     calls = {"n": 0}
 
     def handler(_):
@@ -147,7 +151,9 @@ def test_survives_process_restart_via_file_db(tmp_path: Path):
     assert calls["n"] == 1
     engine1.dispose()
 
-    ledger2, engine2 = _make_ledger(url)
+    ledger2, engine2 = _make_ledger(
+        url, organization_id="org:durable-replay-test"
+    )
     engine_b = ExecutionEngine(
         (StaticExecutionAdapter("b", "demo.read", handler),),
         ledger=ledger2,
@@ -166,3 +172,23 @@ def test_complete_without_pending_raises():
             _result("missing", ExecutionStatus.SUCCEEDED),
             fencing_token="missing-token",
         )
+
+
+def test_same_execution_id_is_isolated_between_organizations():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine, tables=[ExecutionReplayLedgerModel.__table__])
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    ledger_a = SqlAlchemyReplayLedger(sessions, organization_id="org-a")
+    ledger_b = SqlAlchemyReplayLedger(sessions, organization_id="org-b")
+
+    token_a = _claim(ledger_a, "same-id")
+    token_b = _claim(ledger_b, "same-id")
+    ledger_a.complete_succeeded(
+        "same-id",
+        _result("same-id", ExecutionStatus.SUCCEEDED),
+        fencing_token=token_a,
+    )
+
+    assert ledger_a.get("same-id").status is LedgerStatus.SUCCEEDED
+    assert ledger_b.get("same-id").status is LedgerStatus.PENDING
+    ledger_b.abandon("same-id", fencing_token=token_b)

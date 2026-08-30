@@ -150,7 +150,9 @@ def test_execution_state_survives_process_restart(tmp_path: Path) -> None:
     )
     first_engine = ExecutionEngine(
         (StaticExecutionAdapter("adapter.commit.first", request.action, side_effect),),
-        ledger=SqlAlchemyReplayLedger(sessions_a),
+        ledger=SqlAlchemyReplayLedger(
+            sessions_a, organization_id="org-security"
+        ),
     )
     first = first_engine.execute(request, _grant_for(request))
     assert first.status is ExecutionStatus.SUCCEEDED
@@ -160,7 +162,9 @@ def test_execution_state_survives_process_restart(tmp_path: Path) -> None:
     sessions_b = sessionmaker(bind=database_b, expire_on_commit=False)
     restarted_engine = ExecutionEngine(
         (StaticExecutionAdapter("adapter.commit.restarted", request.action, side_effect),),
-        ledger=SqlAlchemyReplayLedger(sessions_b),
+        ledger=SqlAlchemyReplayLedger(
+            sessions_b, organization_id="org-security"
+        ),
     )
     replay = restarted_engine.execute(request, _grant_for(request))
     database_b.dispose()

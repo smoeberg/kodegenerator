@@ -45,6 +45,15 @@ class ExecutionEngine:
 
     def execute(self, request: ExecutionRequest, authority: AuthorityDecision | VerifiedAuthorityGrant | None) -> ExecutionResult:
         if not isinstance(request, ExecutionRequest): return self._rejected(request, "unsupported execution request")
+        ledger_organization = getattr(self._ledger, "organization_id", None)
+        if (
+            ledger_organization is not None
+            and ledger_organization != request.organization_id
+        ):
+            return self._rejected(
+                request,
+                "execution replay ledger belongs to another organization",
+            )
         # AI-4 accepts only a verified AI-3 grant. A raw AuthorityDecision is
         # deliberately rejected even when it appears internally valid: callers
         # must cross the explicit provenance-bearing grant boundary.

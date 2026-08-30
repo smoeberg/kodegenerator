@@ -3,6 +3,7 @@ from infrastructure.runtime.execution import ExecutionDispatcher, ExecutionWorke
 
 class FakeQueue:
     def __init__(self):
+        self.organization_id = "org-test"
         self.items = []
         self.acked = []
         self.failed = []

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from domain.task_execution import TaskExecutionReceipt, TaskExecutionRequest
+from infrastructure.persistence.database import apply_tenant_context
 from infrastructure.persistence.task_execution_repository import TaskExecutionRepository
 from infrastructure.runtime.queue import DatabaseQueue, QueueMessage
 
@@ -17,11 +18,15 @@ class TransactionalExecutionDispatcher:
         self.queue = queue
 
     def dispatch(self, session, request: TaskExecutionRequest) -> QueueMessage:
+        if request.organization_id != self.queue.organization_id:
+            raise ValueError("queue organization does not match execution request")
+        apply_tenant_context(session, request.organization_id)
         repository = TaskExecutionRepository(session)
         existing = repository.get(request.execution_id, request.organization_id)
         if existing is not None:
             return QueueMessage(
                 id=f"execution:{request.execution_id}",
+                organization_id=request.organization_id,
                 topic="execution",
                 payload=self._payload(request),
                 attempts=0,
@@ -44,7 +49,13 @@ class TransactionalExecutionDispatcher:
             payload=self._payload(request),
             message_id=f"execution:{request.execution_id}",
         )
-        return QueueMessage(message_id, "execution", self._payload(request), 0)
+        return QueueMessage(
+            message_id,
+            request.organization_id,
+            "execution",
+            self._payload(request),
+            0,
+        )
 
     @staticmethod
     def _payload(request: TaskExecutionRequest) -> dict:
