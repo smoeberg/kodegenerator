@@ -16,10 +16,10 @@ from infrastructure.persistence.models import Base
 class QueueMessageModel(Base):
     __tablename__ = "runtime_queue_messages"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
     organization_id: Mapped[str] = mapped_column(
         String(128), primary_key=True, nullable=False, index=True
     )
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
     topic: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="pending")
