@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from api.api_surface import validate_canonical_modules
 from infrastructure.persistence.database import Database
 from monitoring.tracer import configure_tracing
 
@@ -114,6 +115,18 @@ if HAS_AUTH:
         decisions.router,
         pipeline.router,
         pipeline_gates.router,
+    )
+    validate_canonical_modules(
+        (
+            control_plane.__name__,
+            swarm.__name__,
+            swarm_operations.__name__,
+            workflows.__name__,
+            implementation_agent.__name__,
+            decisions.__name__,
+            pipeline.__name__,
+            pipeline_gates.__name__,
+        )
     )
 
     app.include_router(auth.router)
