@@ -42,6 +42,8 @@ cannot read or mutate the RLS-protected tables.
 - `council_evidence_bindings`
 - `council_failure_observations`
 - `council_outbox_events`
+- `runtime_queue_messages`
+- `execution_replay_ledger`
 
 ## Deployment
 
@@ -51,12 +53,17 @@ cannot read or mutate the RLS-protected tables.
 4. Verify Tenant A cannot select, update, or insert Tenant B rows using the
    application database role.
 5. Verify connection-pool reuse does not preserve the previous tenant.
-6. Roll back extended Pipeline/Council enforcement with
+6. Before migration `017_queue_replay_tenant_scope`, drain or explicitly
+   archive both queue and replay tables. The migration refuses non-empty
+   tables because their legacy rows have no trustworthy tenant owner.
+7. Roll back queue/replay enforcement only after draining those tables with
+   `alembic downgrade 016_extended_tenant_rls`. Roll back extended
+   Pipeline/Council enforcement with
    `alembic downgrade 015_core_tenant_rls`. Roll back all RLS enforcement with
    `alembic downgrade 014_identity_principals`. Either rollback requires a
    controlled maintenance window because it removes database isolation.
 
 Identity principals are intentionally global authentication records. Runtime
-queue and execution-replay tables do not yet contain `organization_id`; they
-remain outside the RLS boundary and must not be described as tenant-isolated
-until a datamodel migration supplies an enforceable tenant key.
+queue messages and execution replay records use `(organization_id, logical_id)`
+composite primary keys, so different organizations may safely use the same
+logical message or execution identifier.

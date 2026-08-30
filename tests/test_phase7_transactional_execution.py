@@ -16,7 +16,9 @@ def _session():
 
 def test_receipt_and_queue_message_commit_together():
     session = _session()
-    dispatcher = TransactionalExecutionDispatcher(DatabaseQueue(lambda: session))
+    dispatcher = TransactionalExecutionDispatcher(
+        DatabaseQueue(lambda: session, organization_id="org-1")
+    )
     request = TaskExecutionRequest(
         execution_id="exec-atomic",
         organization_id="org-1",
@@ -35,7 +37,9 @@ def test_receipt_and_queue_message_commit_together():
 
 def test_rollback_removes_receipt_and_queue_message():
     session = _session()
-    dispatcher = TransactionalExecutionDispatcher(DatabaseQueue(lambda: session))
+    dispatcher = TransactionalExecutionDispatcher(
+        DatabaseQueue(lambda: session, organization_id="org-1")
+    )
     request = TaskExecutionRequest(
         execution_id="exec-rollback",
         organization_id="org-1",

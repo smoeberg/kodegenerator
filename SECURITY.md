@@ -110,9 +110,8 @@ The RLS boundary covers actors, role definitions and assignments, workflows,
 projects, domain events, command and task-execution receipts, Pipeline state,
 governed LLM calls, terminal side effects, and all durable Council tables.
 Identity principals are global authentication records. Queue and execution
-replay tables currently lack `organization_id`; they are not represented as
-RLS-protected and require a datamodel migration before they can join this
-boundary.
+replay tables are protected by mandatory `organization_id` scope, composite
+tenant keys, and RLS.
 
 ## Local secrets
 

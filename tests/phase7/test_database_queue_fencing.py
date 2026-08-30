@@ -10,11 +10,21 @@ from infrastructure.persistence.models import Base
 from infrastructure.runtime.queue import DatabaseQueue, QueueMessageModel
 
 
-def _queue(*, max_attempts: int = 3) -> tuple[DatabaseQueue, sessionmaker[Session]]:
+def _queue(
+    *, organization_id: str = "org-1", max_attempts: int = 3
+) -> tuple[DatabaseQueue, sessionmaker[Session]]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine, tables=[QueueMessageModel.__table__])
     factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
-    return DatabaseQueue(factory, lease_seconds=60, max_attempts=max_attempts), factory
+    return (
+        DatabaseQueue(
+            factory,
+            organization_id=organization_id,
+            lease_seconds=60,
+            max_attempts=max_attempts,
+        ),
+        factory,
+    )
 
 
 def _expire(factory: sessionmaker[Session], message_id: str) -> None:
@@ -43,7 +53,7 @@ def test_stale_lease_cannot_ack_reclaimed_message() -> None:
 
     queue.ack(second.id, "worker-a", second.lease_id)
     with factory() as session:
-        row = session.get(QueueMessageModel, message_id)
+        row = session.get(QueueMessageModel, ("org-1", message_id))
         assert row is not None
         assert row.status == "completed"
 
@@ -63,7 +73,7 @@ def test_failure_moves_message_to_dead_letter_at_max_attempts() -> None:
     assert queue.claim("execution", "worker-c") is None
     assert queue.dead_letter_count("execution") == 1
     with factory() as session:
-        row = session.get(QueueMessageModel, message_id)
+        row = session.get(QueueMessageModel, ("org-1", message_id))
         assert row is not None
         assert row.status == "dead_letter"
         assert row.last_error == "second"
@@ -79,3 +89,21 @@ def test_expired_final_attempt_is_dead_lettered_instead_of_reclaimed() -> None:
 
     assert queue.claim("execution", "worker-b") is None
     assert queue.dead_letter_count() == 1
+
+
+def test_same_message_id_is_isolated_between_organizations() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[QueueMessageModel.__table__])
+    factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    queue_a = DatabaseQueue(factory, organization_id="org-a")
+    queue_b = DatabaseQueue(factory, organization_id="org-b")
+
+    queue_a.publish("execution", {"tenant": "a"}, message_id="same-id")
+    queue_b.publish("execution", {"tenant": "b"}, message_id="same-id")
+
+    claimed_a = queue_a.claim("execution", "worker-a")
+    claimed_b = queue_b.claim("execution", "worker-b")
+    assert claimed_a is not None and claimed_a.organization_id == "org-a"
+    assert claimed_b is not None and claimed_b.organization_id == "org-b"
+    assert claimed_a.payload == {"tenant": "a"}
+    assert claimed_b.payload == {"tenant": "b"}

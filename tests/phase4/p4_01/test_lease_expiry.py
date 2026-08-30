@@ -48,7 +48,11 @@ def test_durable_expired_pending_reclaim():
     assert ExecutionReplayLedgerModel.__tablename__ == "execution_replay_ledger"
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    ledger = SqlAlchemyReplayLedger(sessions, claim_lease_seconds=30)
+    ledger = SqlAlchemyReplayLedger(
+        sessions,
+        organization_id="org-test",
+        claim_lease_seconds=30,
+    )
 
     t0 = datetime(2026, 8, 18, 15, 0, 0, tzinfo=timezone.utc)
     assert ledger.try_claim("crash-1", now=t0).kind is ClaimOutcomeKind.ACQUIRED

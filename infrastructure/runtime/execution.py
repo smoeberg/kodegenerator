@@ -31,7 +31,13 @@ class ExecutionDispatcher:
             payload={"execution_id": execution_id, "payload": payload},
             message_id=f"execution:{execution_id}",
         )
-        return QueueMessage(message_id, "execution", {"execution_id": execution_id, "payload": payload}, 0)
+        return QueueMessage(
+            message_id,
+            self.queue.organization_id,
+            "execution",
+            {"execution_id": execution_id, "payload": payload},
+            0,
+        )
 
 
 class ExecutionWorker:
