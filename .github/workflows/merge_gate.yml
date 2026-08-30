@@ -44,6 +44,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.lock
 
+      - name: Verify repository-first agent state
+        run: >-
+          python scripts/repository_state.py
+          --base origin/main
+          --validate
+          --require-clean
+
       - name: Run Merge Gate & Diff Integrity Linter
         run: python scripts/ci_merge_gate.py --base origin/main --head HEAD
 

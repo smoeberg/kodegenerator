@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "canonical_branch": "main",
+  "canonical_alembic_head": "017_queue_replay_tenant_scope",
+  "canonical_runtime_paths": [
+    "runtime/core.py",
+    "runtime/pipeline_orchestrator.py",
+    "execution/pipeline_executors.py",
+    "api/main.py"
+  ],
+  "required_workflows": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/merge_gate.yml",
+    ".github/workflows/codeql.yml"
+  ],
+  "agent_protocol": "AGENTS.md",
+  "merged_remediation_prs": {
+    "phase_1": 143,
+    "phase_2": 144,
+    "phase_3": 145,
+    "phase_4": 146,
+    "phase_5": 147,
+    "phase_6": 156
+  },
+  "open_work": [
+    "canonical_system_specification",
+    "requirement_steward_multi_agent_function_deliberation",
+    "requirement_to_artifact_coverage",
+    "delivery_certificate",
+    "multi_spec_verified_artifact_acceptance"
+  ]
+}
