@@ -1,5 +1,6 @@
 """Security regression tests for health and production startup behavior."""
 
+import json
 from contextlib import contextmanager
 
 import pytest
@@ -44,3 +45,19 @@ def test_production_requires_persistent_identity_database(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         api_main.validate_production_security_configuration()
+
+
+def test_production_accepts_rotatable_keyring_without_legacy_secret(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(api_main, "IS_PRODUCTION", True)
+    monkeypatch.delenv("DOR_JWT_SECRET_KEY", raising=False)
+    monkeypatch.setenv(
+        "DOR_JWT_SIGNING_KEYS", json.dumps({"2026-09": "n" * 40})
+    )
+    monkeypatch.setenv("DOR_JWT_ACTIVE_KEY_ID", "2026-09")
+    monkeypatch.delenv("DOR_JWT_REVOKED_KEY_IDS", raising=False)
+    monkeypatch.setenv("DOR_ADMIN_PASSWORD", "configured")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///configured.db")
+
+    api_main.validate_production_security_configuration()

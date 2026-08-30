@@ -44,7 +44,11 @@ def test_root_entrypoint_reexports_canonical_api(
 def test_compose_binds_fail_closed_runtime_configuration() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:?" in compose
+    assert "DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}" in compose
+    assert "DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}" in compose
+    assert "DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}" in compose
+    # Either the legacy secret or the keyring is required by API startup; the
+    # compose layer must forward both options without choosing an unsafe one.
     assert not re.search(r"^\s*-?\s*JWT_SECRET_KEY[=:]", compose, re.MULTILINE)
     assert "OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317" in compose
 

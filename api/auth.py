@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from infrastructure.runtime.db import build_session_factory
 from services.identity_store import IdentityStore
+from services.jwt_keyring import JWTKeyRejectedError, JWTKeyRing
 
 IS_PRODUCTION = os.getenv("DOR_ENV", "development").lower() == "production"
 SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or ("" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx")
@@ -177,7 +178,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode["exp"] = expire
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    keyring = JWTKeyRing.from_environment(production=IS_PRODUCTION)
+    return jwt.encode(
+        to_encode,
+        keyring.signing_key,
+        algorithm=ALGORITHM,
+        headers={"kid": keyring.active_key_id},
+    )
 
 
 def authenticate_access_token(token: str) -> User:
@@ -195,11 +202,16 @@ def authenticate_access_token(token: str) -> User:
     if not token:
         raise credentials_exception
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        keyring = JWTKeyRing.from_environment(production=IS_PRODUCTION)
+        header = jwt.get_unverified_header(token)
+        if header.get("alg") != ALGORITHM:
+            raise JWTKeyRejectedError("JWT algorithm does not match configuration")
+        verification_key = keyring.verification_key(header.get("kid"))
+        payload = jwt.decode(token, verification_key, algorithms=[ALGORITHM])
         username = payload.get("sub")
         if not isinstance(username, str) or not username.strip():
             raise credentials_exception
-    except JWTError as exc:
+    except (JWTError, JWTKeyRejectedError) as exc:
         raise credentials_exception from exc
     user = get_configured_user(username=username)
     if user is None or user.disabled:

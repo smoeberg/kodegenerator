@@ -79,6 +79,23 @@ legacy test fixtures. Production startup requires `DATABASE_URL` and never
 uses that map as its identity authority. Apply Alembic migrations before
 starting the canonical API.
 
+### JWT signing-key rotation
+
+Production may migrate from the single `DOR_JWT_SECRET_KEY` to a named HMAC
+keyring. Configure `DOR_JWT_SIGNING_KEYS` as a JSON object and select the only
+issuer key with `DOR_JWT_ACTIVE_KEY_ID`. Issued tokens contain that key ID in
+the protected `kid` header. Verification selects only the named key: missing,
+unknown, algorithm-mismatched, or revoked key IDs fail closed without trying
+another secret.
+
+Rotate without an authentication outage by adding a new key, switching the
+active ID, retaining the previous verification key for at least the maximum
+token lifetime, and then adding the previous ID to
+`DOR_JWT_REVOKED_KEY_IDS`. The active key may never be revoked. All production
+HMAC values must contain at least 32 characters. Deploy keyring changes
+atomically to every API replica through the configured secret manager; never
+store the JSON keyring in source control.
+
 ## Tenant isolation
 
 Canonical Phase 3 paths use `establish_context` and
