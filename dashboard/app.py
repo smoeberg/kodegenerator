@@ -1,6 +1,5 @@
 """DOR Web Dashboard - Visual Governance & Admin Management Interface."""
 
-import json
 import os
 import sqlite3
 
@@ -8,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.catalog import STANDARD_CAPABILITIES, STANDARD_ROLES
-from dashboard.security import admin_password, encrypt_secret
+from dashboard.security import admin_password
 
 try:
     from dashboard.decision_cockpit import render_decision_cockpit
@@ -24,6 +23,11 @@ try:
     from dashboard.swarm_monitor import render_swarm_monitor
 except ImportError:
     render_swarm_monitor = None
+
+try:
+    from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
+except ImportError:
+    render_multi_bot_control_plane = None
 
 st.set_page_config(
     page_title="DOR - Controller & Digital Employee Management",
@@ -70,6 +74,7 @@ st.sidebar.title("Navigation")
 menu = st.sidebar.radio(
     "Vælg Sektion",
     [
+        "🧠 Multi-bot Control Plane",
         "🚀 System Generator & Workflow",
         "🤖 Swarm Fleet Monitor",
         "🎛️ Decision Cockpit (HITL)",
@@ -89,8 +94,15 @@ if st.sidebar.button("Log ud"):
 
 conn = get_connection()
 
+# --- Sektion: Multi-bot Control Plane ---
+if menu == "🧠 Multi-bot Control Plane":
+    if render_multi_bot_control_plane is not None:
+        render_multi_bot_control_plane()
+    else:
+        st.error("`dashboard.multi_bot_control_plane` kunne ikke importeres.")
+
 # --- Sektion: System Generator & Workflow ---
-if menu == "🚀 System Generator & Workflow":
+elif menu == "🚀 System Generator & Workflow":
     if render_workflow_cockpit is not None:
         render_workflow_cockpit()
     else:
@@ -124,10 +136,18 @@ elif menu == "Overblik & Systemtilstand":
     else:
         col1, col2, col3, col4 = st.columns(4)
         try:
-            agent_count = pd.read_sql("SELECT COUNT(*) as c FROM agents", conn).iloc[0]["c"]
-            dept_count = pd.read_sql("SELECT COUNT(*) as c FROM departments", conn).iloc[0]["c"]
-            task_count = pd.read_sql("SELECT COUNT(*) as c FROM tasks", conn).iloc[0]["c"]
-            event_count = pd.read_sql("SELECT COUNT(*) as c FROM event_log", conn).iloc[0]["c"]
+            agent_count = pd.read_sql("SELECT COUNT(*) as c FROM agents", conn).iloc[0][
+                "c"
+            ]
+            dept_count = pd.read_sql(
+                "SELECT COUNT(*) as c FROM departments", conn
+            ).iloc[0]["c"]
+            task_count = pd.read_sql("SELECT COUNT(*) as c FROM tasks", conn).iloc[0][
+                "c"
+            ]
+            event_count = pd.read_sql("SELECT COUNT(*) as c FROM event_log", conn).iloc[
+                0
+            ]["c"]
 
             col1.metric("Aktive Agenter", agent_count)
             col2.metric("Afdelinger", dept_count)
@@ -170,14 +190,22 @@ elif menu == "Opret Ny Agent (Wizard)":
     with st.form("create_agent_form"):
         col1, col2 = st.columns(2)
         with col1:
-            name = st.text_input("Agent Navn / Alias", placeholder="f.eks. CodeReviewer-Alpha")
+            name = st.text_input(
+                "Agent Navn / Alias", placeholder="f.eks. CodeReviewer-Alpha"
+            )
             role_options = list(STANDARD_ROLES.keys())
             selected_role = st.selectbox("Vælg Rolle (Skabelon)", role_options)
 
         with col2:
             model_name = st.selectbox(
                 "Underliggende AI Model",
-                ["claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-4o", "mistral-large", "custom"],
+                [
+                    "claude-3-7-sonnet",
+                    "claude-3-5-sonnet",
+                    "gpt-4o",
+                    "mistral-large",
+                    "custom",
+                ],
             )
             status = st.selectbox("Initial Status", ["active", "idle", "disabled"])
 
@@ -301,7 +329,9 @@ elif menu == "⚙️ Indstillinger & Integrationer":
 
             if test_connection:
                 if not redmine_url or not api_key:
-                    st.warning("Angiv venligst både Redmine URL og API Key for at teste.")
+                    st.warning(
+                        "Angiv venligst både Redmine URL og API Key for at teste."
+                    )
                 else:
                     try:
                         from services.redmine_api import RedmineAPIClient
@@ -318,7 +348,8 @@ elif menu == "⚙️ Indstillinger & Integrationer":
                         with st.spinner("Kontakter Redmine..."):
                             issues = client.list_issues(limit=1)
                         st.success(
-                            f"✅ Forbindelse til Redmine etableret! (Fundet {len(issues)} issues tilgængelige)"
+                            "✅ Forbindelse til Redmine etableret! "
+                            f"(Fundet {len(issues)} issues tilgængelige)"
                         )
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"❌ Forbindelsesfejl: {exc}")
@@ -329,7 +360,9 @@ elif menu == "⚙️ Indstillinger & Integrationer":
                 os.environ["REDMINE_PROJECT_ID"] = project_id.strip() or "dor"
                 os.environ["REDMINE_TRACKER_ID"] = tracker_id.strip() or "1"
                 os.environ["REDMINE_SEVERITY"] = severity
-                st.success("✅ Redmine-indstillinger opdateret i aktiv runtime-session!")
+                st.success(
+                    "✅ Redmine-indstillinger opdateret i aktiv runtime-session!"
+                )
 
     with tab_general:
         st.markdown("### Generelle Systemparametre")

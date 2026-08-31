@@ -6,6 +6,7 @@ Interaktiv Control Plane GUI (Streamlit) der gør det menneskelige team til **Co
 
 | Sektion | Beskrivelse |
 |---------|-------------|
+| **Multi-bot Control Plane** | Live, tenant-scoped administration af provider-forbindelser, deployments, botprofiler, council-roller/templates, allokeringspools og frozen selections |
 | **System Generator & Workflow** | End-to-end wizard: Krav → AI-råd → HITL-arkitektur → WBS → Kode/verifikation (`workflow_cockpit.py`) |
 | **Project & Workspace Overview** | Projekter, fremdrift i %, aktive faser og task-grafer |
 | **Decision Cockpit** | Udestående `HUMAN_REQUIRED`-beslutninger med alternativer, risikoscore, AI-rådets stemmer og 1-klik handlinger |
@@ -15,8 +16,8 @@ Interaktiv Control Plane GUI (Streamlit) der gør det menneskelige team til **Co
 
 ## Datakilder
 
-- **Mock fixtures** (`dashboard/fixtures.py`) — fuld UI uden backend
-- **Live API** — `DOR_API_BASE` + valgfri `DOR_API_TOKEN` (fallback til mock ved fejl)
+- **Mock fixtures** (`dashboard/fixtures.py`) — kun de ældre demo-cockpits
+- **Live API** — Multi-bot Control Plane kræver `DOR_API_BASE`, `DOR_API_TOKEN` og `DOR_ORG_ID` og fejler lukket; mutationer falder aldrig tilbage til mock-data
 
 ## Quickstart
 
@@ -81,3 +82,5 @@ dashboard/
 - Dashboard kræver `DOR_ADMIN_PASSWORD` (fail-closed).
 - API-nøgler i legacy-admin krypteres med `DOR_ENCRYPTION_KEY` (Fernet).
 - Mock-data giver **ingen** runtime-authority; live-kald kræver gyldig token og org-scope.
+- Multi-bot-siden sender aldrig provider-secrets. Forbindelser oprettes med en `secret_reference`, som serveren resolver gennem den godkendte secret-backend.
+- Roller vælges af Controlleren og bindes til pools af versionerede botprofiler. Systemet vælger kun inden for disse pools; der findes ingen hardcoded brand→rolle-binding.
