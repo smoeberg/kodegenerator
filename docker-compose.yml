@@ -1,98 +1,117 @@
 services:
-  # 1. DOR Core REST API
   api:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: ghcr.io/smoeberg/kodegenerator:latest
-    container_name: dor-api
-    restart: unless-stopped
-    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
+      DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
+      DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     ports:
       - "8000:8000"
-    environment:
-      - DOR_DB_PATH=/app/data/dor_runtime.db
-      - DOR_ENVIRONMENT=production
-      - REDMINE_URL=${REDMINE_URL:-}
-      - REDMINE_API_KEY=${REDMINE_API_KEY:-}
-      - REDMINE_PROJECT_ID=${REDMINE_PROJECT_ID:-dor}
-      - REDMINE_TRACKER_ID=${REDMINE_TRACKER_ID:-1}
-      - REDMINE_SEVERITY=${REDMINE_SEVERITY:-ERROR}
     volumes:
-      - dor-data:/app/data
-      - dor-logs:/app/logs
+      - sqlite-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
 
-  # 2. DOR Streamlit Dashboard & Web GUI
-  dashboard:
+  worker-pool:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: ghcr.io/smoeberg/kodegenerator:latest
-    container_name: dor-dashboard
-    restart: unless-stopped
-    command: ["streamlit", "run", "dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
+      DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
+    volumes:
+      - sqlite-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.132.0
     ports:
-      - "8501:8501"
-    environment:
-      - DOR_DB_PATH=/app/data/dor_runtime.db
-      - DOR_API_URL=http://api:8000
-      - DOR_ADMIN_PASSWORD=${DOR_ADMIN_PASSWORD:-admin}
-      - REDMINE_URL=${REDMINE_URL:-}
-      - REDMINE_API_KEY=${REDMINE_API_KEY:-}
-      - REDMINE_PROJECT_ID=${REDMINE_PROJECT_ID:-dor}
-      - REDMINE_TRACKER_ID=${REDMINE_TRACKER_ID:-1}
-      - REDMINE_SEVERITY=${REDMINE_SEVERITY:-ERROR}
+      - "4317:4317"
+      - "4318:4318"
     volumes:
-      - dor-data:/app/data
-    depends_on:
-      api:
-        condition: service_started
+      - ./monitoring/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    command: ["--config", "/etc/otel-collector-config.yml"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
-  # 3. DOR Background Swarm Worker
-  worker:
+  tui:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: ghcr.io/smoeberg/kodegenerator:latest
-    container_name: dor-worker
-    restart: unless-stopped
-    command: ["python3", "-m", "cli.worker"]
+      dockerfile: docker/Dockerfile.api
     environment:
-      - DOR_DB_PATH=/app/data/dor_runtime.db
-      - DOR_API_URL=http://api:8000
-      - REDMINE_URL=${REDMINE_URL:-}
-      - REDMINE_API_KEY=${REDMINE_API_KEY:-}
-      - REDMINE_PROJECT_ID=${REDMINE_PROJECT_ID:-dor}
-      - REDMINE_TRACKER_ID=${REDMINE_TRACKER_ID:-1}
-      - REDMINE_SEVERITY=${REDMINE_SEVERITY:-ERROR}
+      DATABASE_URL: sqlite:////data/kodegenerator.db
+      REDIS_URL: redis://redis:6379/0
+      DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+      DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:-}
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:-}
+      DOR_JWT_REVOKED_KEY_IDS: ${DOR_JWT_REVOKED_KEY_IDS:-}
+    command: ["python", "-m", "services.tui"]
     volumes:
-      - dor-data:/app/data
-      - dor-logs:/app/logs
+      - sqlite-data:/data
     depends_on:
       api:
-        condition: service_started
-
-  # 4. Watchtower: Automatisk opdatering af containere når main/GHCR opdateres
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: dor-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_POLL_INTERVAL=60
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_INCLUDE_RESTARTING=true
-    command: --interval 60 dor-api dor-dashboard dor-worker
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
 volumes:
-  dor-data:
-    driver: local
-  dor-logs:
-    driver: local
+  sqlite-data:
+  redis-data:
