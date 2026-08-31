@@ -4,6 +4,16 @@ Orchestrates multi-agent deliberation cycles, evidence-backed disputes,
 and consensus threshold evaluations.
 """
 
+from phase4.verification.allocation_selector import (
+    CouncilRunSelection,
+    CouncilSelectionError,
+    DeterministicCouncilSelector,
+    FrozenCouncilAssignment,
+    SelectionCandidate,
+    SelectionReceipt,
+    SelectionRequestContext,
+)
+
 from .configuration import (
     AllocationMember,
     AutonomyLevel,
@@ -86,6 +96,8 @@ __all__ = [
     "CouncilRole",
     "CouncilRoleAssignment",
     "CouncilRuntimeEventType",
+    "CouncilRunSelection",
+    "CouncilSelectionError",
     "CouncilSessionBinding",
     "CouncilStartError",
     "CouncilStore",
@@ -96,6 +108,7 @@ __all__ = [
     "CouncilTurnResponse",
     "CouncilTemplate",
     "DefaultCouncilRiskEvaluator",
+    "DeterministicCouncilSelector",
     "DeliberationConfig",
     "DeliberationError",
     "DeliberationSession",
@@ -104,12 +117,16 @@ __all__ = [
     "DisputeProtocolError",
     "DisputeStatus",
     "ExecutionFailedEvent",
+    "FrozenCouncilAssignment",
     "IndependenceLevel",
     "PersistedDeliberation",
     "ProtocolFunction",
     "RoleAllocationPool",
     "RolePersona",
     "SessionState",
+    "SelectionCandidate",
+    "SelectionRequestContext",
+    "SelectionReceipt",
     "TemplateStage",
     "Vote",
     "execution_failure_event_from_result",

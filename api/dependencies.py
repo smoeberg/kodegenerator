@@ -9,6 +9,7 @@ from infrastructure.persistence.council_configuration_store import (
     CouncilConfigurationStore,
 )
 from infrastructure.persistence.llm_replay_store import SQLAlchemyLLMReplayStore
+from infrastructure.persistence.selection_store import CouncilSelectionStore
 from infrastructure.runtime.db import build_session_factory
 from phase4.agent_registry import AgentRegistry
 from phase4.implementation_agent import (
@@ -20,6 +21,7 @@ from phase4.implementation_agent import (
 )
 from runtime.core import DORRuntime
 from services.bot_catalog import BotCatalogService
+from services.council_selection import CouncilSelectionService
 from services.governed_llm import GovernedLLMRuntime
 from services.llm_adapters import OpenAIAdapter
 
@@ -87,6 +89,19 @@ def get_council_configuration_store() -> CouncilConfigurationStore:
     """Build the tenant-scoped Council configuration persistence boundary."""
     return CouncilConfigurationStore(
         build_session_factory(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db"))
+    )
+
+
+@lru_cache(maxsize=1)
+def get_council_selection_service() -> CouncilSelectionService:
+    """Build the deterministic durable Council selection boundary."""
+    factory = build_session_factory(
+        os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
+    )
+    return CouncilSelectionService(
+        BotCatalogStore(factory),
+        CouncilConfigurationStore(factory),
+        CouncilSelectionStore(factory),
     )
 
 

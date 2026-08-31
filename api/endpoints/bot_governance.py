@@ -116,7 +116,10 @@ def _translate(operation):
         return operation()
     except BotCatalogNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "not_found"}) from exc
-    except (BotCatalogConflictError, CouncilConfigurationConflictError) as exc:
+    except (
+        BotCatalogConflictError,
+        CouncilConfigurationConflictError,
+    ) as exc:
         raise HTTPException(
             status_code=409, detail={"error": "version_conflict"}
         ) from exc
