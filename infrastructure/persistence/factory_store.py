@@ -133,6 +133,37 @@ class FactoryStore:
             ) from exc
         return value
 
+    def get_candidate(
+        self, organization_id: str, candidate_id: str
+    ) -> CandidateDelivery | None:
+        with self._sessions() as session:
+            apply_tenant_context(session, organization_id)
+            row = session.get(
+                FactoryCandidateDeliveryModel, (organization_id, candidate_id)
+            )
+            if row is None:
+                return None
+            data = row.payload
+            value = CandidateDelivery(
+                organization_id=organization_id,
+                candidate_id=candidate_id,
+                work_package_id=row.work_package_id,
+                work_package_fingerprint=data["work_package_fingerprint"],
+                execution_id=row.execution_id,
+                assignment_id=data["assignment_id"],
+                base_sha=data["base_sha"],
+                branch=data["branch"],
+                head_sha=row.head_sha,
+                commit_shas=tuple(data["commit_shas"]),
+                patch_fingerprint=data["patch_fingerprint"],
+                affected_paths=tuple(data["affected_paths"]),
+                attestations=tuple(data["attestations"]),
+                delivered_at=_utc(row.delivered_at),
+            )
+            if value.content_fingerprint != row.fingerprint:
+                raise FactoryStoreConflictError("candidate fingerprint is invalid")
+            return value
+
     def append_selection(self, value: CandidateSelection) -> CandidateSelection:
         row = FactoryCandidateSelectionModel(
             organization_id=value.organization_id,
@@ -174,6 +205,35 @@ class FactoryStore:
                 "selection conflicts with an existing winner"
             ) from exc
         return value
+
+    def get_selection(
+        self, organization_id: str, selection_id: str
+    ) -> CandidateSelection | None:
+        with self._sessions() as session:
+            apply_tenant_context(session, organization_id)
+            row = session.get(
+                FactoryCandidateSelectionModel, (organization_id, selection_id)
+            )
+            if row is None:
+                return None
+            data = row.payload
+            value = CandidateSelection(
+                organization_id=organization_id,
+                selection_id=selection_id,
+                logical_task_id=row.logical_task_id,
+                work_package_fingerprint=row.work_package_fingerprint,
+                candidate_ids=tuple(data["candidate_ids"]),
+                rubric_fingerprint=data["rubric_fingerprint"],
+                evaluation_ids=tuple(data["evaluation_ids"]),
+                excluded_candidate_ids=tuple(data["excluded_candidate_ids"]),
+                winner_candidate_id=row.winner_candidate_id,
+                evaluator_assignment_id=data["evaluator_assignment_id"],
+                authority_decision_id=data["authority_decision_id"],
+                created_at=_utc(row.created_at),
+            )
+            if value.content_fingerprint != row.fingerprint:
+                raise FactoryStoreConflictError("selection fingerprint is invalid")
+            return value
 
 
 def _package_payload(value: WorkPackage) -> dict:
