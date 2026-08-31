@@ -13,6 +13,7 @@ from phase4.agent_registry import AgentRegistry
 from phase4.epistemics.models import Evidence, EvidenceType, Hypothesis
 
 from .models import Dispute, SessionState
+from .routing import CouncilAssignmentPlan
 from .roles import (
     ROLE_PERSONAS,
     CouncilAgenda,
@@ -185,7 +186,8 @@ class CouncilOrchestrator:
         store: CouncilStore,
         config: DeliberationConfig | None = None,
         risk_evaluator: CouncilRiskEvaluator | None = None,
-    ) -> None:
+        legacy_assignments: bool = True,
+    ) -> None:  # compat window: PR4-7
         provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip():
             raise TypeError("provider must declare a non-empty provider_id")
@@ -197,6 +199,7 @@ class CouncilOrchestrator:
         self.store = store
         self.config = config or DeliberationConfig()
         self.risk_evaluator = risk_evaluator or DefaultCouncilRiskEvaluator()
+        self._legacy_assignments = legacy_assignments
 
     def run(
         self,
@@ -206,11 +209,12 @@ class CouncilOrchestrator:
         agenda: CouncilAgenda,
         session_id: str | None = None,
         round_budget: int | None = None,
+        assignment_plan: CouncilAssignmentPlan | None = None,
     ) -> CouncilOrchestratorResult:
         if round_budget is not None and round_budget < 1:
             raise CouncilStartError("round_budget must be at least 1")
         self._verify_start_inputs(hypothesis, binding, agenda)
-        assignments = self._select_assignments()
+        assignments = self._resolve_assignments(assignment_plan)
         persisted = self._load_or_create(hypothesis, binding, session_id)
         self._verify_persisted_binding(persisted.binding, binding)
         self._verify_hypothesis_identity(persisted.session.hypothesis, hypothesis)
@@ -488,6 +492,47 @@ class CouncilOrchestrator:
             agenda=agenda,
             hypothesis=session.hypothesis,
             open_disputes=open_disputes,
+        )
+
+    def _resolve_assignments(
+        self, assignment_plan: CouncilAssignmentPlan | None
+    ) -> tuple[CouncilRoleAssignment, ...]:
+        """Resolve role assignments from a frozen plan or the legacy registry.
+
+        Within the compatibility window, production callers must provide a
+        plan: the legacy registry path is only available through the explicit
+        LegacyTemplateFactory and tests.
+        """
+        if assignment_plan is not None:
+            identities: set[str] = set()
+            resolved: list[CouncilRoleAssignment] = []
+            for role in self._REQUIRED_ROLES:
+                try:
+                    route = assignment_plan.route_for(role)
+                except Exception as exc:  # noqa: BLE001 - routing boundary
+                    raise CouncilStartError(
+                        f"assignment plan does not cover required role {role.value}"
+                    ) from exc
+                identity = route.agent_identity
+                if identity in identities:
+                    raise CouncilStartError(
+                        "independent Council roles must use distinct agent identities"
+                    )
+                identities.add(identity)
+                resolved.append(
+                    CouncilRoleAssignment(
+                        role=role,
+                        agent_identity=identity,
+                        capability=route.capability,
+                    )
+                )
+            return tuple(resolved)
+        if getattr(self, "_legacy_assignments", True):
+            return self._select_assignments()
+        raise CouncilStartError(
+            "production Council start requires a frozen assignment plan; "
+            "the legacy registry path is only available through "
+            "LegacyTemplateFactory"
         )
 
     def _select_assignments(self) -> tuple[CouncilRoleAssignment, ...]:
