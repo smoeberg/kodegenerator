@@ -2,6 +2,19 @@
 
 from .case import VerificationCase, VerificationCaseStatus
 from .engine import VerificationEngine, VerificationResult, result_to_state
+from .evaluation import (
+    EvaluationAssignmentSnapshot,
+    EvaluationCheck,
+    EvaluationOutcome,
+    EvaluationRecord,
+    EvaluationRubric,
+    RubricCriterion,
+    validate_independence,
+)
+from .evaluation_coordinator import (
+    EvaluationCoordinator,
+    SemanticEvaluation,
+)
 from .evidence_enforcer import (
     EvidenceEnforcementResult,
     EvidenceEnforcementStatus,
@@ -25,10 +38,18 @@ __all__ = [
     "EvidenceEnforcementResult",
     "EvidenceEnforcementStatus",
     "EvidenceEnforcer",
+    "EvaluationAssignmentSnapshot",
+    "EvaluationCheck",
+    "EvaluationCoordinator",
+    "EvaluationOutcome",
+    "EvaluationRecord",
+    "EvaluationRubric",
     "JudgeInputError",
     "JudgeVerdict",
     "LLMJudge",
     "OpenAIJudgeProvider",
+    "RubricCriterion",
+    "SemanticEvaluation",
     "VerdictProvider",
     "VerificationCase",
     "VerificationCaseStatus",
@@ -37,4 +58,5 @@ __all__ = [
     "VerifierSelection",
     "VerifierSelector",
     "result_to_state",
+    "validate_independence",
 ]

@@ -14,6 +14,7 @@ from .models import (
     FailureCategory,
     StrategyFingerprint,
 )
+from .performance import PerformanceObservation, PerformanceSnapshot
 from .quality_router import (
     ModelEndpoint,
     ModelTier,
@@ -44,4 +45,6 @@ __all__ = [
     "QualityFirstRouter",
     "RouterConfigurationError",
     "NoAvailableProviderError",
+    "PerformanceObservation",
+    "PerformanceSnapshot",
 ]
