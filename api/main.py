@@ -52,6 +52,7 @@ from api.auth import User, get_current_active_user  # noqa: E402
 from api.endpoints import (  # noqa: E402
     auth,
     bot_governance,
+    bot_selection,
     control_plane,
     decisions,
     implementation_agent,
@@ -117,6 +118,7 @@ if HAS_AUTH:
         pipeline.router,
         pipeline_gates.router,
         bot_governance.router,
+        bot_selection.router,
     )
     validate_canonical_modules(
         (
@@ -129,6 +131,7 @@ if HAS_AUTH:
             pipeline.__name__,
             pipeline_gates.__name__,
             bot_governance.__name__,
+            bot_selection.__name__,
         )
     )
 

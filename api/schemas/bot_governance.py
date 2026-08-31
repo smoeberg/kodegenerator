@@ -217,3 +217,75 @@ class AllocationResponse(StrictModel):
     version: int
     fingerprint: str
     created_at: datetime
+
+
+class SelectionCreateRequest(StrictModel):
+    command_id: str
+    run_id: str
+    template_id: str
+    template_version: int = Field(ge=1)
+    allocation_refs: list[tuple[str, int]]
+    scope_id: str
+    repository: str
+    base_sha: str = Field(min_length=40, max_length=40)
+    requirements_fingerprint: str = Field(min_length=64, max_length=64)
+    architecture_fingerprint: str = Field(min_length=64, max_length=64)
+    contract_fingerprint: str = Field(min_length=64, max_length=64)
+    input_fingerprint: str = Field(min_length=64, max_length=64)
+
+
+class FrozenAssignmentResponse(StrictModel):
+    assignment_id: str
+    stage_id: str
+    role_id: str
+    role_version: int
+    allocation_id: str
+    allocation_version: int
+    bot_profile_id: str
+    bot_profile_version: int
+    profile_fingerprint: str
+    agent_identity: str
+    deployment_id: str
+    deployment_revision: int
+    deployment_fingerprint: str
+    connection_id: str
+    connection_version: int
+    connection_fingerprint: str
+    scope_id: str
+    repository: str
+    base_sha: str
+    input_fingerprint: str
+
+
+class SelectionReceiptResponse(StrictModel):
+    stage_id: str
+    role_id: str
+    role_version: int
+    allocation_id: str
+    allocation_version: int
+    bot_profile_id: str
+    bot_profile_version: int
+    accepted: bool
+    reason: str
+    preference_rank: int
+
+
+class SelectionResponse(StrictModel):
+    run_id: str
+    decision_id: str
+    organization_id: str
+    template_id: str
+    template_version: int
+    template_fingerprint: str
+    context_fingerprint: str
+    scope_id: str
+    repository: str
+    base_sha: str
+    input_fingerprint: str
+    assignments: list[FrozenAssignmentResponse]
+    receipts: list[SelectionReceiptResponse]
+    selector_version: str
+    status: str
+    rationale: str
+    fingerprint: str
+    created_at: datetime

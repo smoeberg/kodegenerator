@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-
 CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.control_plane",
     "api.endpoints.swarm",
@@ -15,6 +14,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.pipeline",
     "api.endpoints.pipeline_gates",
     "api.endpoints.bot_governance",
+    "api.endpoints.bot_selection",
 )
 
 CANONICAL_REALTIME_MODULES = ("api.endpoints.swarm_websocket",)
