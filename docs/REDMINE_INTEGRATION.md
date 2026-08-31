@@ -14,9 +14,17 @@ All settings come from the environment (see `.env.example`):
 | `REDMINE_URL` | yes | – | Base URL, e.g. `https://redmine.example.com` |
 | `REDMINE_API_KEY` | yes | – | Redmine REST API key |
 | `REDMINE_PROJECT_ID` | no | `dor` | Project identifier for issues |
-| `REDMINE_ISSUE_TRACKER_ID` | no | `1` | Tracker id for bug tickets |
+| `REDMINE_TRACKER_ID` | no | `1` | Tracker id for bug tickets (spec name; ``REDMINE_ISSUE_TRACKER_ID`` also accepted) |
+| `REDMINE_ISSUE_TRACKER_ID` | no | `1` | Alias for ``REDMINE_TRACKER_ID`` (DOR-style name) |
 | `REDMINE_MAX_ISSUES_PER_RUN` | no | `5` | Rate cap per process run |
 | `REDMINE_DEDUP_WINDOW_DAYS` | no | `7` | Dedup window for identical errors |
+| `REDMINE_SEVERITY` | no | `ERROR` | Default severity: ``CRITICAL``/``ERROR``/``WARNING``/``INFO``/``DEBUG`` |
+| `REDMINE_FIELD_ERROR_TYPE` | no | – | Custom field id for error type, e.g. `1` or `1:error_type` |
+| `REDMINE_FIELD_SERVICE` | no | – | Custom field id for service name |
+| `REDMINE_FIELD_SPEC_ID` | no | – | Custom field id for spec id |
+| `REDMINE_FIELD_GIT_COMMIT` | no | – | Custom field id for git commit |
+| `REDMINE_FIELD_ENVIRONMENT` | no | – | Custom field id for environment |
+| `REDMINE_FIELD_SOURCE` | no | – | Custom field id for source |
 
 When `REDMINE_URL` or `REDMINE_API_KEY` are missing, the integration is
 disabled and all calls become no-ops.

@@ -90,3 +90,56 @@ def test_error_kinds_are_stable() -> None:
         "self_healing",
         "execution",
     }
+
+
+def test_severity_to_priority_mapping():
+    """Spec: severity levels map onto Redmine priority ids."""
+    from services.redmine_contracts import RedmineIssuePriority, RedmineSeverity
+
+    assert (
+        RedmineSeverity.CRITICAL.to_priority() == RedmineIssuePriority.IMMEDIATE.value
+    )
+    assert RedmineSeverity.ERROR.to_priority() == RedmineIssuePriority.NORMAL.value
+    assert RedmineSeverity.WARNING.to_priority() == RedmineIssuePriority.LOW.value
+    assert RedmineSeverity.INFO.to_priority() == RedmineIssuePriority.LOW.value
+    assert RedmineSeverity.DEBUG.to_priority() == RedmineIssuePriority.LOW.value
+
+
+def test_config_parses_spec_tracker_and_severity_and_custom_fields():
+    """Spec env names REDMINE_TRACKER_ID / REDMINE_SEVERITY / REDMINE_FIELD_*."""
+    from services.redmine_contracts import RedmineSeverity, redmine_config_from_env
+
+    cfg = redmine_config_from_env(
+        {
+            "REDMINE_URL": "https://redmine.example.com",
+            "REDMINE_API_KEY": "secret",
+            "REDMINE_TRACKER_ID": "5",
+            "REDMINE_SEVERITY": "CRITICAL",
+            "REDMINE_FIELD_ERROR_TYPE": "1:error_type",
+            "REDMINE_FIELD_SERVICE": "2:dor",
+            "REDMINE_FIELD_GIT_COMMIT": "3:abc123",
+        }
+    )
+    assert cfg is not None
+    assert cfg.tracker_id == "5"
+    assert cfg.default_severity is RedmineSeverity.CRITICAL
+    assert cfg.custom_fields == (
+        ("1", "error_type"),
+        ("2", "dor"),
+        ("3", "abc123"),
+    )
+
+
+def test_config_accepts_dor_style_tracker_alias():
+    """REDMINE_ISSUE_TRACKER_ID still works, but the spec name wins."""
+    from services.redmine_contracts import redmine_config_from_env
+
+    cfg = redmine_config_from_env(
+        {
+            "REDMINE_URL": "https://redmine.example.com",
+            "REDMINE_API_KEY": "secret",
+            "REDMINE_ISSUE_TRACKER_ID": "7",
+        }
+    )
+    assert cfg is not None
+    assert cfg.tracker_id == "7"

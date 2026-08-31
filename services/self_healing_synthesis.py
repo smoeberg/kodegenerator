@@ -291,6 +291,7 @@ class SelfHealingSynthesisLoop:
             error_ticker=RedmineErrorTickerService(
                 RedmineAPIClient(config),
                 use_deduplication=True,
+                default_severity=config.default_severity,
             ),
             **overrides,
         )

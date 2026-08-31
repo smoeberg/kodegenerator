@@ -13,7 +13,6 @@ raising, so the generation loop is never blocked by ticketing.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -23,44 +22,15 @@ from services.redmine_api import RedmineAPIClient
 from services.redmine_contracts import (
     RedmineAPIError,
     RedmineAuthenticationError,
-    RedmineConfig,
     RedmineErrorKind,
     RedmineIssue,
     RedmineIssueDraft,
-    RedmineIssuePriority,
     RedmineIssueStatus,
+    RedmineSeverity,
     RedmineTicketResult,
     RedmineUnavailableError,
+    redmine_config_from_env,  # noqa: F401 - public re-export
 )
-
-
-def redmine_config_from_env(
-    env: dict[str, str] | None = None,
-) -> RedmineConfig | None:
-    """Build a :class:`RedmineConfig` from DOR environment variables.
-
-    Returns ``None`` (ticketing disabled) when ``REDMINE_URL`` is unset,
-    so development and CI runs without Redmine stay green.
-    """
-    env = os.environ if env is None else env
-    url = env.get("REDMINE_URL", "").strip()
-    if not url:
-        return None
-    project_id = env.get("REDMINE_PROJECT_ID", "1").strip()
-    tracker_id = env.get("REDMINE_TRACKER_ID", "1").strip()
-    priority_id = env.get("REDMINE_PRIORITY_ID", "3").strip()  # 3 = High
-    return RedmineConfig(
-        url=url,
-        api_key=env.get("REDMINE_API_KEY", "").strip(),
-        username=env.get("REDMINE_USERNAME", "").strip(),
-        password=env.get("REDMINE_PASSWORD", "").strip(),
-        project_id=project_id or "1",
-        tracker_id=tracker_id or "1",
-        priority_id=priority_id or RedmineIssuePriority.HIGH.value,
-        status_id=env.get("REDMINE_STATUS_ID", RedmineIssueStatus.NEW.value).strip(),
-        timeout=float(env.get("REDMINE_TIMEOUT", "15")),
-        verify_tls=env.get("REDMINE_VERIFY_TLS", "true").strip().lower() != "false",
-    )
 
 
 @dataclass(frozen=True)
@@ -123,11 +93,13 @@ class RedmineErrorTickerService:
         use_deduplication: bool = True,
         max_subject_length: int = 200,
         max_description_length: int = 40_000,
+        default_severity: RedmineSeverity = RedmineSeverity.ERROR,
     ) -> None:
         self.client = client
         self.use_deduplication = use_deduplication
         self.max_subject_length = max_subject_length
         self.max_description_length = max_description_length
+        self.default_severity = default_severity
         self._created: set[int] = set()
 
     # -- public API -----------------------------------------------------
@@ -139,12 +111,17 @@ class RedmineErrorTickerService:
         error: str,
         context: dict[str, Any] | None = None,
         kind: RedmineErrorKind = RedmineErrorKind.VERIFICATION,
+        severity: RedmineSeverity | None = None,
     ) -> RedmineTicketResult:
         """Report a failed verification (generation/self-healing) to Redmine."""
         signature = FailureSignature.from_verification(
             module=module, error=error, kind=kind
         )
-        return self._send(signature, context or {})
+        return self._send(
+            signature,
+            context or {},
+            severity=severity or self.default_severity,
+        )
 
     def report_self_healing_exhaustion(
         self,
@@ -153,6 +130,7 @@ class RedmineErrorTickerService:
         error: str,
         attempts: int,
         context: dict[str, Any] | None = None,
+        severity: RedmineSeverity | None = None,
     ) -> RedmineTicketResult:
         """Report a self-healing loop that exhausted its attempts."""
         signature = FailureSignature.from_verification(
@@ -162,13 +140,22 @@ class RedmineErrorTickerService:
         )
         ctx = dict(context or {})
         ctx["self_healing_attempts"] = attempts
-        return self._send(signature, ctx)
+        return self._send(
+            signature,
+            ctx,
+            severity=severity or self.default_severity,
+        )
 
     # -- internals ------------------------------------------------------
 
     def _send(
-        self, signature: FailureSignature, context: dict[str, Any]
+        self,
+        signature: FailureSignature,
+        context: dict[str, Any],
+        *,
+        severity: RedmineSeverity | None = None,
     ) -> RedmineTicketResult:
+        severity = severity or self.default_severity
         if self.client is None:
             return RedmineTicketResult(kind=signature.kind, error="not-configured")
 
@@ -180,7 +167,9 @@ class RedmineErrorTickerService:
                     updated = self.client.update_issue(
                         existing.id,
                         status_id=RedmineIssueStatus.IN_PROGRESS.value,
-                        description=self._render_description(signature, context),
+                        description=self._render_description(
+                            signature, context, severity
+                        ),
                     )
                 except RedmineAuthenticationError:
                     return RedmineTicketResult(
@@ -205,11 +194,12 @@ class RedmineErrorTickerService:
 
         draft = RedmineIssueDraft(
             subject=self._truncate(signature.subject, self.max_subject_length),
-            description=self._render_description(signature, context),
+            description=self._render_description(signature, context, severity),
             project_id=self.client.config.project_id,
             tracker_id=self.client.config.tracker_id,
-            priority_id=self.client.config.priority_id,
+            priority_id=severity.to_priority(),
             status_id=self.client.config.status_id,
+            custom_fields=self.client.config.custom_fields,
         )
         try:
             issue = self.client.create_issue(draft)
@@ -235,11 +225,15 @@ class RedmineErrorTickerService:
         return None
 
     def _render_description(
-        self, signature: FailureSignature, context: dict[str, Any]
+        self,
+        signature: FailureSignature,
+        context: dict[str, Any],
+        severity: RedmineSeverity | None = None,
     ) -> str:
         lines = [
             f"**Kind:** `{signature.kind.value}`",
             f"**Module:** `{signature.module}`",
+            f"**Severity:** `{(severity or self.default_severity).value}`",
             f"**Fingerprint:** `{signature.fingerprint}`",
             f"**Reported:** {datetime.now(timezone.utc).isoformat()}",
             "",

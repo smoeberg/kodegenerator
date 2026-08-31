@@ -138,3 +138,71 @@ def test_with_redmine_from_env_disabled_without_url() -> None:
         {"REDMINE_API_KEY": "secret"}, synthesizer=None
     )
     assert loop.error_ticker is None
+
+
+def test_draft_payload_includes_custom_fields_and_severity_priority():
+    """Spec: issue carries custom fields and severity-derived priority."""
+    from services.redmine_contracts import (
+        RedmineConfig,
+        RedmineIssueDraft,
+        RedmineSeverity,
+    )
+
+    cfg = RedmineConfig(
+        url="https://redmine.example.com",
+        api_key="secret",
+        project_id="7",
+        tracker_id="3",
+        custom_fields=(("1", "error_type"), ("2", "dor")),
+    )
+    draft = RedmineIssueDraft(
+        subject="subject",
+        description="description",
+        project_id="7",
+        tracker_id="3",
+        priority_id=RedmineSeverity.CRITICAL.to_priority(),
+        status_id="1",
+        custom_fields=cfg.custom_fields,
+    )
+    payload = draft.payload()
+    assert payload["issue"]["custom_fields"] == [
+        {"id": "1", "value": "error_type"},
+        {"id": "2", "value": "dor"},
+    ]
+    assert payload["issue"]["priority_id"] == "5"  # IMMEDIATE
+
+
+def test_ticker_default_severity_from_config():
+    from services.redmine_contracts import RedmineSeverity
+    from services.redmine_error_ticketing import RedmineErrorTickerService
+
+    ticker = RedmineErrorTickerService(
+        None,
+        default_severity=RedmineSeverity.CRITICAL,
+    )
+    assert ticker.default_severity is RedmineSeverity.CRITICAL
+
+
+def test_report_uses_severity_priority_in_draft():
+    """report_verification_failure passes severity-derived priority to client."""
+    from services.redmine_contracts import RedmineSeverity
+
+    captured: list = []
+    original_create = _FakeRedmineClient.create_issue
+
+    class _CapturingClient(_FakeRedmineClient):
+        def create_issue(self, draft):
+            captured.append(draft)
+            return original_create(self, draft)
+
+    ticker = RedmineErrorTickerService(
+        _CapturingClient(),
+        use_deduplication=False,
+        default_severity=RedmineSeverity.CRITICAL,
+    )
+    result = ticker.report_verification_failure(
+        module="m", error="boom", severity=RedmineSeverity.ERROR
+    )
+    assert result.ok
+    assert captured[0].priority_id == RedmineSeverity.ERROR.to_priority()
+    assert "Severity" in captured[0].description

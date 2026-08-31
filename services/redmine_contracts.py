@@ -51,6 +51,32 @@ class RedmineErrorKind(str, Enum):
     EXECUTION = "execution"
 
 
+class RedmineSeverity(str, Enum):
+    """Severity levels mapped onto Redmine priorities.
+
+    ``CRITICAL``/``ERROR``/``WARNING``/``INFO`` mirror the spec's
+    error-reporting levels; :meth:`RedmineSeverity.to_priority` converts
+    to the default priority identifiers used by :class:`RedmineConfig`.
+    """
+
+    CRITICAL = "CRITICAL"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+    DEBUG = "DEBUG"
+
+    def to_priority(self) -> str:
+        """Map severity to a Redmine priority id (default scheme)."""
+        mapping = {
+            RedmineSeverity.CRITICAL: RedmineIssuePriority.IMMEDIATE.value,
+            RedmineSeverity.ERROR: RedmineIssuePriority.NORMAL.value,
+            RedmineSeverity.WARNING: RedmineIssuePriority.LOW.value,
+            RedmineSeverity.INFO: RedmineIssuePriority.LOW.value,
+            RedmineSeverity.DEBUG: RedmineIssuePriority.LOW.value,
+        }
+        return mapping[self]
+
+
 @dataclass(frozen=True)
 class RedmineConfig:
     """Configuration for one Redmine instance.
@@ -72,6 +98,8 @@ class RedmineConfig:
     retry_count: int = 2
     retry_delay: float = 1.0
     verify_tls: bool = True
+    custom_fields: tuple[tuple[str, str], ...] = ()
+    default_severity: RedmineSeverity = RedmineSeverity.ERROR
 
     def validate(self) -> None:
         """Fail fast on obviously unusable configuration."""
@@ -115,7 +143,11 @@ class RedmineIssueDraft:
             issue["assigned_to_id"] = self.assigned_to_id
         if self.custom_fields:
             issue["custom_fields"] = [
-                {"id": name, "value": value} for name, value in self.custom_fields
+                {
+                    "id": name,
+                    "value": value if not isinstance(value, tuple) else value[1],
+                }
+                for name, value in self.custom_fields
             ]
         return {"issue": issue}
 
@@ -221,13 +253,41 @@ def redmine_config_from_env(
         raw = (env.get(key) or "").strip()
         return str(int(raw)) if raw else default
 
+    # Accept both the spec's ``REDMINE_TRACKER_ID`` and the DOR-style
+    # ``REDMINE_ISSUE_TRACKER_ID`` name; the spec name wins when both set.
+    tracker_id = _int(
+        "REDMINE_TRACKER_ID",
+        _int("REDMINE_ISSUE_TRACKER_ID", "1"),
+    )
+
+    custom_fields: list[tuple[str, str]] = []
+    # REDMINE_CUSTOM_FIELD_<NAME>=<id>:<value> (spec mapping, e.g.
+    # REDMINE_FIELD_ERROR_TYPE=1:error_type). Also accept REDMINE_FIELD_<NAME>.
+    field_sources = {
+        "ERROR_TYPE": "error_type",
+        "SERVICE": "service",
+        "SPEC_ID": "spec_id",
+        "GIT_COMMIT": "git_commit",
+        "ENVIRONMENT": "environment",
+        "SOURCE": "source",
+    }
+    for suffix, name in field_sources.items():
+        raw = (env.get(f"REDMINE_FIELD_{suffix}") or "").strip()
+        if not raw:
+            continue
+        if ":" in raw:
+            field_id, _, value = raw.partition(":")
+            custom_fields.append((field_id.strip(), value.strip()))
+        else:
+            custom_fields.append((raw.strip(), name))
+
     config = RedmineConfig(
         url=url,
         api_key=api_key,
         username=username,
         password=password,
         project_id=_int("REDMINE_PROJECT_ID", "1"),
-        tracker_id=_int("REDMINE_ISSUE_TRACKER_ID", "1"),
+        tracker_id=tracker_id,
         priority_id=_int("REDMINE_PRIORITY_ID", RedmineIssuePriority.NORMAL.value),
         status_id=_int("REDMINE_STATUS_ID", RedmineIssueStatus.NEW.value),
         timeout=_float("REDMINE_TIMEOUT", 15.0),
@@ -236,6 +296,10 @@ def redmine_config_from_env(
         verify_tls=(
             env.get("REDMINE_VERIFY_TLS", "1").strip().lower()
             not in {"0", "false", "no"}
+        ),
+        custom_fields=tuple(custom_fields),
+        default_severity=RedmineSeverity(
+            (env.get("REDMINE_SEVERITY") or "ERROR").strip().upper()
         ),
     )
     config.validate()
