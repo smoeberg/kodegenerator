@@ -13,6 +13,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.decisions",
     "api.endpoints.pipeline",
     "api.endpoints.pipeline_gates",
+    "api.endpoints.bot_evidence",
     "api.endpoints.bot_governance",
     "api.endpoints.bot_selection",
 )

@@ -14,7 +14,15 @@ from infrastructure.persistence.evaluation_store import (
 from infrastructure.persistence.models import Base
 from phase4.adaptation.performance import PerformanceObservation, PerformanceSnapshot
 from phase4.council.configuration import IndependenceLevel
-from phase4.verification.evaluation import EvaluationRubric, RubricCriterion
+from phase4.verification.evaluation import (
+    EvaluationAssignmentSnapshot,
+    EvaluationCheck,
+    EvaluationOutcome,
+    EvaluationRecord,
+    EvaluationRubric,
+    RubricCriterion,
+    evaluation_fingerprint,
+)
 
 
 def store():
@@ -55,6 +63,44 @@ def test_tampered_fingerprint_is_rejected_on_read() -> None:
         row.fingerprint = "0" * 64
     with pytest.raises(EvaluationStoreConflictError, match="fingerprint"):
         ledger.get_rubric("org-1", "rubric-1", 1)
+
+
+def test_evaluation_round_trip_is_tenant_scoped() -> None:
+    ledger, _ = store()
+    assignment = EvaluationAssignmentSnapshot(
+        assignment_id="a" * 64,
+        bot_profile_id="profile-1",
+        connection_id="connection-1",
+        deployment_id="deployment-1",
+        model_family="family-1",
+        provider_adapter="adapter-1",
+        brand="brand-1",
+        prompt_version="v1",
+    )
+    values = {
+        "organization_id": "org-1",
+        "subject_id": "candidate-1",
+        "subject_class": "candidate",
+        "subject_fingerprint": "b" * 64,
+        "rubric_id": "rubric-1",
+        "rubric_version": 1,
+        "rubric_fingerprint": "c" * 64,
+        "base_sha": "d" * 40,
+        "producer": assignment,
+        "evaluator": None,
+        "checks": (EvaluationCheck("tests", True, 1.0, ("test-attestation",)),),
+        "semantic_evidence": (),
+        "hard_failures": (),
+        "outcome": EvaluationOutcome.PASS,
+        "score": 1.0,
+        "confidence": 1.0,
+        "provenance": (("source", "deterministic"),),
+    }
+    record = EvaluationRecord(evaluation_id=evaluation_fingerprint(**values), **values)
+    ledger.append_evaluation(record)
+
+    assert ledger.get_evaluation("org-1", record.evaluation_id) == record
+    assert ledger.get_evaluation("org-2", record.evaluation_id) is None
 
 
 def test_observation_corrections_and_snapshot_ledger_boundary() -> None:

@@ -8,6 +8,9 @@ from infrastructure.persistence.bot_catalog_store import BotCatalogStore
 from infrastructure.persistence.council_configuration_store import (
     CouncilConfigurationStore,
 )
+from infrastructure.persistence.evaluation_store import EvaluationStore
+from infrastructure.persistence.factory_integration_store import FactoryIntegrationStore
+from infrastructure.persistence.factory_store import FactoryStore
 from infrastructure.persistence.llm_replay_store import SQLAlchemyLLMReplayStore
 from infrastructure.persistence.selection_store import CouncilSelectionStore
 from infrastructure.runtime.db import build_session_factory
@@ -103,6 +106,27 @@ def get_council_selection_service() -> CouncilSelectionService:
         CouncilConfigurationStore(factory),
         CouncilSelectionStore(factory),
     )
+
+
+def _session_factory():
+    return build_session_factory(
+        os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
+    )
+
+
+@lru_cache(maxsize=1)
+def get_evaluation_store() -> EvaluationStore:
+    return EvaluationStore(_session_factory())
+
+
+@lru_cache(maxsize=1)
+def get_factory_store() -> FactoryStore:
+    return FactoryStore(_session_factory())
+
+
+@lru_cache(maxsize=1)
+def get_factory_integration_store() -> FactoryIntegrationStore:
+    return FactoryIntegrationStore(_session_factory())
 
 
 def _positive_int_environment(name: str, default: int) -> int:
