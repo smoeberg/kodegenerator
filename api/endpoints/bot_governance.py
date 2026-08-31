@@ -3,8 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.auth import User, get_current_active_user
-from api.dependencies import get_bot_catalog_service, get_dor
+from api.dependencies import (
+    get_bot_catalog_service,
+    get_council_configuration_store,
+    get_dor,
+)
 from api.schemas.bot_governance import (
+    AllocationCreateRequest,
+    AllocationResponse,
     ConnectionCreateRequest,
     ConnectionResponse,
     DeploymentCreateRequest,
@@ -12,11 +18,21 @@ from api.schemas.bot_governance import (
     DisableRequest,
     ProfileCreateRequest,
     ProfileResponse,
+    RoleCreateRequest,
+    RoleResponse,
+    StageRequest,
+    TemplateCreateRequest,
+    TemplateResponse,
 )
 from domain.principal import Principal
 from infrastructure.persistence.bot_catalog_store import (
     BotCatalogConflictError,
     BotCatalogNotFoundError,
+)
+from infrastructure.persistence.council_configuration_store import (
+    CouncilConfigurationConflictError,
+    CouncilConfigurationError,
+    CouncilConfigurationStore,
 )
 from phase4.agent_registry.bot_profiles import (
     BotBudgetPolicy,
@@ -24,6 +40,16 @@ from phase4.agent_registry.bot_profiles import (
     BotProfile,
     ModelDeployment,
     ProviderConnection,
+)
+from phase4.council.configuration import (
+    AllocationMember,
+    AutonomyLevel,
+    CouncilRoleDefinition,
+    CouncilTemplate,
+    IndependenceLevel,
+    ProtocolFunction,
+    RoleAllocationPool,
+    TemplateStage,
 )
 from runtime.context import ContextError
 from runtime.core import CommandAuthorizationError, DORRuntime, NotFoundError
@@ -90,11 +116,16 @@ def _translate(operation):
         return operation()
     except BotCatalogNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "not_found"}) from exc
-    except BotCatalogConflictError as exc:
+    except (BotCatalogConflictError, CouncilConfigurationConflictError) as exc:
         raise HTTPException(
             status_code=409, detail={"error": "version_conflict"}
         ) from exc
-    except (BotCatalogValidationError, TypeError, ValueError) as exc:
+    except (
+        BotCatalogValidationError,
+        CouncilConfigurationError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise HTTPException(
             status_code=422, detail={"error": "invalid_bot_catalog", "reason": str(exc)}
         ) from exc
@@ -319,3 +350,157 @@ def disable_profile(
     return _profile(
         _translate(lambda: service.disable_profile(organization_id, bot_profile_id))
     )
+
+
+def _role(value: CouncilRoleDefinition) -> RoleResponse:
+    return RoleResponse(
+        **value.canonical(), fingerprint=value.fingerprint, created_at=value.created_at
+    )
+
+
+def _template(value: CouncilTemplate) -> TemplateResponse:
+    return TemplateResponse(
+        template_id=value.template_id,
+        organization_id=value.organization_id,
+        name=value.name,
+        stages=[StageRequest(**stage.canonical()) for stage in value.stages],
+        approved_by=value.approved_by,
+        enabled=value.enabled,
+        version=value.version,
+        fingerprint=value.fingerprint,
+        created_at=value.created_at,
+    )
+
+
+def _allocation(value: RoleAllocationPool) -> AllocationResponse:
+    return AllocationResponse(
+        allocation_id=value.allocation_id,
+        organization_id=value.organization_id,
+        role_id=value.role_id,
+        role_version=value.role_version,
+        members=[member.canonical() for member in value.members],
+        independence_level=value.independence_level.value,
+        autonomy_level=value.autonomy_level.value,
+        hard_constraints=dict(value.hard_constraints),
+        approved_by=value.approved_by,
+        enabled=value.enabled,
+        version=value.version,
+        fingerprint=value.fingerprint,
+        created_at=value.created_at,
+    )
+
+
+@router.post("/roles", response_model=RoleResponse, status_code=201)
+def create_role(
+    request: RoleCreateRequest,
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _authorize(runtime, user, organization_id, request.command_id, request.role_id)
+    data = request.model_dump(exclude={"command_id", "protocol_function"})
+    data["required_capabilities"] = tuple(sorted(set(data["required_capabilities"])))
+    value = CouncilRoleDefinition(
+        **data,
+        organization_id=organization_id,
+        protocol_function=ProtocolFunction(request.protocol_function),
+    )
+    return _role(_translate(lambda: store.add_role(value)))
+
+
+@router.get("/roles", response_model=list[RoleResponse])
+def list_roles(
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _membership(runtime, user, organization_id)
+    return [_role(value) for value in store.list_roles(organization_id)]
+
+
+@router.post("/templates", response_model=TemplateResponse, status_code=201)
+def create_template(
+    request: TemplateCreateRequest,
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _authorize(runtime, user, organization_id, request.command_id, request.template_id)
+    stages = tuple(
+        TemplateStage(
+            stage_id=stage.stage_id,
+            protocol_function=ProtocolFunction(stage.protocol_function),
+            role_versions=tuple(sorted(set(stage.role_versions))),
+            minimum_assignments=stage.minimum_assignments,
+            maximum_assignments=stage.maximum_assignments,
+            parallel=stage.parallel,
+            blocking=stage.blocking,
+        )
+        for stage in request.stages
+    )
+    value = CouncilTemplate(
+        template_id=request.template_id,
+        organization_id=organization_id,
+        name=request.name,
+        stages=stages,
+        approved_by=request.approved_by,
+        enabled=request.enabled,
+    )
+    return _template(_translate(lambda: store.add_template(value)))
+
+
+@router.get("/templates", response_model=list[TemplateResponse])
+def list_templates(
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _membership(runtime, user, organization_id)
+    return [_template(value) for value in store.list_templates(organization_id)]
+
+
+@router.post("/allocations", response_model=AllocationResponse, status_code=201)
+def create_allocation(
+    request: AllocationCreateRequest,
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _authorize(
+        runtime, user, organization_id, request.command_id, request.allocation_id
+    )
+    value = RoleAllocationPool(
+        allocation_id=request.allocation_id,
+        organization_id=organization_id,
+        role_id=request.role_id,
+        role_version=request.role_version,
+        members=tuple(
+            AllocationMember(**member.model_dump()) for member in request.members
+        ),
+        independence_level=IndependenceLevel(request.independence_level),
+        autonomy_level=AutonomyLevel(request.autonomy_level),
+        hard_constraints=tuple(sorted(request.hard_constraints.items())),
+        approved_by=request.approved_by,
+        enabled=request.enabled,
+    )
+    return _allocation(_translate(lambda: store.add_allocation(value)))
+
+
+@router.get("/allocations/{allocation_id}", response_model=AllocationResponse)
+def get_allocation(
+    allocation_id: str,
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    store: CouncilConfigurationStore = Depends(get_council_configuration_store),
+):
+    _membership(runtime, user, organization_id)
+    value = store.get_allocation(organization_id, allocation_id)
+    if value is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return _allocation(value)

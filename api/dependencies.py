@@ -5,6 +5,9 @@ from functools import lru_cache
 from pathlib import Path
 
 from infrastructure.persistence.bot_catalog_store import BotCatalogStore
+from infrastructure.persistence.council_configuration_store import (
+    CouncilConfigurationStore,
+)
 from infrastructure.persistence.llm_replay_store import SQLAlchemyLLMReplayStore
 from infrastructure.runtime.db import build_session_factory
 from phase4.agent_registry import AgentRegistry
@@ -76,6 +79,14 @@ def get_bot_catalog_service() -> BotCatalogService:
             )
         ),
         get_agent_registry(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_council_configuration_store() -> CouncilConfigurationStore:
+    """Build the tenant-scoped Council configuration persistence boundary."""
+    return CouncilConfigurationStore(
+        build_session_factory(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db"))
     )
 
 

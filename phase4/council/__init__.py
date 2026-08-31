@@ -4,6 +4,16 @@ Orchestrates multi-agent deliberation cycles, evidence-backed disputes,
 and consensus threshold evaluations.
 """
 
+from .configuration import (
+    AllocationMember,
+    AutonomyLevel,
+    CouncilRoleDefinition,
+    CouncilTemplate,
+    IndependenceLevel,
+    ProtocolFunction,
+    RoleAllocationPool,
+    TemplateStage,
+)
 from .dispute import DisputeProtocol, DisputeProtocolError
 from .execution_events import (
     CouncilEventBindingError,
@@ -53,6 +63,8 @@ from .store import (
 )
 
 __all__ = [
+    "AllocationMember",
+    "AutonomyLevel",
     "ROLE_PERSONAS",
     "CouncilAgenda",
     "CouncilConflictError",
@@ -70,6 +82,7 @@ __all__ = [
     "CouncilProviderError",
     "CouncilProviderResponseError",
     "CouncilRiskEvaluator",
+    "CouncilRoleDefinition",
     "CouncilRole",
     "CouncilRoleAssignment",
     "CouncilRuntimeEventType",
@@ -81,6 +94,7 @@ __all__ = [
     "CouncilTurnKind",
     "CouncilTurnRequest",
     "CouncilTurnResponse",
+    "CouncilTemplate",
     "DefaultCouncilRiskEvaluator",
     "DeliberationConfig",
     "DeliberationError",
@@ -90,9 +104,13 @@ __all__ = [
     "DisputeProtocolError",
     "DisputeStatus",
     "ExecutionFailedEvent",
+    "IndependenceLevel",
     "PersistedDeliberation",
+    "ProtocolFunction",
+    "RoleAllocationPool",
     "RolePersona",
     "SessionState",
+    "TemplateStage",
     "Vote",
     "execution_failure_event_from_result",
 ]
