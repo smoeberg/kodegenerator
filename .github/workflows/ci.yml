@@ -62,8 +62,9 @@ jobs:
         run: |
           set -euo pipefail
           heads="$(alembic heads)"
+          expected="$(python -c 'import json; print(json.load(open("docs/CURRENT_STATE.json"))["canonical_alembic_head"])')"
           printf '%s\n' "$heads"
-          printf '%s\n' "$heads" | grep -Eq '^020_bot_selection_assignments[[:space:]]+\(head\)$'
+          test "$heads" = "$expected (head)"
           test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
 
       - name: Verify clean database migration
