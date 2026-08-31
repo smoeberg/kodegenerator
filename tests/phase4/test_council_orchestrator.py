@@ -151,6 +151,7 @@ def test_full_cycle_persists_and_returns_readiness(
         registry=_registry(),
         provider=provider,
         store=store,
+        legacy_assignments=True,
     )
 
     result = orchestrator.run(
@@ -189,6 +190,7 @@ def test_vote_consensus_without_evidence_is_readiness_blocked(
         registry=_registry(),
         provider=DeterministicFakeCouncilProvider(script),
         store=store,
+        legacy_assignments=True,
     ).run(
         hypothesis=hypothesis,
         binding=binding,
@@ -212,6 +214,7 @@ def test_required_role_is_fail_closed_before_session_creation(
         registry=_registry(include_qa=False),
         provider=provider,
         store=store,
+        legacy_assignments=True,
     )
 
     with pytest.raises(CouncilStartError, match="qa_redteam"):
@@ -254,6 +257,7 @@ def test_one_agent_cannot_fill_independent_roles(runtime, hypothesis, binding, a
         registry=registry,
         provider=DeterministicFakeCouncilProvider({}),
         store=store,
+        legacy_assignments=True,
     )
 
     with pytest.raises(CouncilStartError, match="distinct agent identities"):
@@ -296,12 +300,16 @@ def test_security_dispute_requires_evidence_and_derives_high_risk(
                     turn_id=request.turn_id,
                     agent_identity=request.agent_identity,
                     role=request.role,
-                    assessment="Isolation is proven by the organization-bound worker test.",
+                    assessment=(
+                        "Isolation is proven by the organization-bound worker test."
+                    ),
                     resolutions=tuple(
                         CouncilDisputeResolution(
                             dispute_id=dispute.dispute_id,
                             evidence=resolution_evidence,
-                            resolution_note="Verified by the organization isolation suite",
+                            resolution_note=(
+                                "Verified by the organization isolation suite"
+                            ),
                         )
                         for dispute in request.open_disputes
                     ),
@@ -312,6 +320,7 @@ def test_security_dispute_requires_evidence_and_derives_high_risk(
         registry=_registry(),
         provider=ResolutionProvider(),
         store=store,
+        legacy_assignments=True,
     ).run(
         hypothesis=hypothesis,
         binding=binding,
@@ -347,6 +356,7 @@ def test_unresolved_dispute_aborts_round_without_partial_persistence(
         registry=_registry(),
         provider=provider,
         store=store,
+        legacy_assignments=True,
     )
 
     with pytest.raises(CouncilProviderError, match="bounded retries"):
@@ -410,6 +420,7 @@ def test_provider_binding_mismatch_retries_then_fails_closed(
         registry=_registry(),
         provider=provider,
         store=store,
+        legacy_assignments=True,
     )
 
     with pytest.raises(CouncilProviderError, match="bounded retries"):
@@ -459,7 +470,9 @@ def test_round_checkpoint_recovers_with_new_orchestrator_instance(
                     turn_id=request.turn_id,
                     agent_identity=request.agent_identity,
                     role=request.role,
-                    assessment="The dispute was tested but the reviewer may retain its vote.",
+                    assessment=(
+                        "The dispute was tested but the reviewer may retain its vote."
+                    ),
                     resolutions=tuple(
                         CouncilDisputeResolution(
                             dispute_id=dispute.dispute_id,
@@ -479,6 +492,7 @@ def test_round_checkpoint_recovers_with_new_orchestrator_instance(
         registry=_registry(),
         provider=ResolvingProvider(),
         store=store,
+        legacy_assignments=True,
         config=config,
     ).run(
         hypothesis=hypothesis,
@@ -495,6 +509,7 @@ def test_round_checkpoint_recovers_with_new_orchestrator_instance(
         registry=_registry(),
         provider=ResolvingProvider(),
         store=store,
+        legacy_assignments=True,
         config=config,
     ).run(
         hypothesis=hypothesis,
@@ -558,6 +573,7 @@ def test_pending_anti_tube_pivot_preempts_provider(
         registry=_registry(),
         provider=provider,
         store=store,
+        legacy_assignments=True,
     ).run(
         hypothesis=hypothesis,
         binding=binding,

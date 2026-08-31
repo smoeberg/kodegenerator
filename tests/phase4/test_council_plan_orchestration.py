@@ -8,18 +8,22 @@ from sqlalchemy.orm import sessionmaker
 
 from infrastructure.persistence.models import Base
 from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
-from phase4.council import CouncilOrchestrator
-from phase4.council import CouncilSessionBinding
+from phase4.council import CouncilOrchestrator, CouncilSessionBinding
 from phase4.council.configuration import ProtocolFunction
 from phase4.council.orchestrator import CouncilStartError
 from phase4.council.roles import (
+    ROLE_PERSONAS,
     CouncilAgenda,
     CouncilOrchestrationOutcome,
     CouncilRole,
     CouncilTurnDecision,
     CouncilTurnKind,
 )
-from phase4.council.routing import AssignmentRoute, CouncilAssignmentPlan
+from phase4.council.routing import (
+    AssignmentRoute,
+    CouncilAssignmentPlan,
+    TemplateCouncilProviderRouter,
+)
 from phase4.council.testing import DeterministicFakeCouncilProvider
 from phase4.epistemics import Evidence, EvidenceType, Hypothesis, HypothesisStatus
 
@@ -110,32 +114,53 @@ def _approve_script(hypothesis_id: str):
             assessment=f"{role.value} approves the plan-driven design.",
             approved=True,
         )
-    script[(1, CouncilRole.PROPOSER, CouncilTurnKind.PROPOSAL)] = (
-        CouncilTurnDecision(
-            assessment="Plan-driven proposal is deterministic.",
-            evidence=(evidence,),
-        )
+    script[(1, CouncilRole.PROPOSER, CouncilTurnKind.PROPOSAL)] = CouncilTurnDecision(
+        assessment="Plan-driven proposal is deterministic.",
+        evidence=(evidence,),
     )
     return script
 
 
+class _ProviderFactory:
+    def __init__(self, provider) -> None:
+        self.provider = provider
+
+    def create(self, **_identity):
+        return self.provider
+
+
 def _route(role: CouncilRole, identity: str | None = None) -> AssignmentRoute:
-    return AssignmentRoute(
-        assignment_id=f"asg-{role.value}",
+    import hashlib
+
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    values = dict(
+        assignment_id=digest(f"asg-{role.value}"),
+        stage_id=role.value,
         role=role,
         agent_identity=identity or f"plan-{role.value}",
-        capability="council." + role.value,
-        provider_id="provider-1",
+        capability=ROLE_PERSONAS[role].capability,
+        provider_id="conn-1",
+        bot_profile_id=f"profile-{role.value}",
+        bot_profile_version=1,
+        profile_fingerprint=digest(f"profile-{role.value}"),
         connection_id="conn-1",
         connection_version=1,
+        connection_fingerprint=digest("conn-1"),
         deployment_id="deploy-1",
         deployment_revision=1,
+        deployment_fingerprint=digest("deploy-1"),
         model_id="model-1",
         model_family="model-family-1",
         prompt_version="v1",
-        protocol_function=ProtocolFunction.REVIEWER,
-        route_fingerprint=f"fp-{role.value}",
+        protocol_function=(
+            ProtocolFunction.PROPOSER
+            if role is CouncilRole.PROPOSER
+            else ProtocolFunction.REVIEWER
+        ),
     )
+    return AssignmentRoute(**values, route_fingerprint=digest(str(values)))
 
 
 def _full_plan(*, duplicate_proposer: bool = False) -> CouncilAssignmentPlan:
@@ -146,25 +171,30 @@ def _full_plan(*, duplicate_proposer: bool = False) -> CouncilAssignmentPlan:
         _route(CouncilRole.SECURITY_SKEPTIC),
         _route(CouncilRole.QA_REDTEAM),
     )
+    decision_id = "d" * 64
     return CouncilAssignmentPlan(
         run_id="run-plan-1",
-        decision_id="decision-plan-1",
+        decision_id=decision_id,
         organization_id="org-1",
         template_id="template-1",
         template_version=1,
         routes=routes,
-        plan_fingerprint="fp-plan-1",
+        plan_fingerprint=CouncilAssignmentPlan._fingerprint(
+            decision_id, "org-1", "template-1", 1, routes
+        ),
     )
 
 
-def test_plan_drives_roles_and_produces_readiness(
-    runtime, hypothesis, binding, agenda
-):
+def test_plan_drives_roles_and_produces_readiness(runtime, hypothesis, binding, agenda):
     _, store = runtime
-    provider = DeterministicFakeCouncilProvider(_approve_script(hypothesis.hypothesis_id))
+    provider = DeterministicFakeCouncilProvider(
+        _approve_script(hypothesis.hypothesis_id), provider_id="conn-1"
+    )
     result = CouncilOrchestrator(
         registry=_registry(),
-        provider=provider,
+        provider_router=TemplateCouncilProviderRouter(
+            {"conn-1": _ProviderFactory(provider)}
+        ),
         store=store,
         legacy_assignments=False,
     ).run(
@@ -179,26 +209,37 @@ def test_plan_drives_roles_and_produces_readiness(
     assert result.readiness.is_decision_ready is True
 
 
-def test_plan_missing_role_fails_closed(
-    runtime, hypothesis, binding, agenda
-):
+def test_plan_missing_role_fails_closed(runtime, hypothesis, binding, agenda):
     _, store = runtime
-    provider = DeterministicFakeCouncilProvider(_approve_script(hypothesis.hypothesis_id))
+    provider = DeterministicFakeCouncilProvider(
+        _approve_script(hypothesis.hypothesis_id), provider_id="conn-1"
+    )
     orchestrator = CouncilOrchestrator(
         registry=_registry(),
-        provider=provider,
+        provider_router=TemplateCouncilProviderRouter(
+            {"conn-1": _ProviderFactory(provider)}
+        ),
         store=store,
         legacy_assignments=False,
     )
     missing = _full_plan()
+    missing_routes = tuple(
+        r for r in missing.routes if r.role is not CouncilRole.ARCHITECT
+    )
     missing = CouncilAssignmentPlan(
         run_id=missing.run_id,
         decision_id=missing.decision_id,
         organization_id=missing.organization_id,
         template_id=missing.template_id,
         template_version=missing.template_version,
-        routes=tuple(r for r in missing.routes if r.role is not CouncilRole.ARCHITECT),
-        plan_fingerprint=missing.plan_fingerprint,
+        routes=missing_routes,
+        plan_fingerprint=CouncilAssignmentPlan._fingerprint(
+            missing.decision_id,
+            missing.organization_id,
+            missing.template_id,
+            missing.template_version,
+            missing_routes,
+        ),
     )
     with pytest.raises(CouncilStartError, match="does not cover"):
         orchestrator.run(
@@ -210,14 +251,16 @@ def test_plan_missing_role_fails_closed(
         )
 
 
-def test_plan_distinct_agent_identities_required(
-    runtime, hypothesis, binding, agenda
-):
+def test_plan_distinct_agent_identities_required(runtime, hypothesis, binding, agenda):
     _, store = runtime
-    provider = DeterministicFakeCouncilProvider(_approve_script(hypothesis.hypothesis_id))
+    provider = DeterministicFakeCouncilProvider(
+        _approve_script(hypothesis.hypothesis_id), provider_id="conn-1"
+    )
     orchestrator = CouncilOrchestrator(
         registry=_registry(),
-        provider=provider,
+        provider_router=TemplateCouncilProviderRouter(
+            {"conn-1": _ProviderFactory(provider)}
+        ),
         store=store,
         legacy_assignments=False,
     )

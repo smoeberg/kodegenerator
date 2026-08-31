@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from phase4.epistemics.models import Evidence, Hypothesis
 
+from .configuration import ProtocolFunction
 from .models import Dispute
 from .runtime_models import CouncilSessionBinding
 
@@ -72,7 +73,8 @@ ROLE_PERSONAS: dict[CouncilRole, RolePersona] = {
         role=CouncilRole.SECURITY_SKEPTIC,
         capability="council.review.security",
         system_prompt=(
-            "Assess authorization, isolation, provenance, concurrency, resource limits, "
+            "Assess authorization, isolation, provenance, concurrency, "
+            "resource limits, "
             "secrets, and supply-chain risk. Do not invent findings."
         ),
     ),
@@ -186,6 +188,25 @@ class CouncilDisputeResolution(BaseModel):
     resolution_note: str = Field(min_length=1)
 
 
+class CouncilTurnRouteBinding(BaseModel):
+    """Complete frozen assignment/provider identity included in a turn digest."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    assignment_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    route_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    connection_id: str = Field(min_length=1)
+    connection_version: int = Field(ge=1)
+    deployment_id: str = Field(min_length=1)
+    deployment_revision: int = Field(ge=1)
+    model_id: str = Field(min_length=1)
+    model_family: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+    role: CouncilRole
+    protocol_function: ProtocolFunction
+    agent_identity: str = Field(min_length=1)
+
+
 class CouncilTurnRequest(BaseModel):
     """One content-bound, retry-safe provider request."""
 
@@ -202,6 +223,7 @@ class CouncilTurnRequest(BaseModel):
     binding: CouncilSessionBinding
     agenda: CouncilAgenda
     hypothesis: Hypothesis
+    route: CouncilTurnRouteBinding | None = None
     open_disputes: tuple[Dispute, ...] = ()
 
     @classmethod
@@ -217,6 +239,7 @@ class CouncilTurnRequest(BaseModel):
         binding: CouncilSessionBinding,
         agenda: CouncilAgenda,
         hypothesis: Hypothesis,
+        route: CouncilTurnRouteBinding | None = None,
         open_disputes: tuple[Dispute, ...] = (),
     ) -> CouncilTurnRequest:
         identity = cls._identity(
@@ -229,6 +252,7 @@ class CouncilTurnRequest(BaseModel):
             binding=binding,
             agenda=agenda,
             hypothesis=hypothesis,
+            route=route,
             open_disputes=open_disputes,
         )
         return cls(
@@ -243,6 +267,7 @@ class CouncilTurnRequest(BaseModel):
             binding=binding,
             agenda=agenda,
             hypothesis=hypothesis.model_copy(deep=True),
+            route=route,
             open_disputes=tuple(d.model_copy(deep=True) for d in open_disputes),
         )
 
@@ -258,6 +283,7 @@ class CouncilTurnRequest(BaseModel):
         binding: CouncilSessionBinding,
         agenda: CouncilAgenda,
         hypothesis: Hypothesis,
+        route: CouncilTurnRouteBinding | None,
         open_disputes: tuple[Dispute, ...],
     ) -> dict[str, Any]:
         return {
@@ -273,6 +299,7 @@ class CouncilTurnRequest(BaseModel):
                 mode="json",
                 exclude={"updated_at"},
             ),
+            "route": None if route is None else route.model_dump(mode="json"),
             "open_disputes": [
                 {
                     "dispute_id": dispute.dispute_id,
@@ -289,6 +316,12 @@ class CouncilTurnRequest(BaseModel):
     def validate_identity(self) -> CouncilTurnRequest:
         if self.persona != ROLE_PERSONAS[self.role]:
             raise ValueError("turn persona does not match the assigned role")
+        if self.route is not None and (
+            self.route.role is not self.role
+            or self.route.agent_identity != self.agent_identity
+            or self.provider_id != self.route.connection_id
+        ):
+            raise ValueError("turn route does not match role, agent, and provider")
         expected = _digest(
             self._identity(
                 provider_id=self.provider_id,
@@ -300,6 +333,7 @@ class CouncilTurnRequest(BaseModel):
                 binding=self.binding,
                 agenda=self.agenda,
                 hypothesis=self.hypothesis,
+                route=self.route,
                 open_disputes=self.open_disputes,
             )
         )
