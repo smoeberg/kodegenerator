@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "canonical_branch": "main",
-  "canonical_alembic_head": "021_bot_evaluation_performance",
+  "canonical_alembic_head": "022_factory_work_candidates",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",
