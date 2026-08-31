@@ -222,6 +222,8 @@ class CandidateDelivery:
             not _SHA1.fullmatch(item) for item in self.commit_shas
         ):
             raise ValueError("candidate requires ordered exact commit SHAs")
+        if self.commit_shas[-1] != self.head_sha:
+            raise ValueError("candidate head must equal its final ordered commit")
         if (
             self.affected_paths != tuple(sorted(set(self.affected_paths)))
             or not self.attestations
