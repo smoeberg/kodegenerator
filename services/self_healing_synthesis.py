@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from domain.task import Task
 from domain.verification import Evidence
@@ -95,6 +95,7 @@ class SelfHealingSynthesisLoop:
     verifier: VerificationRunner | None = None
     renderer: FeedbackRenderer | None = None
     max_attempts: int = 3
+    error_ticker: object | None = None
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1 or self.max_attempts > 5:
@@ -219,12 +220,80 @@ class SelfHealingSynthesisLoop:
                     ),
                 )
 
+        if self.error_ticker is not None:
+            ticker_note = self._report_exhaustion(task, architecture, attempts)
+        else:
+            ticker_note = ""
+
         return SelfHealingOutcome(
             task_id=str(task.id),
             module_name=architecture.module_name,
             converged=False,
             attempts=tuple(attempts),
-            reason=f"max_attempts ({self.max_attempts}) reached without convergence",
+            reason=f"max_attempts ({self.max_attempts}) reached without convergence"
+            + (f"; {ticker_note}" if ticker_note else ""),
+        )
+
+    def _report_exhaustion(
+        self,
+        task: Task,
+        architecture: ArchitectureSpec,
+        attempts: tuple[SelfHealingAttempt, ...],
+    ) -> str:
+        """Best-effort Redmine ticket for an exhausted self-healing loop."""
+        if self.error_ticker is None:
+            return ""
+        last = attempts[-1] if attempts else None
+        error_text = ""
+        if last is not None and last.evidence is not None:
+            error_text = str(last.evidence.statement or "")
+        if not error_text and last is not None and last.diagnostic is not None:
+            error_text = str(last.diagnostic.message or last.diagnostic.details or "")
+        if not error_text:
+            error_text = "self-healing exhausted without diagnostic detail"
+        context = {
+            "task_id": task.id,
+            "attempts": len(attempts),
+            "max_attempts": self.max_attempts,
+            "reason": "max_attempts reached without convergence",
+        }
+        try:
+            result = self.error_ticker.report_self_healing_exhaustion(
+                module=architecture.module_name,
+                error=error_text,
+                attempts=len(attempts),
+                context=context,
+            )
+        except Exception as exc:  # noqa: BLE001 - pragma: no cover - defensive only
+            return f"redmine-ticketing-error: {exc}"
+        if result.ok:
+            return f"redmine-issue-{result.issue.id}"
+        return f"redmine-{result.error}"
+
+    @classmethod
+    def with_redmine_from_env(
+        cls, env: dict[str, str] | None = None, **overrides: Any
+    ) -> SelfHealingSynthesisLoop:
+        """Build a loop wired to Redmine from ``REDMINE_*`` variables.
+
+        Falls back to a plain loop (ticketing disabled) when no URL is
+        configured, keeping tests and development green.
+        """
+        from services.redmine_contracts import redmine_config_from_env
+
+        config = redmine_config_from_env(env)
+        if config is None:
+            return cls(**overrides)
+        from services.redmine_api import RedmineAPIClient
+        from services.redmine_error_ticketing import RedmineErrorTickerService
+
+        return cls(
+            error_ticker=RedmineErrorTickerService(
+                RedmineAPIClient(config),
+                use_deduplication=True,
+                default_severity=config.default_severity,
+            ),
+            **overrides,
         )
 
 
