@@ -1,4 +1,5 @@
 """Durable database-backed queue primitives for Phase 7 workers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,12 +23,16 @@ class QueueMessageModel(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     topic: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(
+        String(32), index=True, nullable=False, default="pending"
+    )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(nullable=False)
     lease_until: Mapped[datetime | None] = mapped_column(nullable=True)
     lease_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    worker_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -76,14 +81,24 @@ class DatabaseQueue:
         apply_tenant_context(session, self.organization_id)
         now = datetime.now(timezone.utc)
         message_id = message_id or str(uuid4())
-        session.add(QueueMessageModel(
-            id=message_id, organization_id=self.organization_id,
-            topic=topic, payload=payload, status="pending", attempts=0,
-            available_at=now, created_at=now, updated_at=now,
-        ))
+        session.add(
+            QueueMessageModel(
+                id=message_id,
+                organization_id=self.organization_id,
+                topic=topic,
+                payload=payload,
+                status="pending",
+                attempts=0,
+                available_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
         return message_id
 
-    def publish(self, topic: str, payload: dict[str, Any], message_id: str | None = None) -> str:
+    def publish(
+        self, topic: str, payload: dict[str, Any], message_id: str | None = None
+    ) -> str:
         with self.session_factory() as session:
             apply_tenant_context(session, self.organization_id)
             message_id = self.enqueue_in_session(session, topic, payload, message_id)
@@ -94,59 +109,94 @@ class DatabaseQueue:
         if not worker_id.strip():
             raise ValueError("worker_id must be non-empty")
         now = datetime.now(timezone.utc)
-        with self.session_factory() as session:
-            apply_tenant_context(session, self.organization_id)
-            session.execute(
-                update(QueueMessageModel)
-                .where(
-                    QueueMessageModel.topic == topic,
-                    QueueMessageModel.organization_id == self.organization_id,
-                    QueueMessageModel.attempts >= self.max_attempts,
-                    (
-                        (QueueMessageModel.status == "pending")
-                        | (
-                            (QueueMessageModel.status == "leased")
-                            & (QueueMessageModel.lease_until < now)
-                        )
-                    ),
+        # A select followed by an ORM mutation is not a claim boundary on
+        # SQLite, where FOR UPDATE is ignored. Compare-and-set the selected
+        # version so every supported database elects exactly one claimant.
+        for _ in range(100):
+            with self.session_factory() as session:
+                apply_tenant_context(session, self.organization_id)
+                session.execute(
+                    update(QueueMessageModel)
+                    .where(
+                        QueueMessageModel.topic == topic,
+                        QueueMessageModel.organization_id == self.organization_id,
+                        QueueMessageModel.attempts >= self.max_attempts,
+                        (
+                            (QueueMessageModel.status == "pending")
+                            | (
+                                (QueueMessageModel.status == "leased")
+                                & (QueueMessageModel.lease_until < now)
+                            )
+                        ),
+                    )
+                    .values(
+                        status="dead_letter",
+                        worker_id=None,
+                        lease_id=None,
+                        lease_until=None,
+                        updated_at=now,
+                    )
                 )
-                .values(
-                    status="dead_letter",
-                    worker_id=None,
-                    lease_id=None,
-                    lease_until=None,
-                    updated_at=now,
+                row = session.scalar(
+                    select(QueueMessageModel)
+                    .where(
+                        QueueMessageModel.topic == topic,
+                        QueueMessageModel.organization_id == self.organization_id,
+                        QueueMessageModel.available_at <= now,
+                        QueueMessageModel.attempts < self.max_attempts,
+                        (
+                            (QueueMessageModel.status == "pending")
+                            | (
+                                (QueueMessageModel.status == "leased")
+                                & (QueueMessageModel.lease_until < now)
+                            )
+                        ),
+                    )
+                    .order_by(QueueMessageModel.created_at, QueueMessageModel.id)
+                    .limit(1)
                 )
-            )
-            row = session.scalar(
-                select(QueueMessageModel)
-                .where(
-                    QueueMessageModel.topic == topic,
-                    QueueMessageModel.organization_id == self.organization_id,
-                    QueueMessageModel.available_at <= now,
-                    QueueMessageModel.attempts < self.max_attempts,
-                    ((QueueMessageModel.status == "pending") | ((QueueMessageModel.status == "leased") & (QueueMessageModel.lease_until < now))),
+                if row is None:
+                    session.commit()
+                    return None
+                lease_id = str(uuid4())
+                previous_status = row.status
+                previous_lease_id = row.lease_id
+                previous_attempts = row.attempts
+                claim = session.execute(
+                    update(QueueMessageModel)
+                    .where(
+                        QueueMessageModel.organization_id == self.organization_id,
+                        QueueMessageModel.id == row.id,
+                        QueueMessageModel.status == previous_status,
+                        QueueMessageModel.attempts == previous_attempts,
+                        QueueMessageModel.lease_id == previous_lease_id
+                        if previous_lease_id is not None
+                        else QueueMessageModel.lease_id.is_(None),
+                    )
+                    .values(
+                        status="leased",
+                        worker_id=worker_id,
+                        attempts=previous_attempts + 1,
+                        lease_id=lease_id,
+                        lease_until=now + timedelta(seconds=self.lease_seconds),
+                        updated_at=now,
+                    )
                 )
-                .order_by(QueueMessageModel.created_at)
-                .with_for_update(skip_locked=True)
-                .limit(1)
-            )
-            if row is None:
-                # Persist any exhausted-message dead-letter transitions made
-                # before the claim query.
-                session.commit()
-                return None
-            row.status = "leased"
-            row.worker_id = worker_id
-            row.attempts += 1
-            row.lease_id = str(uuid4())
-            row.lease_until = now + timedelta(seconds=self.lease_seconds)
-            row.updated_at = now
-            session.commit()
-            return QueueMessage(
-                row.id, row.organization_id, row.topic, row.payload,
-                row.attempts, row.lease_id,
-            )
+                if claim.rowcount == 1:
+                    payload = dict(row.payload)
+                    message_id = row.id
+                    organization_id = row.organization_id
+                    session.commit()
+                    return QueueMessage(
+                        message_id,
+                        organization_id,
+                        topic,
+                        payload,
+                        previous_attempts + 1,
+                        lease_id,
+                    )
+                session.rollback()
+        raise RuntimeError("queue claim contention exceeded retry limit")
 
     def ack(self, message_id: str, worker_id: str, lease_id: str) -> None:
         self._transition(message_id, worker_id, lease_id, "completed", None)
@@ -195,11 +245,16 @@ class DatabaseQueue:
         now = datetime.now(timezone.utc)
         with self.session_factory() as session:
             apply_tenant_context(session, self.organization_id)
-            rows = session.scalars(select(QueueMessageModel).where(
-                QueueMessageModel.organization_id == self.organization_id,
-                QueueMessageModel.status == "leased",
-                QueueMessageModel.lease_until < now,
-            ).order_by(QueueMessageModel.updated_at).limit(limit)).all()
+            rows = session.scalars(
+                select(QueueMessageModel)
+                .where(
+                    QueueMessageModel.organization_id == self.organization_id,
+                    QueueMessageModel.status == "leased",
+                    QueueMessageModel.lease_until < now,
+                )
+                .order_by(QueueMessageModel.updated_at)
+                .limit(limit)
+            ).all()
             for row in rows:
                 row.status = (
                     "dead_letter" if row.attempts >= self.max_attempts else "pending"
@@ -218,7 +273,7 @@ class DatabaseQueue:
             apply_tenant_context(session, self.organization_id)
             query = select(QueueMessageModel).where(
                 QueueMessageModel.organization_id == self.organization_id,
-                QueueMessageModel.status == "dead_letter"
+                QueueMessageModel.status == "dead_letter",
             )
             if topic is not None:
                 query = query.where(QueueMessageModel.topic == topic)
@@ -237,20 +292,24 @@ class DatabaseQueue:
         now = datetime.now(timezone.utc)
         with self.session_factory() as session:
             apply_tenant_context(session, self.organization_id)
-            result = session.execute(update(QueueMessageModel).where(
-                QueueMessageModel.id == message_id,
-                QueueMessageModel.organization_id == self.organization_id,
-                QueueMessageModel.status == "leased",
-                QueueMessageModel.worker_id == worker_id,
-                QueueMessageModel.lease_id == lease_id,
-            ).values(
-                status=status,
-                worker_id=None,
-                lease_id=None,
-                lease_until=None,
-                updated_at=now,
-                last_error=error,
-            ))
+            result = session.execute(
+                update(QueueMessageModel)
+                .where(
+                    QueueMessageModel.id == message_id,
+                    QueueMessageModel.organization_id == self.organization_id,
+                    QueueMessageModel.status == "leased",
+                    QueueMessageModel.worker_id == worker_id,
+                    QueueMessageModel.lease_id == lease_id,
+                )
+                .values(
+                    status=status,
+                    worker_id=None,
+                    lease_id=None,
+                    lease_until=None,
+                    updated_at=now,
+                    last_error=error,
+                )
+            )
             if result.rowcount != 1:
                 raise ValueError("Queue message is not leased by this worker")
             session.commit()

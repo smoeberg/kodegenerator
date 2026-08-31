@@ -1,22 +1,13 @@
-"""Execution modules and pipeline executor exports."""
+"""Execution package with lazy compatibility exports.
 
-from execution.pipeline_executors import (
-    ArchitectureExecutor,
-    CodeExecutor,
-    ContractsExecutor,
-    DeployExecutor,
-    ReleaseExecutor,
-    RunTestsExecutor,
-    TestsExecutor,
-    build_pipeline_executor_registry,
-)
+Importing a focused execution submodule must not initialize every deploy,
+release, HTTP, and provider adapter. Compatibility names remain available via
+PEP 562 and load the canonical pipeline module only when explicitly requested.
+"""
 
-# PR #126 introduces TestGeneratorExecutor as the canonical name; TestsExecutor
-# remains an alias for backwards compatibility.
-try:
-    from execution.pipeline_executors import TestGeneratorExecutor
-except ImportError:  # pragma: no cover - older pipeline_executors without alias
-    TestGeneratorExecutor = TestsExecutor  # type: ignore[misc,assignment]
+from __future__ import annotations
+
+from typing import Any
 
 __all__ = [
     "ArchitectureExecutor",
@@ -29,3 +20,11 @@ __all__ = [
     "ReleaseExecutor",
     "build_pipeline_executor_registry",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from execution import pipeline_executors
+
+    return getattr(pipeline_executors, name)

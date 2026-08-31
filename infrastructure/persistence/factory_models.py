@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .models import Base
@@ -62,4 +62,15 @@ class FactoryCandidateSelectionModel(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    __table_args__ = (
+        Index(
+            "uq_factory_candidate_winner",
+            "organization_id",
+            "logical_task_id",
+            "work_package_fingerprint",
+            unique=True,
+            postgresql_where=text("winner_candidate_id IS NOT NULL"),
+            sqlite_where=text("winner_candidate_id IS NOT NULL"),
+        ),
     )
