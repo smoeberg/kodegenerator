@@ -7,6 +7,7 @@ Interaktiv Control Plane GUI (Streamlit) der gør det menneskelige team til **Co
 | Sektion | Beskrivelse |
 |---------|-------------|
 | **Multi-bot Control Plane** | Live, tenant-scoped administration af provider-forbindelser, deployments, botprofiler, council-roller/templates, allokeringspools og frozen selections |
+| **Evidence Inspector** | Read-only opslag af evaluations, performance-observationer/snapshots, work packages, candidates, selections og integrationsreceipts |
 | **System Generator & Workflow** | End-to-end wizard: Krav → AI-råd → HITL-arkitektur → WBS → Kode/verifikation (`workflow_cockpit.py`) |
 | **Project & Workspace Overview** | Projekter, fremdrift i %, aktive faser og task-grafer |
 | **Decision Cockpit** | Udestående `HUMAN_REQUIRED`-beslutninger med alternativer, risikoscore, AI-rådets stemmer og 1-klik handlinger |

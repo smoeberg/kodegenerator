@@ -13,9 +13,21 @@ authorization before accepting WebSocket or SSE traffic.
 - Implementation Agent
 - Decisions
 - Pipeline and Pipeline Gates
+- Bot Governance, Bot Selection, and read-only Bot Evidence
 
 Health and token issuance are the only intentionally unauthenticated HTTP
 boundaries. The internal Swarm dashboard module is not mounted.
+
+## Governed multi-bot evidence
+
+`/api/v1/bot-evidence` is an authenticated, organization-scoped, read-only
+surface for immutable evaluation, performance, factory-candidate, and
+integration evidence. Every response contains the organization, evidence
+type, immutable ID, verified fingerprint, and its structured payload.
+
+The durable store reconstructs and fingerprint-validates the domain object
+before it is returned. Callers cannot mutate evidence through this router, and
+provider credentials or secret values are never included in its payloads.
 
 ## Retired endpoints
 

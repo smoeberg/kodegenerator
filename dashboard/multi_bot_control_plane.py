@@ -186,32 +186,37 @@ def _selection_tab(client: ControlPlaneAPI) -> None:
                 st.error(str(exc))
 
 
-def _evidence_tab() -> None:
-    st.warning(
-        "Evaluation/performance og factory-work er implementeret som durable "
-        "domæne-/persistencelag, men er endnu ikke eksponeret gennem den "
-        "kanoniske HTTP API. GUI'en viser derfor ikke mock-evidens. Fase 10 skal "
-        "åbne read-only, tenant-scopede endpoints før data kan vises her."
+def _evidence_tab(client: ControlPlaneAPI) -> None:
+    st.markdown(
+        "Læs immutable, tenant-scoped evidens direkte fra de durable stores. "
+        "Fanen kan ikke ændre historik eller resultater."
     )
-    st.table(
+    evidence_type = st.selectbox(
+        "Evidenstype",
         [
-            {
-                "område": "Evaluation records og snapshots",
-                "HTTP-kontrakt": "mangler",
-                "UI": "blokeret fail-closed",
-            },
-            {
-                "område": "Work packages og candidates",
-                "HTTP-kontrakt": "mangler",
-                "UI": "blokeret fail-closed",
-            },
-            {
-                "område": "Integration receipts",
-                "HTTP-kontrakt": "mangler",
-                "UI": "blokeret fail-closed",
-            },
-        ]
+            "evaluations",
+            "observations",
+            "snapshots",
+            "work-packages",
+            "candidates",
+            "candidate-selections",
+            "integration-plans",
+            "integration-receipts",
+        ],
     )
+    identity = st.text_input("Evidence ID eller plan fingerprint")
+    if st.button("Hent verificeret evidens"):
+        if not identity.strip():
+            st.error("Evidence ID er påkrævet.")
+            return
+        try:
+            evidence = client.get(f"/api/v1/bot-evidence/{evidence_type}/{identity}")
+            st.success(
+                f"{evidence['evidence_type']} · fingerprint {evidence['fingerprint']}"
+            )
+            st.json(evidence["payload"])
+        except ControlPlaneAPIError as exc:
+            st.error(str(exc))
 
 
 def render_multi_bot_control_plane() -> None:
@@ -247,4 +252,4 @@ def render_multi_bot_control_plane() -> None:
     with tabs[6]:
         _selection_tab(client)
     with tabs[7]:
-        _evidence_tab()
+        _evidence_tab(client)

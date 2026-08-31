@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from phase4.adaptation.performance import PerformanceObservation, PerformanceSnapshot
 from phase4.council.configuration import IndependenceLevel
 from phase4.verification.evaluation import (
+    EvaluationAssignmentSnapshot,
+    EvaluationCheck,
+    EvaluationOutcome,
     EvaluationRecord,
     EvaluationRubric,
     RubricCriterion,
@@ -98,6 +101,51 @@ class EvaluationStore:
         )
         self._insert(row, "evaluation already exists")
         return value
+
+    def get_evaluation(
+        self, organization_id: str, evaluation_id: str
+    ) -> EvaluationRecord | None:
+        with self._sessions() as session:
+            apply_tenant_context(session, organization_id)
+            row = session.get(EvaluationRecordModel, (organization_id, evaluation_id))
+            if row is None:
+                return None
+            value = EvaluationRecord(
+                organization_id=row.organization_id,
+                evaluation_id=row.evaluation_id,
+                subject_id=row.subject_id,
+                subject_class=row.subject_class,
+                subject_fingerprint=row.subject_fingerprint,
+                rubric_id=row.rubric_id,
+                rubric_version=row.rubric_version,
+                rubric_fingerprint=row.rubric_fingerprint,
+                base_sha=row.base_sha,
+                producer=EvaluationAssignmentSnapshot(**row.producer),
+                evaluator=(
+                    None
+                    if row.evaluator is None
+                    else EvaluationAssignmentSnapshot(**row.evaluator)
+                ),
+                checks=tuple(
+                    EvaluationCheck(
+                        criterion_id=item["criterion_id"],
+                        passed=item["passed"],
+                        score=item["score"],
+                        evidence=tuple(item["evidence"]),
+                    )
+                    for item in row.checks
+                ),
+                semantic_evidence=tuple(row.semantic_evidence),
+                hard_failures=tuple(row.hard_failures),
+                outcome=EvaluationOutcome(row.outcome),
+                score=row.score,
+                confidence=row.confidence,
+                provenance=tuple(tuple(item) for item in row.provenance),
+                created_at=_utc(row.created_at),
+            )
+            if value.content_fingerprint != row.fingerprint:
+                raise EvaluationStoreConflictError("evaluation fingerprint is invalid")
+            return value
 
     def append_observation(
         self, value: PerformanceObservation

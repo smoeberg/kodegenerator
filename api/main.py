@@ -51,6 +51,7 @@ _db = Database()
 from api.auth import User, get_current_active_user  # noqa: E402
 from api.endpoints import (  # noqa: E402
     auth,
+    bot_evidence,
     bot_governance,
     bot_selection,
     control_plane,
@@ -117,6 +118,7 @@ if HAS_AUTH:
         decisions.router,
         pipeline.router,
         pipeline_gates.router,
+        bot_evidence.router,
         bot_governance.router,
         bot_selection.router,
     )
@@ -130,6 +132,7 @@ if HAS_AUTH:
             decisions.__name__,
             pipeline.__name__,
             pipeline_gates.__name__,
+            bot_evidence.__name__,
             bot_governance.__name__,
             bot_selection.__name__,
         )
