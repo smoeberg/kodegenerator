@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "work_package_id": "wp-workflow-481-task-003",
+  "organization_id": "org-example",
+  "workflow_id": "workflow-481",
+  "logical_task_id": "task-003",
+  "repository": "smoeberg/kodegenerator",
+  "base_sha": "1111111111111111111111111111111111111111",
+  "requirements_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+  "architecture_fingerprint": "3333333333333333333333333333333333333333333333333333333333333333",
+  "contract_fingerprints": [
+    "4444444444444444444444444444444444444444444444444444444444444444"
+  ],
+  "dependencies": ["task-001", "task-002"],
+  "acceptance_criteria": [
+    {
+      "criterion_id": "AC-003-01",
+      "description": "The API persists a tenant-scoped task assignment",
+      "required_checks": ["pytest", "tenant-isolation"]
+    }
+  ],
+  "write_scope": {
+    "allowed_paths": ["api/**", "tests/api/**"],
+    "denied_paths": ["infrastructure/database/migrations/**"]
+  },
+  "execution_mode": "competing_candidates",
+  "candidate_count": 3,
+  "role_allocation_id": "implementation-pool-v2",
+  "selection_policy_id": "quality-cost-policy-v3",
+  "risk_level": "medium",
+  "budget": {
+    "max_tokens": 120000,
+    "max_cost_minor_units": 1500,
+    "timeout_seconds": 1800,
+    "max_attempts": 3
+  },
+  "idempotency_key": "workflow-481:task-003:v1",
+  "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+}
+

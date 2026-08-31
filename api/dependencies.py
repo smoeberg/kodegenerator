@@ -4,8 +4,10 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from infrastructure.persistence.bot_catalog_store import BotCatalogStore
 from infrastructure.persistence.llm_replay_store import SQLAlchemyLLMReplayStore
 from infrastructure.runtime.db import build_session_factory
+from phase4.agent_registry import AgentRegistry
 from phase4.implementation_agent import (
     GovernedPatchExecutionRuntime,
     ImplementationAgentRuntime,
@@ -14,6 +16,7 @@ from phase4.implementation_agent import (
     canonical_python_tools,
 )
 from runtime.core import DORRuntime
+from services.bot_catalog import BotCatalogService
 from services.governed_llm import GovernedLLMRuntime
 from services.llm_adapters import OpenAIAdapter
 
@@ -55,6 +58,25 @@ def get_dor() -> DORRuntime:
     runtime = DORRuntime(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db"))
     runtime.boot()
     return runtime
+
+
+@lru_cache(maxsize=1)
+def get_agent_registry() -> AgentRegistry:
+    """Return the process-level AI-1 reference registry."""
+    return AgentRegistry()
+
+
+@lru_cache(maxsize=1)
+def get_bot_catalog_service() -> BotCatalogService:
+    """Build the tenant-scoped Bot Catalog application boundary."""
+    return BotCatalogService(
+        BotCatalogStore(
+            build_session_factory(
+                os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
+            )
+        ),
+        get_agent_registry(),
+    )
 
 
 def _positive_int_environment(name: str, default: int) -> int:

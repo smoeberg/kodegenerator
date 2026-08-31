@@ -1,0 +1,138 @@
+{
+  "schema_version": "1.0",
+  "organization_id": "org-example",
+  "connections": [
+    {
+      "connection_id": "mistral-user-01",
+      "brand": "Mistral",
+      "provider_type": "mistral-api",
+      "endpoint": "https://api.mistral.ai/v1",
+      "secret_reference": "secret://org-example/mistral-user-01",
+      "region": "eu",
+      "data_boundary": "eu",
+      "concurrency_limit": 6,
+      "enabled": true,
+      "version": 1
+    },
+    {
+      "connection_id": "mistral-user-02",
+      "brand": "Mistral",
+      "provider_type": "mistral-api",
+      "endpoint": "https://api.mistral.ai/v1",
+      "secret_reference": "secret://org-example/mistral-user-02",
+      "region": "eu",
+      "data_boundary": "eu",
+      "concurrency_limit": 6,
+      "enabled": true,
+      "version": 1
+    }
+  ],
+  "deployments": [
+    {
+      "deployment_id": "mistral-large-user-01",
+      "connection_id": "mistral-user-01",
+      "connection_version": 1,
+      "model_id": "mistral-large",
+      "model_family": "mistral-large",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 8192,
+      "structured_output": true,
+      "tool_capabilities": ["structured-output"],
+      "status": "active",
+      "revision": 1
+    },
+    {
+      "deployment_id": "mistral-large-user-02",
+      "connection_id": "mistral-user-02",
+      "connection_version": 1,
+      "model_id": "mistral-large",
+      "model_family": "mistral-large",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 8192,
+      "structured_output": true,
+      "tool_capabilities": ["structured-output"],
+      "status": "active",
+      "revision": 1
+    }
+  ],
+  "bot_profiles": [
+    {
+      "bot_profile_id": "mistral-architect-01",
+      "agent_identity": "1111111111111111111111111111111111111111111111111111111111111111",
+      "display_name": "Mistral Architect 01",
+      "deployment_id": "mistral-large-user-01",
+      "deployment_revision": 1,
+      "prompt_version": "architect-v1",
+      "capabilities": ["council.propose", "architecture.design"],
+      "permitted_tools": ["repository.read"],
+      "data_policy": "eu",
+      "concurrency_limit": 2,
+      "enabled": true,
+      "version": 1
+    },
+    {
+      "bot_profile_id": "mistral-reviewer-02",
+      "agent_identity": "2222222222222222222222222222222222222222222222222222222222222222",
+      "display_name": "Mistral Reviewer 02",
+      "deployment_id": "mistral-large-user-02",
+      "deployment_revision": 1,
+      "prompt_version": "reviewer-v1",
+      "capabilities": ["council.review.architecture"],
+      "permitted_tools": ["repository.read"],
+      "data_policy": "eu",
+      "concurrency_limit": 2,
+      "enabled": true,
+      "version": 1
+    }
+  ],
+  "roles": [
+    {
+      "role_id": "chief-architect",
+      "name": "Chief Architect",
+      "purpose": "Produce and revise the architecture proposal",
+      "protocol_function": "proposer",
+      "required_capabilities": ["council.propose"],
+      "input_schema_ref": "requirements-specification-v0.1.schema.json",
+      "output_schema_ref": "architecture-contract-v1.schema.json",
+      "rubric_ref": "architecture-proposal-rubric-v1",
+      "independent_verification": true,
+      "enabled": true,
+      "version": 1
+    }
+  ],
+  "council_templates": [
+    {
+      "template_id": "software-architecture-council-v1",
+      "name": "Software Architecture Council",
+      "stages": [
+        {
+          "stage_id": "proposal",
+          "protocol_function": "proposer",
+          "role_ids": ["chief-architect"],
+          "minimum_assignments": 1,
+          "maximum_assignments": 1,
+          "parallel": false,
+          "blocking": true
+        }
+      ],
+      "approved_by": "human-owner",
+      "enabled": true,
+      "version": 1,
+      "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "allocations": [
+    {
+      "allocation_id": "chief-architect-pool-v1",
+      "role_id": "chief-architect",
+      "allowed_bot_profile_ids": ["mistral-architect-01", "mistral-reviewer-02"],
+      "preferred_bot_profile_ids": ["mistral-architect-01"],
+      "independence_level": "connection",
+      "autonomy_level": 1,
+      "hard_constraints": {"data_boundary": "eu"},
+      "approved_by": "human-owner",
+      "version": 1,
+      "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}
