@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "canonical_branch": "main",
-  "canonical_alembic_head": "020_bot_selection_assignments",
+  "canonical_alembic_head": "021_bot_evaluation_performance",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",
