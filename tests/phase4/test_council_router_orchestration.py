@@ -2,27 +2,28 @@
 
 from __future__ import annotations
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from infrastructure.persistence.models import Base
+from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
 from phase4.council import CouncilOrchestrator, CouncilSessionBinding
+from phase4.council.configuration import ProtocolFunction
 from phase4.council.orchestrator import CouncilProvider
-from phase4.council.roles import CouncilAgenda
+from phase4.council.roles import (
+    ROLE_PERSONAS,
+    CouncilAgenda,
+    CouncilRole,
+    CouncilTurnDecision,
+    CouncilTurnKind,
+)
 from phase4.council.routing import (
     AssignmentRoute,
     CouncilAssignmentPlan,
-    CouncilProviderFactory,
     TemplateCouncilProviderRouter,
 )
 from phase4.council.testing import DeterministicFakeCouncilProvider
-from phase4.epistemics import Hypothesis, HypothesisStatus
-
-from phase4.agent_registry import AgentRegistry, AgentRole, AgentVersion, Capability
-from phase4.council.configuration import ProtocolFunction
-from phase4.council.roles import CouncilRole, CouncilTurnDecision, CouncilTurnKind
-from phase4.epistemics import Evidence, EvidenceType
+from phase4.epistemics import Evidence, EvidenceType, Hypothesis, HypothesisStatus
 
 
 def _capability(name: str) -> Capability:
@@ -48,22 +49,37 @@ def _registry() -> AgentRegistry:
 
 
 def _route(role: CouncilRole, identity: str) -> AssignmentRoute:
-    return AssignmentRoute(
-        assignment_id=f"asg-router-{role.value}",
+    import hashlib
+
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    values = dict(
+        assignment_id=digest(f"asg-router-{role.value}"),
+        stage_id=role.value,
         role=role,
         agent_identity=identity,
-        capability="council." + role.value,
-        provider_id="provider-1",
+        capability=ROLE_PERSONAS[role].capability,
+        provider_id="conn-1",
+        bot_profile_id=f"profile-{role.value}",
+        bot_profile_version=1,
+        profile_fingerprint=digest(f"profile-{role.value}"),
         connection_id="conn-1",
         connection_version=1,
+        connection_fingerprint=digest("conn-1"),
         deployment_id="deploy-1",
         deployment_revision=1,
+        deployment_fingerprint=digest("deploy-1"),
         model_id="model-1",
         model_family="model-family-1",
         prompt_version="v1",
-        protocol_function=ProtocolFunction.REVIEWER,
-        route_fingerprint=f"fp-{role.value}",
+        protocol_function=(
+            ProtocolFunction.PROPOSER
+            if role is CouncilRole.PROPOSER
+            else ProtocolFunction.REVIEWER
+        ),
     )
+    return AssignmentRoute(**values, route_fingerprint=digest(str(values)))
 
 
 def _approve_script(hypothesis_id: str):
@@ -106,19 +122,23 @@ class RecordingFactory:
 
 
 def _plan() -> CouncilAssignmentPlan:
+    routes = (
+        _route(CouncilRole.PROPOSER, "router-proposer"),
+        _route(CouncilRole.ARCHITECT, "router-architect"),
+        _route(CouncilRole.SECURITY_SKEPTIC, "router-security"),
+        _route(CouncilRole.QA_REDTEAM, "router-qa"),
+    )
+    decision_id = "d" * 64
     return CouncilAssignmentPlan(
         run_id="run-router-1",
-        decision_id="decision-router-1",
+        decision_id=decision_id,
         organization_id="org-1",
         template_id="template-1",
         template_version=1,
-        routes=(
-            _route(CouncilRole.PROPOSER, "router-proposer"),
-            _route(CouncilRole.ARCHITECT, "router-architect"),
-            _route(CouncilRole.SECURITY_SKEPTIC, "router-security"),
-            _route(CouncilRole.QA_REDTEAM, "router-qa"),
+        routes=routes,
+        plan_fingerprint=CouncilAssignmentPlan._fingerprint(
+            decision_id, "org-1", "template-1", 1, routes
         ),
-        plan_fingerprint="fp-router-plan",
     )
 
 
@@ -152,10 +172,10 @@ def test_router_forwards_frozen_snapshot_and_orchestrator_uses_plan() -> None:
     )
     provider = DeterministicFakeCouncilProvider(
         _approve_script(hypothesis.hypothesis_id),
-        provider_id="provider-plan-router",
+        provider_id="conn-1",
     )
     factory = RecordingFactory(provider)
-    router = TemplateCouncilProviderRouter({"provider-1": factory})
+    router = TemplateCouncilProviderRouter({"conn-1": factory})
 
     plan = _plan()
     # The orchestrator must receive the SAME provider the router resolved.
@@ -163,11 +183,11 @@ def test_router_forwards_frozen_snapshot_and_orchestrator_uses_plan() -> None:
     assert resolved is provider
     assert len(factory.created) == 1
     assert factory.created[0]["deployment_id"] == "deploy-1"
-    assert factory.created[0]["route_fingerprint"] == "fp-proposer"
+    assert factory.created[0]["route_fingerprint"] == plan.routes[0].route_fingerprint
 
     result = CouncilOrchestrator(
         registry=_registry(),
-        provider=resolved,
+        provider_router=router,
         store=store,
         legacy_assignments=False,
     ).run(

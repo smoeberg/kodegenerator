@@ -13,7 +13,6 @@ from phase4.agent_registry import AgentRegistry
 from phase4.epistemics.models import Evidence, EvidenceType, Hypothesis
 
 from .models import Dispute, SessionState
-from .routing import CouncilAssignmentPlan
 from .roles import (
     ROLE_PERSONAS,
     CouncilAgenda,
@@ -23,6 +22,12 @@ from .roles import (
     CouncilTurnKind,
     CouncilTurnRequest,
     CouncilTurnResponse,
+)
+from .routing import (
+    AssignmentRoute,
+    CouncilAssignmentPlan,
+    CouncilProviderRouter,
+    ProviderRoutingError,
 )
 from .runtime_models import CouncilRuntimeEventType, CouncilSessionBinding
 from .session import DeliberationSession
@@ -150,7 +155,7 @@ class CouncilOrchestratorResult:
 class CouncilOrchestrator:
     """Run evidence-backed Council rounds and persist one atomic round at a time.
 
-    The orchestrator selects registered agents, invokes a provider through
+    The orchestrator consumes frozen assignments, invokes their exact providers through
     content-addressed turns, persists completed rounds with OCC, and returns a
     readiness report. It never imports or calls AuthorityEngine or Execution.
     """
@@ -182,20 +187,28 @@ class CouncilOrchestrator:
         self,
         *,
         registry: AgentRegistry,
-        provider: CouncilProvider,
+        provider: CouncilProvider | None = None,
+        provider_router: CouncilProviderRouter | None = None,
         store: CouncilStore,
         config: DeliberationConfig | None = None,
         risk_evaluator: CouncilRiskEvaluator | None = None,
-        legacy_assignments: bool = True,
+        legacy_assignments: bool = False,
     ) -> None:  # compat window: PR4-7
         provider_id = getattr(provider, "provider_id", None)
-        if not isinstance(provider_id, str) or not provider_id.strip():
-            raise TypeError("provider must declare a non-empty provider_id")
-        if not callable(getattr(provider, "deliberate", None)):
-            raise TypeError("provider must implement deliberate")
+        if provider is not None and (
+            not isinstance(provider_id, str)
+            or not provider_id.strip()
+            or not callable(getattr(provider, "deliberate", None))
+        ):
+            raise TypeError("provider must implement deliberate with a provider_id")
+        if provider is None and provider_router is None:
+            raise TypeError("provider_router is required for frozen assignment plans")
+        if legacy_assignments and provider is None:
+            raise TypeError("legacy assignment compatibility requires one provider")
         self.registry = registry
         self.provider = provider
-        self.provider_id = provider_id
+        self.provider_router = provider_router
+        self.provider_id = provider_id or "assignment-router"
         self.store = store
         self.config = config or DeliberationConfig()
         self.risk_evaluator = risk_evaluator or DefaultCouncilRiskEvaluator()
@@ -214,7 +227,7 @@ class CouncilOrchestrator:
         if round_budget is not None and round_budget < 1:
             raise CouncilStartError("round_budget must be at least 1")
         self._verify_start_inputs(hypothesis, binding, agenda)
-        assignments = self._resolve_assignments(assignment_plan)
+        assignments = self._resolve_assignments(assignment_plan, binding)
         persisted = self._load_or_create(hypothesis, binding, session_id)
         self._verify_persisted_binding(persisted.binding, binding)
         self._verify_hypothesis_identity(persisted.session.hypothesis, hypothesis)
@@ -235,7 +248,13 @@ class CouncilOrchestrator:
         ):
             if round_budget is not None and completed >= round_budget:
                 break
-            self._run_round(session, binding, agenda, assignments)
+            self._run_round(
+                session,
+                binding,
+                agenda,
+                assignments,
+                assignment_plan,
+            )
             version = self.store.save(
                 binding.organization_id,
                 session,
@@ -268,12 +287,21 @@ class CouncilOrchestrator:
         binding: CouncilSessionBinding,
         agenda: CouncilAgenda,
         assignments: tuple[CouncilRoleAssignment, ...],
+        assignment_plan: CouncilAssignmentPlan | None,
     ) -> None:
         proposer = self._assignment(assignments, CouncilRole.PROPOSER)
         open_disputes = self._open_disputes(session)
         if open_disputes:
-            self._resolve_disputes(session, binding, agenda, proposer, open_disputes)
+            self._resolve_disputes(
+                session,
+                binding,
+                agenda,
+                proposer,
+                open_disputes,
+                assignment_plan,
+            )
 
+        proposer_route = self._route_for(assignment_plan, proposer.role)
         proposal = self._invoke(
             self._request(
                 session,
@@ -281,7 +309,9 @@ class CouncilOrchestrator:
                 agenda,
                 proposer,
                 CouncilTurnKind.PROPOSAL,
+                route=proposer_route,
             ),
+            route=proposer_route,
             validator=self._validate_proposal,
         )
         self._incorporate_evidence(session, proposal.evidence)
@@ -289,6 +319,7 @@ class CouncilOrchestrator:
         reviewer_responses: list[CouncilTurnResponse] = []
         for role in self._REQUIRED_ROLES[1:]:
             assignment = self._assignment(assignments, role)
+            reviewer_route = self._route_for(assignment_plan, assignment.role)
             response = self._invoke(
                 self._request(
                     session,
@@ -296,7 +327,9 @@ class CouncilOrchestrator:
                     agenda,
                     assignment,
                     CouncilTurnKind.REVIEW,
+                    route=reviewer_route,
                 ),
+                route=reviewer_route,
                 validator=self._validate_review,
             )
             self._incorporate_evidence(session, response.evidence)
@@ -313,7 +346,14 @@ class CouncilOrchestrator:
 
         open_disputes = self._open_disputes(session)
         if open_disputes:
-            self._resolve_disputes(session, binding, agenda, proposer, open_disputes)
+            self._resolve_disputes(
+                session,
+                binding,
+                agenda,
+                proposer,
+                open_disputes,
+                assignment_plan,
+            )
         if self._open_disputes(session):
             raise CouncilProviderResponseError(
                 "provider left formal disputes unresolved"
@@ -339,7 +379,9 @@ class CouncilOrchestrator:
         agenda: CouncilAgenda,
         proposer: CouncilRoleAssignment,
         disputes: tuple[Dispute, ...],
+        assignment_plan: CouncilAssignmentPlan | None,
     ) -> None:
+        proposer_route = self._route_for(assignment_plan, proposer.role)
         response = self._invoke(
             self._request(
                 session,
@@ -348,7 +390,9 @@ class CouncilOrchestrator:
                 proposer,
                 CouncilTurnKind.DISPUTE_RESOLUTION,
                 open_disputes=disputes,
+                route=proposer_route,
             ),
+            route=proposer_route,
             validator=lambda candidate: self._validate_resolution(
                 candidate,
                 session,
@@ -366,12 +410,25 @@ class CouncilOrchestrator:
         self,
         request: CouncilTurnRequest,
         *,
+        route: AssignmentRoute | None = None,
         validator: Callable[[CouncilTurnResponse], None] | None = None,
     ) -> CouncilTurnResponse:
         last_error: Exception | None = None
         for _ in range(self.config.provider_retry_limit + 1):
             try:
-                response = self.provider.deliberate(request)
+                if route is None:
+                    if self.provider is None:
+                        raise CouncilProviderError("legacy provider is unavailable")
+                    provider = self.provider
+                else:
+                    if self.provider_router is None:
+                        raise CouncilProviderError("provider router is unavailable")
+                    provider = self.provider_router.resolve(route)
+                if provider.provider_id != request.provider_id:
+                    raise CouncilProviderResponseError(
+                        "resolved provider does not match the bound turn"
+                    )
+                response = provider.deliberate(request)
                 if not isinstance(response, CouncilTurnResponse):
                     raise CouncilProviderResponseError(
                         "provider returned an unsupported response type"
@@ -480,9 +537,10 @@ class CouncilOrchestrator:
         turn_kind: CouncilTurnKind,
         *,
         open_disputes: tuple[Dispute, ...] = (),
+        route: AssignmentRoute | None = None,
     ) -> CouncilTurnRequest:
         return CouncilTurnRequest.create(
-            provider_id=self.provider_id,
+            provider_id=self.provider_id if route is None else route.provider_id,
             session_id=session.session_id,
             round_number=session.current_round,
             turn_kind=turn_kind,
@@ -491,11 +549,14 @@ class CouncilOrchestrator:
             binding=binding,
             agenda=agenda,
             hypothesis=session.hypothesis,
+            route=None if route is None else route.turn_binding(),
             open_disputes=open_disputes,
         )
 
     def _resolve_assignments(
-        self, assignment_plan: CouncilAssignmentPlan | None
+        self,
+        assignment_plan: CouncilAssignmentPlan | None,
+        binding: CouncilSessionBinding,
     ) -> tuple[CouncilRoleAssignment, ...]:
         """Resolve role assignments from a frozen plan or the legacy registry.
 
@@ -504,6 +565,14 @@ class CouncilOrchestrator:
         LegacyTemplateFactory and tests.
         """
         if assignment_plan is not None:
+            if assignment_plan.organization_id != binding.organization_id:
+                raise CouncilStartError(
+                    "assignment plan organization does not match the Council binding"
+                )
+            if self.provider_router is None:
+                raise CouncilStartError(
+                    "frozen assignment plans require a provider router"
+                )
             identities: set[str] = set()
             resolved: list[CouncilRoleAssignment] = []
             for role in self._REQUIRED_ROLES:
@@ -514,6 +583,11 @@ class CouncilOrchestrator:
                         f"assignment plan does not cover required role {role.value}"
                     ) from exc
                 identity = route.agent_identity
+                persona = ROLE_PERSONAS[role]
+                if route.capability != persona.capability:
+                    raise CouncilStartError(
+                        f"assignment capability does not match role {role.value}"
+                    )
                 if identity in identities:
                     raise CouncilStartError(
                         "independent Council roles must use distinct agent identities"
@@ -527,7 +601,7 @@ class CouncilOrchestrator:
                     )
                 )
             return tuple(resolved)
-        if getattr(self, "_legacy_assignments", True):
+        if self._legacy_assignments:
             return self._select_assignments()
         raise CouncilStartError(
             "production Council start requires a frozen assignment plan; "
@@ -545,7 +619,7 @@ class CouncilOrchestrator:
                 raise CouncilStartError(
                     f"required Council role {role.value} has no active registered agent"
                 )
-            selected = candidates[0]
+            selected = next(iter(candidates))
             identity = str(selected.identity)
             if identity in identities:
                 raise CouncilStartError(
@@ -560,6 +634,20 @@ class CouncilOrchestrator:
                 )
             )
         return tuple(assignments)
+
+    @staticmethod
+    def _route_for(
+        assignment_plan: CouncilAssignmentPlan | None,
+        role: CouncilRole,
+    ) -> AssignmentRoute | None:
+        if assignment_plan is None:
+            return None
+        try:
+            return assignment_plan.route_for(role)
+        except ProviderRoutingError as exc:
+            raise CouncilStartError(
+                f"assignment plan does not cover required role {role.value}"
+            ) from exc
 
     def _load_or_create(
         self,
