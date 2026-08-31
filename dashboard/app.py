@@ -73,6 +73,7 @@ menu = st.sidebar.radio(
         "🚀 System Generator & Workflow",
         "🤖 Swarm Fleet Monitor",
         "🎛️ Decision Cockpit (HITL)",
+        "⚙️ Indstillinger & Integrationer",
         "Overblik & Systemtilstand",
         "Digitale Medarbejdere (Agenter)",
         "Opret Ny Agent (Wizard)",
@@ -223,3 +224,118 @@ elif menu == "Audit Log & Hændelser":
             st.dataframe(events_df, use_container_width=True)
         except Exception as e:
             st.error(f"Kunne ikke hente event log: {e}")
+
+# --- Sektion: Indstillinger & Integrationer ---
+elif menu == "⚙️ Indstillinger & Integrationer":
+    st.subheader("⚙️ Systemindstillinger & Eksterne Integrationer")
+    st.caption(
+        "Konfigurer forbindelser til eksterne issue trackers, metrics og runtime-miljø."
+    )
+
+    tab_redmine, tab_general = st.tabs(["🐞 Redmine Issue Tracker", "🌐 Generelt"])
+
+    with tab_redmine:
+        st.markdown("### Redmine Error Ticketing Konfiguration")
+        st.info(
+            "Når Redmine er konfigureret, vil uafklarede fejl i self-healing loops "
+            "og syntesefejl automatisk oprette strukturerede fejlrapporter i Redmine."
+        )
+
+        curr_url = os.getenv("REDMINE_URL", "")
+        curr_api_key = os.getenv("REDMINE_API_KEY", "")
+        curr_project = os.getenv("REDMINE_PROJECT_ID", "dor")
+        curr_tracker = os.getenv(
+            "REDMINE_TRACKER_ID", os.getenv("REDMINE_ISSUE_TRACKER_ID", "1")
+        )
+        curr_severity = os.getenv("REDMINE_SEVERITY", "ERROR")
+
+        with st.form("redmine_config_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                redmine_url = st.text_input(
+                    "Redmine URL",
+                    value=curr_url,
+                    placeholder="https://redmine.example.com",
+                    help="Grund-URL for dit Redmine-system (f.eks. https://redmine.example.com)",
+                )
+                project_id = st.text_input(
+                    "Projekt ID / Identifier",
+                    value=curr_project,
+                    placeholder="f.eks. dor eller 1",
+                    help="Redmine projekt-identifier eller numerisk ID.",
+                )
+                tracker_id = st.text_input(
+                    "Tracker ID",
+                    value=curr_tracker,
+                    placeholder="1",
+                    help="Tracker ID for fejl/bugs (standard: 1).",
+                )
+
+            with col2:
+                api_key = st.text_input(
+                    "API Key",
+                    value=curr_api_key,
+                    type="password",
+                    placeholder="Indtast Redmine REST API-nøgle",
+                    help="Findes i Redmine under Min konto -> API-adgangsnøgle.",
+                )
+                severity_options = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+                default_sev_idx = (
+                    severity_options.index(curr_severity)
+                    if curr_severity in severity_options
+                    else 1
+                )
+                severity = st.selectbox(
+                    "Standard Severity",
+                    severity_options,
+                    index=default_sev_idx,
+                    help="Standard alvorsgrad for genererede Redmine-sager.",
+                )
+
+            st.markdown("#### Forbindelsestest & Gem")
+            col_test, col_save = st.columns([1, 1])
+            with col_test:
+                test_connection = st.form_submit_button("🔍 Test Forbindelse")
+            with col_save:
+                save_config = st.form_submit_button("💾 Gem Indstillinger")
+
+            if test_connection:
+                if not redmine_url or not api_key:
+                    st.warning("Angiv venligst både Redmine URL og API Key for at teste.")
+                else:
+                    try:
+                        from services.redmine_api import RedmineAPIClient
+                        from services.redmine_contracts import RedmineConfig
+
+                        cfg = RedmineConfig(
+                            url=redmine_url.strip(),
+                            api_key=api_key.strip(),
+                            project_id=project_id.strip() or "dor",
+                            tracker_id=tracker_id.strip() or "1",
+                        )
+                        cfg.validate()
+                        client = RedmineAPIClient(cfg)
+                        with st.spinner("Kontakter Redmine..."):
+                            issues = client.list_issues(limit=1)
+                        st.success(
+                            f"✅ Forbindelse til Redmine etableret! (Fundet {len(issues)} issues tilgængelige)"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"❌ Forbindelsesfejl: {exc}")
+
+            if save_config:
+                os.environ["REDMINE_URL"] = redmine_url.strip()
+                os.environ["REDMINE_API_KEY"] = api_key.strip()
+                os.environ["REDMINE_PROJECT_ID"] = project_id.strip() or "dor"
+                os.environ["REDMINE_TRACKER_ID"] = tracker_id.strip() or "1"
+                os.environ["REDMINE_SEVERITY"] = severity
+                st.success("✅ Redmine-indstillinger opdateret i aktiv runtime-session!")
+
+    with tab_general:
+        st.markdown("### Generelle Systemparametre")
+        st.text_input("DOR Database Sti", value=DB_PATH, disabled=True)
+        st.text_input(
+            "API URL",
+            value=os.getenv("DOR_API_URL", "http://localhost:8000"),
+            disabled=True,
+        )
