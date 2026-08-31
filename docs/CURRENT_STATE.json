@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "canonical_branch": "main",
-  "canonical_alembic_head": "017_queue_replay_tenant_scope",
+  "canonical_alembic_head": "018_bot_catalog",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",

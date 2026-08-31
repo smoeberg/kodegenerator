@@ -14,6 +14,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.decisions",
     "api.endpoints.pipeline",
     "api.endpoints.pipeline_gates",
+    "api.endpoints.bot_governance",
 )
 
 CANONICAL_REALTIME_MODULES = ("api.endpoints.swarm_websocket",)

@@ -5,6 +5,13 @@ Identity and registry primitives only. Authorization belongs to AI-3.
 
 from .models import AgentIdentity, AgentRecord, AgentRole, AgentVersion, Capability
 from .registry import AgentRegistry, AgentNotFoundError, DuplicateIdentityError, RegistrationError
+from .bot_profiles import (
+    BotBudgetPolicy,
+    BotDataPolicy,
+    BotProfile,
+    ModelDeployment,
+    ProviderConnection,
+)
 
 __all__ = [
     "AgentIdentity",
@@ -16,4 +23,9 @@ __all__ = [
     "AgentNotFoundError",
     "DuplicateIdentityError",
     "RegistrationError",
+    "BotBudgetPolicy",
+    "BotDataPolicy",
+    "BotProfile",
+    "ModelDeployment",
+    "ProviderConnection",
 ]

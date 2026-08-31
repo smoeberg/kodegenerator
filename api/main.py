@@ -51,6 +51,7 @@ _db = Database()
 from api.auth import User, get_current_active_user  # noqa: E402
 from api.endpoints import (  # noqa: E402
     auth,
+    bot_governance,
     control_plane,
     decisions,
     implementation_agent,
@@ -115,6 +116,7 @@ if HAS_AUTH:
         decisions.router,
         pipeline.router,
         pipeline_gates.router,
+        bot_governance.router,
     )
     validate_canonical_modules(
         (
@@ -126,6 +128,7 @@ if HAS_AUTH:
             decisions.__name__,
             pipeline.__name__,
             pipeline_gates.__name__,
+            bot_governance.__name__,
         )
     )
 

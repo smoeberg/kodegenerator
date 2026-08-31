@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/smoeberg/kodegenerator/blob/main/docs/schemas/bot-governance-v1.schema.json",
+  "title": "DOR Bot Governance Configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "organization_id",
+    "connections",
+    "deployments",
+    "bot_profiles",
+    "roles",
+    "council_templates",
+    "allocations"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "organization_id": { "$ref": "#/$defs/id" },
+    "connections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provider_connection" }
+    },
+    "deployments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/model_deployment" }
+    },
+    "bot_profiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/bot_profile" }
+    },
+    "roles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/role_definition" }
+    },
+    "council_templates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/council_template" }
+    },
+    "allocations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/allocation" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "provider_connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id", "brand", "provider_type", "endpoint",
+        "secret_reference", "data_boundary", "concurrency_limit", "enabled",
+        "version"
+      ],
+      "properties": {
+        "connection_id": { "$ref": "#/$defs/id" },
+        "brand": { "type": "string", "minLength": 1 },
+        "provider_type": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "format": "uri" },
+        "secret_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque secret-manager reference; never a credential"
+        },
+        "region": { "type": ["string", "null"] },
+        "data_boundary": { "enum": ["local", "organization", "eu", "global"] },
+        "concurrency_limit": { "type": "integer", "minimum": 1 },
+        "enabled": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "model_deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deployment_id", "connection_id", "connection_version", "model_id", "model_family",
+        "max_context_tokens", "max_output_tokens", "structured_output",
+        "status", "revision"
+      ],
+      "properties": {
+        "deployment_id": { "$ref": "#/$defs/id" },
+        "connection_id": { "$ref": "#/$defs/id" },
+        "connection_version": { "type": "integer", "minimum": 1 },
+        "model_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "minLength": 1 },
+        "max_context_tokens": { "type": "integer", "minimum": 1 },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "structured_output": { "type": "boolean" },
+        "tool_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "status": { "enum": ["active", "degraded", "disabled"] },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "bot_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot_profile_id", "agent_identity", "display_name", "deployment_id",
+        "deployment_revision",
+        "prompt_version", "capabilities", "permitted_tools", "data_policy",
+        "concurrency_limit", "enabled", "version"
+      ],
+      "properties": {
+        "bot_profile_id": { "$ref": "#/$defs/id" },
+        "agent_identity": { "$ref": "#/$defs/sha256" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "deployment_id": { "$ref": "#/$defs/id" },
+        "deployment_revision": { "type": "integer", "minimum": 1 },
+        "prompt_version": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "permitted_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "data_policy": { "enum": ["local_only", "organization", "eu", "global"] },
+        "concurrency_limit": { "type": "integer", "minimum": 1 },
+        "enabled": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "role_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role_id", "name", "purpose", "required_capabilities",
+        "protocol_function",
+        "output_schema_ref", "rubric_ref", "independent_verification",
+        "enabled", "version"
+      ],
+      "properties": {
+        "role_id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string", "minLength": 1 },
+        "protocol_function": {
+          "enum": [
+            "conversation_owner", "proposer", "reviewer", "verifier",
+            "implementer", "candidate_evaluator", "integrator"
+          ]
+        },
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "input_schema_ref": { "type": ["string", "null"] },
+        "output_schema_ref": { "type": "string", "minLength": 1 },
+        "rubric_ref": { "type": "string", "minLength": 1 },
+        "independent_verification": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "council_template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "template_id", "name", "stages", "approved_by", "enabled", "version",
+        "fingerprint"
+      ],
+      "properties": {
+        "template_id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "stage_id", "protocol_function", "role_ids", "minimum_assignments",
+              "maximum_assignments", "parallel", "blocking"
+            ],
+            "properties": {
+              "stage_id": { "$ref": "#/$defs/id" },
+              "protocol_function": {
+                "enum": [
+                  "conversation_owner", "proposer", "reviewer", "verifier",
+                  "implementer", "candidate_evaluator", "integrator"
+                ]
+              },
+              "role_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/id" }
+              },
+              "minimum_assignments": { "type": "integer", "minimum": 1 },
+              "maximum_assignments": { "type": "integer", "minimum": 1 },
+              "parallel": { "type": "boolean" },
+              "blocking": { "type": "boolean" }
+            }
+          }
+        },
+        "approved_by": { "$ref": "#/$defs/id" },
+        "enabled": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 },
+        "fingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "allocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allocation_id", "role_id", "allowed_bot_profile_ids",
+        "preferred_bot_profile_ids", "independence_level", "autonomy_level",
+        "approved_by", "version", "fingerprint"
+      ],
+      "properties": {
+        "allocation_id": { "$ref": "#/$defs/id" },
+        "role_id": { "$ref": "#/$defs/id" },
+        "allowed_bot_profile_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "preferred_bot_profile_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "independence_level": {
+          "enum": ["profile", "connection", "model_family", "provider", "brand", "deployment"]
+        },
+        "autonomy_level": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "hard_constraints": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "integer", "boolean", "array", "null"] }
+        },
+        "approved_by": { "$ref": "#/$defs/id" },
+        "version": { "type": "integer", "minimum": 1 },
+        "fingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}
