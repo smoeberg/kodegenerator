@@ -119,3 +119,101 @@ class ProfileResponse(StrictModel):
     fingerprint: str
     created_at: datetime
     updated_at: datetime
+
+
+class RoleCreateRequest(StrictModel):
+    command_id: str
+    role_id: str
+    name: str
+    purpose: str
+    protocol_function: str
+    required_capabilities: list[str]
+    output_schema_ref: str
+    rubric_ref: str
+    input_schema_ref: str | None = None
+    independent_verification: bool = True
+    enabled: bool = True
+
+
+class RoleResponse(StrictModel):
+    role_id: str
+    organization_id: str
+    name: str
+    purpose: str
+    protocol_function: str
+    required_capabilities: list[str]
+    output_schema_ref: str
+    rubric_ref: str
+    input_schema_ref: str | None
+    independent_verification: bool
+    enabled: bool
+    version: int
+    fingerprint: str
+    created_at: datetime
+
+
+class StageRequest(StrictModel):
+    stage_id: str
+    protocol_function: str
+    role_versions: list[tuple[str, int]]
+    minimum_assignments: int = Field(default=1, ge=1)
+    maximum_assignments: int = Field(default=1, ge=1)
+    parallel: bool = False
+    blocking: bool = True
+
+
+class TemplateCreateRequest(StrictModel):
+    command_id: str
+    template_id: str
+    name: str
+    stages: list[StageRequest]
+    approved_by: str
+    enabled: bool = True
+
+
+class TemplateResponse(StrictModel):
+    template_id: str
+    organization_id: str
+    name: str
+    stages: list[StageRequest]
+    approved_by: str
+    enabled: bool
+    version: int
+    fingerprint: str
+    created_at: datetime
+
+
+class AllocationMemberRequest(StrictModel):
+    bot_profile_id: str
+    bot_profile_version: int = Field(ge=1)
+    preference_rank: int = Field(ge=1)
+    fallback_rank: int | None = Field(default=None, ge=1)
+
+
+class AllocationCreateRequest(StrictModel):
+    command_id: str
+    allocation_id: str
+    role_id: str
+    role_version: int = Field(ge=1)
+    members: list[AllocationMemberRequest]
+    independence_level: str
+    autonomy_level: int = Field(ge=0, le=5)
+    hard_constraints: dict = Field(default_factory=dict)
+    approved_by: str
+    enabled: bool = True
+
+
+class AllocationResponse(StrictModel):
+    allocation_id: str
+    organization_id: str
+    role_id: str
+    role_version: int
+    members: list[AllocationMemberRequest]
+    independence_level: str
+    autonomy_level: int
+    hard_constraints: dict
+    approved_by: str
+    enabled: bool
+    version: int
+    fingerprint: str
+    created_at: datetime
