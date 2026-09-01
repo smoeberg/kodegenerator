@@ -88,8 +88,9 @@ runtime image, migration owner, dashboard, healthchecks, ports, PostgreSQL and
 MinIO persistence. This does not certify the runtime behavior.
 
 The canonical database queue, authenticated worker identity, tenant-scoped
-Swarm control, and hardened startup/readiness validation are now implemented.
-Later phases must close attested release gates and Docker certification.
+Swarm control, hardened startup/readiness validation, and attested deploy and
+release gates are now implemented. The remaining phase is clean-room Docker
+certification of the assembled installation.
 
 ## Certification gate
 

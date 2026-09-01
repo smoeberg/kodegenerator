@@ -43,3 +43,23 @@ handoff without rerunning the suite or pushing the branch.
 
 Downgrade from revision `023` is refused until both integration tables are
 explicitly archived or drained.
+
+## Attested delivery gate
+
+The canonical pipeline registry resolves deploy and release input through
+`AttestedDeliveryGate` before it claims a terminal side effect. Callers cannot
+make a patch releaseable by supplying a passing `test_results` dictionary.
+The gate reloads the tenant-scoped integration plan and receipt, verifies the
+complete `ReleaseHandoff`, and derives the patch and test result from that
+durable evidence.
+
+Both `pipeline.deploy` and `release.publish` grants bind the organization,
+repository, integration receipt, plan fingerprint, base SHA, integration head
+SHA, and patch fingerprint. Release authority additionally binds the base
+branch and patch ID. The verified handoff is included in the durable
+side-effect request fingerprint, so reuse of an idempotency key with different
+evidence is rejected rather than replayed.
+
+Deploy and release remain separate capabilities. Successful integration does
+not itself authorize either mutation, and deploy authority cannot be replayed
+as release authority.
