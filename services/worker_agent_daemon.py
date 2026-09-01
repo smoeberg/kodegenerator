@@ -4,14 +4,15 @@ A WorkerAgent is the long-running process that represents one AI bot in the
 field: it claims eligible tasks, keeps the lease alive with heartbeats,
 invokes a patch synthesizer, and reports completion or failure.
 """
+
 from __future__ import annotations
 
 import logging
 import signal
 import threading
-import time
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Optional, Protocol, Sequence
+from typing import Any, Protocol
 
 from services.swarm_task_queue import QueuedTask, SwarmTaskQueue
 
@@ -87,7 +88,8 @@ class WorkerAgent:
         *,
         poll_interval: float = 1.0,
         heartbeat_interval: float = 30.0,
-        max_idle_cycles: Optional[int] = None,
+        max_idle_cycles: int | None = None,
+        identity_verifier: Callable[[], str] | None = None,
     ) -> None:
         if not worker_id or not str(worker_id).strip():
             raise ValueError("worker_id is required")
@@ -101,6 +103,7 @@ class WorkerAgent:
         self.poll_interval = max(0.0, float(poll_interval))
         self.heartbeat_interval = max(0.1, float(heartbeat_interval))
         self.max_idle_cycles = max_idle_cycles
+        self._identity_verifier = identity_verifier
 
         if synthesizer is None:
             self._synthesize: Callable[[QueuedTask], Any] = _default_synthesizer
@@ -110,7 +113,7 @@ class WorkerAgent:
             self._synthesize = synthesizer.synthesize  # type: ignore[assignment]
 
         self._stop = threading.Event()
-        self._current_task: Optional[QueuedTask] = None
+        self._current_task: QueuedTask | None = None
         self._lock = threading.RLock()
         self._idle_cycles = 0
         self._completed = 0
@@ -130,7 +133,7 @@ class WorkerAgent:
         return not self._stop.is_set()
 
     @property
-    def current_task_id(self) -> Optional[str]:
+    def current_task_id(self) -> str | None:
         with self._lock:
             return self._current_task.task_id if self._current_task else None
 
@@ -177,7 +180,7 @@ class WorkerAgent:
                 self._failed,
             )
 
-    def run_once(self) -> Optional[QueuedTask]:
+    def run_once(self) -> QueuedTask | None:
         """Claim and process at most one task (useful for tests)."""
         claimed = self._claim_once()
         if claimed is None:
@@ -189,10 +192,11 @@ class WorkerAgent:
     # Internals
     # ------------------------------------------------------------------
 
-    def _claim_once(self) -> Optional[QueuedTask]:
+    def _claim_once(self) -> QueuedTask | None:
         try:
+            self._verify_identity()
             task = self.queue.claim_next_task(self.worker_id, self.capabilities)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("worker=%s claim failed", self.worker_id)
             return None
         if task is None:
@@ -221,7 +225,7 @@ class WorkerAgent:
             try:
                 raw_result = self._synthesize(task)
                 patch_result = _serialise_patch_result(raw_result)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 logger.exception(
                     "worker=%s transition=FAILED task_id=%s error=%s",
@@ -234,17 +238,18 @@ class WorkerAgent:
                 return
 
             try:
-                self.queue.complete_task(
-                    task.task_id, self.worker_id, patch_result
-                )
+                self._verify_identity()
+                self.queue.complete_task(task.task_id, self.worker_id, patch_result)
                 logger.info(
                     "worker=%s transition=COMPLETED task_id=%s patch_keys=%s",
                     self.worker_id,
                     task.task_id,
-                    list(patch_result) if isinstance(patch_result, dict) else type(patch_result).__name__,
+                    list(patch_result)
+                    if isinstance(patch_result, dict)
+                    else type(patch_result).__name__,
                 )
                 self._completed += 1
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error = f"complete_task failed: {type(exc).__name__}: {exc}"
                 logger.exception(
                     "worker=%s transition=FAILED task_id=%s error=%s",
@@ -264,6 +269,7 @@ class WorkerAgent:
     def _heartbeat_loop(self, task_id: str, stop: threading.Event) -> None:
         while not stop.wait(self.heartbeat_interval):
             try:
+                self._verify_identity()
                 self.queue.heartbeat(task_id, self.worker_id)
                 logger.info(
                     "worker=%s transition=HEARTBEAT task_id=%s",
@@ -282,13 +288,20 @@ class WorkerAgent:
 
     def _safe_fail(self, task_id: str, error: str, *, retry: bool) -> None:
         try:
+            self._verify_identity()
             self.queue.fail_task(task_id, self.worker_id, error, retry=retry)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception(
                 "worker=%s fail_task also failed task_id=%s",
                 self.worker_id,
                 task_id,
             )
+
+    def _verify_identity(self) -> None:
+        if self._identity_verifier is None:
+            return
+        if self._identity_verifier() != self.worker_id:
+            raise PermissionError("worker service identity binding changed")
 
     def _release_current_on_shutdown(self) -> None:
         with self._lock:

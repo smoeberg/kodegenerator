@@ -75,6 +75,8 @@ The demo environment file must explicitly provide:
 - `DOR_AUTHORITY_SIGNING_KEY`
 - `DOR_ENCRYPTION_KEY`
 - `DOR_WORKER_CAPABILITIES`
+- `DOR_WORKER_SERVICE_ID`
+- `DOR_WORKER_CREDENTIAL` (minimum 32 characters)
 
 Example files must contain non-functional placeholders. The runtime must reject
 placeholder fragments such as `change-me`, `replace-with`, and `placeholder`.

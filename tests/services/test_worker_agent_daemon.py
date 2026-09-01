@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 import pytest
 
 from services.swarm_task_queue import QueuedTaskStatus, SwarmTaskQueue
-from services.worker_agent_daemon import WorkerAgent, _default_synthesizer
+from services.worker_agent_daemon import WorkerAgent
 
 
 @dataclass
@@ -261,6 +261,32 @@ def test_worker_id_and_capabilities_validation():
         WorkerAgent("w1", ["", "  "], queue)
 
 
+def test_identity_is_revalidated_before_claim_and_completion():
+    queue = SwarmTaskQueue()
+    enqueue(queue, "guarded")
+    calls = 0
+
+    def verifier() -> str:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise PermissionError("service account disabled")
+        return "worker-1"
+
+    agent = WorkerAgent(
+        "worker-1",
+        ["code"],
+        queue,
+        synthesizer=lambda _task: {"patch": "value"},
+        identity_verifier=verifier,
+    )
+
+    agent.run_once()
+
+    assert calls >= 2
+    assert queue.get_task("guarded").status is QueuedTaskStatus.CLAIMED
+
+
 def test_default_synthesizer_produces_dict():
     queue = SwarmTaskQueue()
     enqueue(queue, "noop")
@@ -291,7 +317,6 @@ def test_logging_transitions():
     log-tilstand (tidligere tests / get_dor() kan sætte root-loggeren til
     WARNING og manipulere handlers globalt).
     """
-    import io
     import subprocess
     import sys
 
@@ -300,14 +325,16 @@ def test_logging_transitions():
         "sys.path.insert(0, '.'); "
         "from services.swarm_task_queue import SwarmTaskQueue; "
         "from services.worker_agent_daemon import WorkerAgent; "
-        "from tests.services.test_worker_agent_daemon import RecordingSynthesizer, enqueue; "
+        "from tests.services.test_worker_agent_daemon import "
+        "RecordingSynthesizer, enqueue; "
         "lg = logging.getLogger('services.worker_agent_daemon'); "
         "lg.handlers = []; lg.setLevel(logging.INFO); lg.propagate = False; "
         "buf = io.StringIO(); "
         "h = logging.StreamHandler(buf); h.setLevel(logging.INFO); lg.addHandler(h); "
         "q = SwarmTaskQueue(); "
         "enqueue(q, 'log-me'); "
-        "agent = WorkerAgent('logger', ['code'], q, synthesizer=RecordingSynthesizer()); "
+        "agent = WorkerAgent('logger', ['code'], q, "
+        "synthesizer=RecordingSynthesizer()); "
         "agent.run_once(); "
         "sys.stdout.write(buf.getvalue())"
     )
@@ -321,4 +348,3 @@ def test_logging_transitions():
     messages = out.stdout
     assert "transition=CLAIMED" in messages
     assert "transition=COMPLETED" in messages
-

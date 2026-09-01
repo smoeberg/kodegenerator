@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from runtime.pipeline_orchestrator import PipelineOrchestrator
@@ -25,11 +25,12 @@ if TYPE_CHECKING:
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
 from runtime.pipeline_state_store import PipelineStateStore
+from services.database_swarm_queue import DatabaseSwarmTaskQueue
 from services.swarm_persistence import SQLiteTaskQueue
 from services.swarm_task_queue import SwarmTaskQueue
 
 _lock = threading.RLock()
-_registry: Optional["PipelineRegistry"] = None
+_registry: PipelineRegistry | None = None
 
 
 class PipelineAwareQueue:
@@ -40,7 +41,7 @@ class PipelineAwareQueue:
     """
 
     def __init__(
-        self, queue: SwarmTaskQueue, orchestrator: "PipelineOrchestrator"
+        self, queue: SwarmTaskQueue, orchestrator: PipelineOrchestrator
     ) -> None:
         self._queue = queue
         self._orchestrator = orchestrator
@@ -53,6 +54,11 @@ class PipelineAwareQueue:
         return self._queue.enqueue_wbs_plan(plan)
 
     def claim_next_task(self, agent_id: str, capabilities: list[str]):
+        # API and workers are separate processes in demo/production. Refresh
+        # the durable snapshot before a claim so the worker has the workflow
+        # context required by the claimed database task.
+        if isinstance(self._queue, DatabaseSwarmTaskQueue):
+            self._orchestrator._restore()
         return self._queue.claim_next_task(agent_id, capabilities)
 
     def heartbeat(self, task_id: str, agent_id: str) -> None:
@@ -69,7 +75,7 @@ class PipelineAwareQueue:
                     if isinstance(patch_result, dict)
                     else {"value": patch_result},
                 }
-            # Advance orchestrator & pipeline transition first before acking complete in queue
+            # Advance the pipeline before acknowledging completion in the queue.
             self._orchestrator.handle_task_completion(domain_task)
         self._queue.complete_task(task_id, agent_id, patch_result)
 
@@ -96,13 +102,51 @@ class PipelineRegistry:
 
     def __init__(self, runtime: DORRuntime, *, lease_seconds: int = 300) -> None:
         self.runtime = runtime
-        queue_path = Path(os.getenv("DOR_PIPELINE_QUEUE_PATH", "pipeline_tasks.db"))
-        state_path = Path(os.getenv("DOR_PIPELINE_STATE_PATH", "pipeline_state.json"))
-        self._raw_queue = SQLiteTaskQueue(queue_path, lease_seconds=lease_seconds)
+        backend = os.getenv("DOR_QUEUE_BACKEND", "local").strip().lower()
+        if backend == "database":
+            from infrastructure.persistence.pipeline_state_store import (
+                SQLAlchemyPipelineStateStore,
+            )
+            from infrastructure.runtime.db import build_session_factory
+            from infrastructure.runtime.queue import DatabaseQueue
+
+            database_url = os.getenv("DOR_PIPELINE_DATABASE_URL") or os.getenv(
+                "DATABASE_URL"
+            )
+            organization_id = os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID")
+            if not database_url or not organization_id:
+                raise RuntimeError(
+                    "database queue requires DATABASE_URL and "
+                    "DOR_PIPELINE_STATE_ORGANIZATION_ID"
+                )
+            sessions = build_session_factory(database_url)
+            self._raw_queue = DatabaseSwarmTaskQueue(
+                DatabaseQueue(
+                    sessions,
+                    organization_id=organization_id,
+                    lease_seconds=lease_seconds,
+                )
+            )
+            state_store = SQLAlchemyPipelineStateStore(
+                sessions,
+                organization_id=organization_id,
+                store_id=os.getenv("DOR_PIPELINE_STATE_STORE_ID", "pipeline-default"),
+            )
+        else:
+            if os.getenv("DOR_ENV", "development").lower() in {"demo", "production"}:
+                raise RuntimeError(
+                    "demo and production require DOR_QUEUE_BACKEND=database"
+                )
+            queue_path = Path(os.getenv("DOR_PIPELINE_QUEUE_PATH", "pipeline_tasks.db"))
+            state_path = Path(
+                os.getenv("DOR_PIPELINE_STATE_PATH", "pipeline_state.json")
+            )
+            self._raw_queue = SQLiteTaskQueue(queue_path, lease_seconds=lease_seconds)
+            state_store = PipelineStateStore(state_path)
         self.orchestrator = PipelineOrchestrator(
             runtime,
             task_queue=self._raw_queue,
-            state_store=PipelineStateStore(state_path),
+            state_store=state_store,
         )
         # Workers see the aware queue so complete_task advances the pipeline.
         self.queue = PipelineAwareQueue(self._raw_queue, self.orchestrator)
@@ -120,7 +164,7 @@ class PipelineRegistry:
 
 
 def get_pipeline_registry(
-    runtime: Optional[DORRuntime] = None,
+    runtime: DORRuntime | None = None,
     *,
     lease_seconds: int = 300,
 ) -> PipelineRegistry:

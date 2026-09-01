@@ -107,3 +107,17 @@ def test_same_message_id_is_isolated_between_organizations() -> None:
     assert claimed_b is not None and claimed_b.organization_id == "org-b"
     assert claimed_a.payload == {"tenant": "a"}
     assert claimed_b.payload == {"tenant": "b"}
+
+
+def test_heartbeat_requires_current_worker_and_fencing_token() -> None:
+    queue, _ = _queue()
+    queue.publish("execution", {"value": 1}, message_id="message")
+    claimed = queue.claim("execution", "worker-a")
+    assert claimed is not None and claimed.lease_id
+
+    with pytest.raises(ValueError, match="actively leased"):
+        queue.heartbeat("message", "worker-b", claimed.lease_id)
+    with pytest.raises(ValueError, match="actively leased"):
+        queue.heartbeat("message", "worker-a", "stale-token")
+
+    queue.heartbeat("message", "worker-a", claimed.lease_id)

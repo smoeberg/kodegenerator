@@ -81,6 +81,11 @@ services:
       <<: *runtime-environment
       DOR_RUN_MIGRATIONS: "1"
       DOR_BOOTSTRAP_ARTIFACT_BUCKET: "1"
+      DOR_BOOTSTRAP_WORKER_IDENTITY: "1"
+      DOR_WORKER_ORGANIZATION_ID: ${DOR_DEMO_ORGANIZATION_ID:-demo-org}
+      DOR_WORKER_SERVICE_ID: ${DOR_WORKER_SERVICE_ID:-factory-worker}
+      DOR_WORKER_CREDENTIAL: ${DOR_WORKER_CREDENTIAL:?DOR_WORKER_CREDENTIAL must be set}
+      DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
     command: ["/bin/true"]
     depends_on:
       postgres:
@@ -129,6 +134,9 @@ services:
     environment:
       <<: *runtime-environment
       DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
+      DOR_WORKER_ORGANIZATION_ID: ${DOR_DEMO_ORGANIZATION_ID:-demo-org}
+      DOR_WORKER_SERVICE_ID: ${DOR_WORKER_SERVICE_ID:-factory-worker}
+      DOR_WORKER_CREDENTIAL: ${DOR_WORKER_CREDENTIAL:?DOR_WORKER_CREDENTIAL must be set}
     healthcheck:
       test: ["CMD", "python", "scripts/worker_healthcheck.py"]
       interval: 15s
