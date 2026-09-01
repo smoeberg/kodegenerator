@@ -1,0 +1,43 @@
+name: Demo Runtime Certification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    name: Compose Demo Stack Clean-Room Certification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.lock
+
+      - name: Run Demo Runtime Certification Suite
+        env:
+          PYTHONPATH: .
+        run: |
+          python scripts/run_demo_certification.py
+
+      - name: Archive Certification Receipt Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-certification-receipt
+          path: ci/manifests/demo_certification_receipt.json
+          if-no-files-found: warn
