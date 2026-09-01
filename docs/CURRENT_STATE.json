@@ -27,6 +27,7 @@
     "requirement_steward_multi_agent_function_deliberation",
     "requirement_to_artifact_coverage",
     "delivery_certificate",
-    "multi_spec_verified_artifact_acceptance"
+    "multi_spec_verified_artifact_acceptance",
+    "demo_installation_implementation_and_certification"
   ]
 }
