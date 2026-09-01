@@ -63,13 +63,14 @@ class IdentityPrincipalModel(Base):
     __tablename__ = "identity_principals"
 
     username: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
     disabled: Mapped[bool] = mapped_column(nullable=False, default=False)
-    credential_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1
-    )
+    credential_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

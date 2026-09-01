@@ -1,4 +1,5 @@
 """DOR control-plane API entrypoint."""
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +26,11 @@ def validate_production_security_configuration() -> None:
         return
     missing = [
         name
-        for name in ("DOR_ADMIN_PASSWORD", "DATABASE_URL")
+        for name in (
+            "DOR_ADMIN_PASSWORD",
+            "DOR_ADMIN_ORGANIZATION_ID",
+            "DATABASE_URL",
+        )
         if not os.environ.get(name, "").strip()
     ]
     if not (
@@ -35,8 +40,7 @@ def validate_production_security_configuration() -> None:
         missing.append("DOR_JWT_SECRET_KEY or DOR_JWT_SIGNING_KEYS")
     if missing:
         raise RuntimeError(
-            "Missing required production security configuration: "
-            + ", ".join(missing)
+            "Missing required production security configuration: " + ", ".join(missing)
         )
     from services.jwt_keyring import JWTKeyRing
 
@@ -100,6 +104,7 @@ async def health_ready() -> Any:
 
 
 if HAS_AUTH:
+
     @app.get("/protected", tags=["system"])
     async def protected_route(
         current_user: Annotated[User, Depends(get_current_active_user)],

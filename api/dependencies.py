@@ -27,6 +27,7 @@ from services.bot_catalog import BotCatalogService
 from services.council_selection import CouncilSelectionService
 from services.governed_llm import GovernedLLMRuntime
 from services.llm_adapters import OpenAIAdapter
+from services.swarm_control_store import SwarmControlStore
 
 
 class ImplementationAgentConfigurationError(RuntimeError):
@@ -112,6 +113,11 @@ def _session_factory():
     return build_session_factory(
         os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
     )
+
+
+@lru_cache(maxsize=1)
+def get_swarm_control_store() -> SwarmControlStore:
+    return SwarmControlStore(_session_factory())
 
 
 @lru_cache(maxsize=1)

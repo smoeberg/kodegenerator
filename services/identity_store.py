@@ -29,11 +29,13 @@ class IdentityStore:
         hashed_password: str,
         email: str | None = None,
         full_name: str | None = None,
+        organization_id: str | None = None,
     ) -> dict[str, Any]:
         normalized = _normalize_username(username)
         now = datetime.now(timezone.utc)
         row = IdentityPrincipalModel(
             username=normalized,
+            organization_id=organization_id,
             email=email,
             full_name=full_name,
             hashed_password=hashed_password,
@@ -46,6 +48,13 @@ class IdentityStore:
             with self._sessions() as session, session.begin():
                 existing = session.get(IdentityPrincipalModel, normalized)
                 if existing is not None:
+                    if organization_id is not None:
+                        if existing.organization_id not in (None, organization_id):
+                            raise ValueError(
+                                "identity is already bound to another organization"
+                            )
+                        existing.organization_id = organization_id
+                        existing.updated_at = now
                     return _as_dict(existing)
                 session.add(row)
         except IntegrityError:
@@ -85,6 +94,7 @@ def _normalize_username(username: str) -> str:
 def _as_dict(row: IdentityPrincipalModel) -> dict[str, Any]:
     return {
         "username": row.username,
+        "organization_id": row.organization_id,
         "email": row.email,
         "full_name": row.full_name,
         "hashed_password": row.hashed_password,

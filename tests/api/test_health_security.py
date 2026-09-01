@@ -41,6 +41,7 @@ def test_production_requires_persistent_identity_database(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "IS_PRODUCTION", True)
     monkeypatch.setenv("DOR_JWT_SECRET_KEY", "configured")
     monkeypatch.setenv("DOR_ADMIN_PASSWORD", "configured")
+    monkeypatch.setenv("DOR_ADMIN_ORGANIZATION_ID", "org-a")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
@@ -52,12 +53,11 @@ def test_production_accepts_rotatable_keyring_without_legacy_secret(
 ) -> None:
     monkeypatch.setattr(api_main, "IS_PRODUCTION", True)
     monkeypatch.delenv("DOR_JWT_SECRET_KEY", raising=False)
-    monkeypatch.setenv(
-        "DOR_JWT_SIGNING_KEYS", json.dumps({"2026-09": "n" * 40})
-    )
+    monkeypatch.setenv("DOR_JWT_SIGNING_KEYS", json.dumps({"2026-09": "n" * 40}))
     monkeypatch.setenv("DOR_JWT_ACTIVE_KEY_ID", "2026-09")
     monkeypatch.delenv("DOR_JWT_REVOKED_KEY_IDS", raising=False)
     monkeypatch.setenv("DOR_ADMIN_PASSWORD", "configured")
+    monkeypatch.setenv("DOR_ADMIN_ORGANIZATION_ID", "org-a")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///configured.db")
 
     api_main.validate_production_security_configuration()

@@ -28,12 +28,16 @@ from services.identity_store import IdentityStore
 from services.jwt_keyring import JWTKeyRejectedError, JWTKeyRing
 
 IS_PRODUCTION = os.getenv("DOR_ENV", "development").lower() == "production"
-SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or ("" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx")
+SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or (
+    "" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx"
+)
 ALGORITHM = os.getenv("DOR_JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("DOR_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 if IS_PRODUCTION and not SECRET_KEY:
-    raise RuntimeError("DOR_JWT_SECRET_KEY must be configured in production before starting the API")
+    raise RuntimeError(
+        "DOR_JWT_SECRET_KEY must be configured in production before starting the API"
+    )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 # Process-local bootstrap store. Not durable across restarts or instances.
@@ -55,6 +59,7 @@ class TokenData(BaseModel):
 
 class User(BaseModel):
     username: str
+    organization_id: Optional[str] = None
     email: Optional[str] = None
     full_name: Optional[str] = None
     disabled: bool = False
@@ -86,7 +91,9 @@ def get_identity_store() -> IdentityStore | None:
 def get_password_hash(password: str) -> str:
     """Hash a password with salted PBKDF2-HMAC-SHA256."""
     salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
     return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
 
 
@@ -96,7 +103,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         scheme, iterations, salt_hex, digest_hex = hashed_password.split("$", 3)
         if scheme != "pbkdf2_sha256":
             return False
-        digest = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations))
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            plain_password.encode("utf-8"),
+            bytes.fromhex(salt_hex),
+            int(iterations),
+        )
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
@@ -112,6 +124,7 @@ def bootstrap_configured_admin() -> None:
     """
     username = os.getenv("DOR_ADMIN_USERNAME", "admin").strip()
     password = os.getenv("DOR_ADMIN_PASSWORD")
+    organization_id = os.getenv("DOR_ADMIN_ORGANIZATION_ID")
     if not username or not password:
         if IS_PRODUCTION:
             raise RuntimeError(
@@ -119,11 +132,12 @@ def bootstrap_configured_admin() -> None:
                 "in production before bootstrapping the API user store"
             )
         return
+    if IS_PRODUCTION and not organization_id:
+        raise RuntimeError("DOR_ADMIN_ORGANIZATION_ID must be configured in production")
     store = get_identity_store()
-    if store is not None and store.get(username) is not None:
-        return
     identity = {
         "username": username,
+        "organization_id": organization_id,
         "email": os.getenv("DOR_ADMIN_EMAIL"),
         "full_name": os.getenv("DOR_ADMIN_FULL_NAME", username),
         "disabled": False,
@@ -136,6 +150,7 @@ def bootstrap_configured_admin() -> None:
             hashed_password=identity["hashed_password"],
             email=identity["email"],
             full_name=identity["full_name"],
+            organization_id=organization_id,
         )
         return
     _users[username] = identity
@@ -164,9 +179,7 @@ def get_configured_user(username: str) -> Optional[UserInDB]:
     return get_user(fake_users_db, username)
 
 
-def authenticate_configured_user(
-    username: str, password: str
-) -> Optional[UserInDB]:
+def authenticate_configured_user(username: str, password: str) -> Optional[UserInDB]:
     user = get_configured_user(username)
     if not user or user.disabled or not verify_password(password, user.hashed_password):
         return None
@@ -221,6 +234,12 @@ def authenticate_access_token(token: str) -> User:
         token_version = payload.get("cv")
         if type(token_version) is not int or token_version != user.credential_version:
             raise credentials_exception
+        token_organization = payload.get("org")
+        if (
+            user.organization_id is not None
+            and token_organization != user.organization_id
+        ):
+            raise credentials_exception
     return user
 
 
@@ -229,17 +248,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     return authenticate_access_token(token)
 
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
     """Reject disabled users."""
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
 
+def require_user_organization(current_user: User) -> str:
+    """Return the authenticated tenant binding or fail closed."""
+    organization_id = current_user.organization_id
+    if not organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated principal has no organization binding",
+        )
+    return organization_id
+
+
 async def get_current_actor(current_user: User = Depends(get_current_active_user)):
     """Map the authenticated user to the domain actor model."""
     from domain.actor import Actor, ActorType
-    return Actor(id=current_user.username, identity=current_user.full_name or current_user.username, type=ActorType.HUMAN)
+
+    return Actor(
+        id=current_user.username,
+        identity=current_user.full_name or current_user.username,
+        type=ActorType.HUMAN,
+    )
 
 
 bootstrap_configured_admin()

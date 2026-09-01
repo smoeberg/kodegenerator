@@ -145,7 +145,7 @@ async def swarm_websocket(
         )
         await websocket.close(code=1008, reason="authentication required")
         return
-    if not project_access_allowed(project_id, current_user.username):
+    if not project_access_allowed(project_id, current_user):
         logger.warning(
             "rejected unauthorized swarm websocket",
             extra={"project_id": project_id, "username": current_user.username},
@@ -221,13 +221,9 @@ async def swarm_websocket(
                     refreshed_user = authenticate_access_token(token)
                     if (
                         refreshed_user.username != current_user.username
-                        or not project_access_allowed(
-                            project_id, refreshed_user.username
-                        )
+                        or not project_access_allowed(project_id, refreshed_user)
                     ):
-                        await websocket.close(
-                            code=1008, reason="authorization expired"
-                        )
+                        await websocket.close(code=1008, reason="authorization expired")
                         stop.set()
                         return
                     await websocket.send_text(
@@ -343,7 +339,7 @@ async def swarm_sse(
 ) -> StreamingResponse:
     """Server-Sent Events stream for clients that cannot use WebSockets."""
 
-    require_project_access(project_id, current_user.username)
+    require_project_access(project_id, current_user)
 
     topic = project_topic(project_id)
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
