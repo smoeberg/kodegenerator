@@ -24,7 +24,9 @@
     "requires_non_root_containers": true,
     "requires_read_only_root_filesystem": true,
     "requires_role_startup_validation": true,
-    "readiness_requires_canonical_schema": true
+    "readiness_requires_canonical_schema": true,
+    "deploy_release_require_integration_receipt": true,
+    "delivery_authority_binds_candidate_fingerprint": true
   },
   "services": {
     "postgres": {

@@ -32,6 +32,8 @@ def test_demo_contract_requires_production_equivalent_durable_wiring() -> None:
     assert runtime["allows_file_pipeline_state"] is False
     assert runtime["requires_non_root_containers"] is True
     assert runtime["requires_read_only_root_filesystem"] is True
+    assert runtime["deploy_release_require_integration_receipt"] is True
+    assert runtime["delivery_authority_binds_candidate_fingerprint"] is True
 
 
 def test_demo_contract_fixes_required_service_inventory_and_dependencies() -> None:

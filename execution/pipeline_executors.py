@@ -42,6 +42,7 @@ from phase6.execution.sandbox import (
     ExecutionSpec,
     SandboxRegistry,
 )
+from services.delivery_evidence_gate import AttestedDeliveryGate
 from services.git_pr_publisher import GitPRPublisher
 from services.github_pr_contracts import GitHubConfig, PatchInfo, PRMetadata, PRStatus
 from services.governed_llm import GovernedLLMRequest, GovernedLLMRuntime
@@ -730,9 +731,11 @@ class DeployExecutor(TaskExecutor):
         self,
         backend: DeployService | None = None,
         side_effects: SideEffectCoordinator | None = None,
+        delivery_gate: AttestedDeliveryGate | None = None,
     ) -> None:
         self._backend = backend or GitDockerDeployBackend()
         self._side_effects = side_effects or SideEffectCoordinator()
+        self._delivery_gate = delivery_gate
 
     def execute(self, data: dict[str, Any]) -> dict[str, Any]:
         authority_grant = data.get("authority_grant")
@@ -740,6 +743,10 @@ class DeployExecutor(TaskExecutor):
             raise ValueError("deploy payload requires a verified authority_grant")
         if not authority_grant.verified:
             raise ValueError("deploy authority_grant is invalid or expired")
+        if self._delivery_gate is not None:
+            data = self._delivery_gate.bind(
+                data, authority_grant, action="pipeline.deploy"
+            )
         repository = data.get("repository") or data.get("repo_url")
         project_name = data.get("project_name")
         environment = data.get("environment")
@@ -750,9 +757,14 @@ class DeployExecutor(TaskExecutor):
                 "environment and target"
             )
         parameters = dict(authority_grant.parameters)
+        expected_resource = (
+            f"repository:{repository}"
+            if self._delivery_gate is not None
+            else repository
+        )
         if (
             authority_grant.action != "pipeline.deploy"
-            or authority_grant.resource != repository
+            or authority_grant.resource != expected_resource
             or parameters.get("environment") != environment
             or parameters.get("target") != target
             or parameters.get("release", "") != str(data.get("release") or "")
@@ -766,6 +778,8 @@ class DeployExecutor(TaskExecutor):
             "target": target,
             "release": data.get("release"),
         }
+        if data.get("release_handoff") is not None:
+            request_data["release_handoff"] = data["release_handoff"]
         organization_id = data.get("organization_id")
         operation_key = (
             data.get("side_effect_idempotency_key")
@@ -810,14 +824,22 @@ class ReleaseExecutor:
         backend: GitPRPublisher | None = None,
         publisher_factory: Callable[..., Any] | None = None,
         side_effects: SideEffectCoordinator | None = None,
+        delivery_gate: AttestedDeliveryGate | None = None,
     ) -> None:
         self._backend = backend
         self._publisher_factory = publisher_factory
         self._side_effects = side_effects or SideEffectCoordinator()
+        self._delivery_gate = delivery_gate
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("authority_grant") is None:
             raise ValueError("release payload requires a verified authority_grant")
+        if self._delivery_gate is not None:
+            payload = self._delivery_gate.bind(
+                payload,
+                payload["authority_grant"],
+                action="release.publish",
+            )
         request_data = {
             key: value
             for key, value in payload.items()
@@ -997,26 +1019,31 @@ def _validate_executor_release_evidence(
 
 
 def build_pipeline_executor_registry() -> dict[str, Any]:
+    from infrastructure.persistence.factory_integration_store import (
+        FactoryIntegrationStore,
+    )
     from infrastructure.persistence.side_effect_store import (
         SQLAlchemySideEffectStore,
     )
     from infrastructure.runtime.db import build_session_factory
 
+    sessions = build_session_factory(
+        os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
+    )
     side_effects = SideEffectCoordinator(
         SQLAlchemySideEffectStore(
-            build_session_factory(
-                os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
-            ),
+            sessions,
             lease_seconds=int(os.getenv("DOR_SIDE_EFFECT_LEASE_SECONDS", "1800")),
         )
     )
+    delivery_gate = AttestedDeliveryGate(FactoryIntegrationStore(sessions))
     executors = [
         ArchitectureExecutor(),
         ContractsExecutor(),
         CodeExecutor(),
         TestGeneratorExecutor(),
         RunTestsExecutor(),
-        DeployExecutor(side_effects=side_effects),
-        ReleaseExecutor(side_effects=side_effects),
+        DeployExecutor(side_effects=side_effects, delivery_gate=delivery_gate),
+        ReleaseExecutor(side_effects=side_effects, delivery_gate=delivery_gate),
     ]
     return {executor.task_type: executor for executor in executors}
