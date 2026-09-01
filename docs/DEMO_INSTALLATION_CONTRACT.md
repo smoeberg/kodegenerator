@@ -1,6 +1,6 @@
 # DOR demo installation contract
 
-Status: **contract frozen; implementation and certification pending**  
+Status: **Compose implementation present; runtime certification pending**
 Contract ID: `dor-demo-installation-v1`
 
 This document defines the only supported installation target for the DOR
@@ -13,7 +13,8 @@ The machine-readable source of truth is
 
 ## Canonical command
 
-Once the implementation phase supplies `compose.demo.yml`, operators use:
+The canonical Compose implementation is now present. Once the remaining
+runtime remediation and certification phases are complete, operators use:
 
 ```bash
 docker compose -f compose.demo.yml up --build -d
@@ -26,8 +27,8 @@ docker compose -f compose.demo.yml down
 ```
 
 No other Compose combination is a supported demo installation. Existing
-`docker-compose*.yml` files remain historical implementation inputs until the
-next phase either consolidates or retires them.
+`docker-compose*.yml` files are explicitly marked as legacy development or
+superseded prototype paths.
 
 ## Fixed topology
 
@@ -80,21 +81,13 @@ placeholder fragments such as `change-me`, `replace-with`, and `placeholder`.
 
 ## Phase boundaries
 
-This phase freezes the installation contract only. It deliberately does not
-claim that the current Docker topology conforms.
+The Compose implementation now supplies the fixed service topology, shared
+runtime image, migration owner, dashboard, healthchecks, ports, PostgreSQL and
+MinIO persistence. This does not certify the runtime behavior.
 
-The next implementation phase must:
-
-1. create `compose.demo.yml` matching the manifest;
-2. consolidate the API and worker Dockerfiles;
-3. add the dashboard and migration services;
-4. expose API and dashboard ports;
-5. add meaningful healthchecks and dependency conditions;
-6. remove SQLite and file-state fallbacks from the demo path; and
-7. mark superseded Compose paths clearly as development-only or retired.
-
-Later phases must wire the canonical database queue, tenant context, worker
-identity, startup validation, attested release gate, and Docker certification.
+The next phase must wire the canonical database queue and authenticated worker
+identity. Later phases must close tenant context, startup validation, attested
+release gates, and Docker certification.
 
 ## Certification gate
 

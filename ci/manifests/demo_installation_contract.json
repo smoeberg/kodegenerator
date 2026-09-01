@@ -1,13 +1,19 @@
 {
   "schema_version": 1,
   "contract_id": "dor-demo-installation-v1",
-  "status": "contract_frozen_implementation_pending",
+  "status": "implementation_present_certification_pending",
   "owner": "core-platform",
   "compose": {
     "file": "compose.demo.yml",
     "start_command": "docker compose -f compose.demo.yml up --build -d",
     "stop_command": "docker compose -f compose.demo.yml down",
     "project_name": "dor-demo"
+  },
+  "implementation": {
+    "runtime_dockerfile": "docker/Dockerfile.runtime",
+    "environment_example": ".env.demo.example",
+    "migration_entrypoint": "scripts/entrypoint.sh",
+    "certified": false
   },
   "runtime": {
     "environment": "demo",

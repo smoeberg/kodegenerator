@@ -1,3 +1,4 @@
+# Legacy override for docker-compose.yml. It is not the DOR demo contract.
 services:
   api:
     restart: unless-stopped

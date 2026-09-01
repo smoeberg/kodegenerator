@@ -1,3 +1,5 @@
+# Legacy SQLite development topology. It is not a certified demo installation.
+# Use compose.demo.yml for demo work.
 services:
   api:
     build:

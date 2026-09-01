@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /build
+COPY requirements.lock .
+RUN python -m pip install --no-cache-dir --prefix=/install \
+    --require-hashes -r requirements.lock
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/home/kodegen/.local/bin:$PATH
+
+RUN groupadd --system --gid 10001 kodegen \
+    && useradd --system --uid 10001 --gid kodegen \
+        --create-home --home-dir /home/kodegen kodegen
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY --chown=kodegen:kodegen . /app
+RUN chmod 0555 /app/scripts/entrypoint.sh
+
+USER kodegen
+EXPOSE 8000
+
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+CMD ["python", "-m", "services.api"]
