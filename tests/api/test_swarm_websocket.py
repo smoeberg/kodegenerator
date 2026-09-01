@@ -4,28 +4,71 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("DOR_JWT_SECRET_KEY", "test-secret-key-min-32-chars-long")
 os.environ.setdefault("DOR_ENV", "test")
 os.environ.setdefault("DOR_ADMIN_USERNAME", "admin")
 os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
+os.environ.setdefault("DOR_ADMIN_ORGANIZATION_ID", "test-org")
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from api.auth import create_access_token, fake_users_db, get_password_hash
+from api.auth import (
+    bootstrap_configured_admin,
+    create_access_token,
+    fake_users_db,
+    get_password_hash,
+)
+from api.dependencies import get_swarm_control_store
+from api.endpoints import swarm as swarm_mod
 from api.endpoints import swarm_websocket as ws_mod
 from api.main import app
+from infrastructure.persistence.models import Base, ProjectModel
+from infrastructure.persistence.swarm_control_models import (
+    SwarmDispatchControlModel,
+    SwarmProjectDispatchModel,
+)
 from services.event_bus import (
     SYSTEM_ALERTS_TOPIC,
     EventBus,
     project_topic,
     worker_topic,
 )
+from services.swarm_control_store import SwarmControlStore
+
+_sessions = None
+
+
+@pytest.fixture(autouse=True)
+def tenant_swarm_store(tmp_path, monkeypatch):
+    global _sessions
+    engine = create_engine(f"sqlite:///{tmp_path / 'swarm-websocket.db'}")
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            ProjectModel.__table__,
+            SwarmProjectDispatchModel.__table__,
+            SwarmDispatchControlModel.__table__,
+        ],
+    )
+    _sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    store = SwarmControlStore(_sessions)
+    app.dependency_overrides[get_swarm_control_store] = lambda: store
+    monkeypatch.setattr(swarm_mod, "get_swarm_control_store", lambda: store)
+    swarm_mod._queue._tasks.clear()
+    bootstrap_configured_admin()
+    fake_users_db["admin"]["organization_id"] = "test-org"
+    yield
+    app.dependency_overrides.pop(get_swarm_control_store, None)
+    _sessions = None
 
 
 @pytest.fixture()
@@ -35,7 +78,9 @@ def bus() -> EventBus:
     ws_mod.set_event_bus(b)
     yield b
     b.clear()
-    ws_mod.set_event_bus(ws_mod.default_event_bus if hasattr(ws_mod, "default_event_bus") else EventBus())
+    ws_mod.set_event_bus(
+        ws_mod.default_event_bus if hasattr(ws_mod, "default_event_bus") else EventBus()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +150,7 @@ def test_event_bus_webhook_fanout() -> None:
 
     bus.bind_webhook_dispatcher(FakeDispatcher())
     bus.publish(project_topic("p"), "PROJECT_COMPLETED", {"ok": True})
-    # Fan-out schedules coroutine; allow loop if present — sync path may no-op without loop
+    # Fan-out schedules a coroutine; the sync path may no-op without an event loop.
     # Direct call path: if no running loop, fanout swallows; force via inspect
     assert bus.recent(limit=1)[0].event_type == "PROJECT_COMPLETED"
 
@@ -128,6 +173,27 @@ def _auth_token(client: TestClient) -> str:
 
 
 def _create_project(client: TestClient, project_id: str, token: str) -> None:
+    assert _sessions is not None
+    now = datetime.now(timezone.utc)
+    with _sessions() as session:
+        session.add(
+            ProjectModel(
+                id=project_id,
+                organization_id="test-org",
+                name=project_id,
+                description="",
+                status="created",
+                contract_version="1.0",
+                intent={"goal": "test"},
+                intent_fingerprint="a" * 64,
+                project_fingerprint="b" * 64,
+                created_by="admin",
+                created_at=now,
+                updated_at=now,
+                revision=0,
+            )
+        )
+        session.commit()
     response = client.post(
         "/api/v1/swarm/projects",
         json={"project_id": project_id},

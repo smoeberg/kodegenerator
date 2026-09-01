@@ -22,35 +22,51 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.auth import User, get_current_active_user
+from api.auth import User, get_current_active_user, require_user_organization
+from api.dependencies import get_swarm_control_store
+from services.swarm_control_store import (
+    SwarmControlStore,
+    SwarmProjectConflictError,
+)
 from services.swarm_task_queue import QueuedTaskStatus, SwarmTaskQueue
 
 router = APIRouter(prefix="/api/v1/swarm", tags=["swarm"])
 
-# Single in-process swarm queue behind the control plane (main contract).
+# Development-only queue fallback. Durable environments use DatabaseQueue.
 _queue: SwarmTaskQueue = SwarmTaskQueue()
-_projects: dict[str, dict[str, Any]] = {}
-_paused: bool = False
 
 
-def project_access_allowed(project_id: str, username: str) -> bool:
-    """Return whether ``username`` owns the in-process swarm project."""
-    project = _projects.get(project_id)
-    return project is not None and project.get("owner_id") == username
+def project_access_allowed(project_id: str, current_user: User) -> bool:
+    """Return whether the authenticated tenant principal owns the dispatch."""
+    try:
+        organization_id = require_user_organization(current_user)
+        get_swarm_control_store().require_owner(
+            organization_id, project_id, current_user.username
+        )
+    except (HTTPException, KeyError, PermissionError):
+        return False
+    return True
 
 
-def require_project_access(project_id: str, username: str) -> dict[str, Any]:
-    """Resolve project metadata without revealing another user's project."""
-    project = _projects.get(project_id)
-    if project is None:
+def require_project_access(
+    project_id: str,
+    current_user: User,
+    store: SwarmControlStore | None = None,
+):
+    """Resolve tenant-scoped dispatch state without cross-tenant disclosure."""
+    organization_id = require_user_organization(current_user)
+    try:
+        return (store or get_swarm_control_store()).require_owner(
+            organization_id, project_id, current_user.username
+        )
+    except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-        )
-    if project.get("owner_id") != username:
+        ) from exc
+    except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Project access denied"
-        )
-    return project
+        ) from exc
 
 
 # --------------------------------------------------------------------------
@@ -81,12 +97,12 @@ class CompleteRequest(BaseModel):
 # --------------------------------------------------------------------------
 # Helpers (public-API only)
 # --------------------------------------------------------------------------
-def _queue_backend():
+def _queue_backend(organization_id: str):
     if os.environ.get("DOR_QUEUE_BACKEND") == "database":
         from api.dependencies import get_dor
         from runtime.pipeline_registry import get_pipeline_registry
 
-        return get_pipeline_registry(get_dor()).queue
+        return get_pipeline_registry(get_dor(), organization_id=organization_id).queue
     return _queue
 
 
@@ -95,13 +111,13 @@ def _http_worker_id(username: str) -> str:
     return "http:" + hashlib.sha256(username.encode()).hexdigest()
 
 
-def _queued_tasks() -> list[Any]:
+def _queued_tasks(organization_id: str) -> list[Any]:
     """List all queued tasks via the public get_task surface.
 
     The in-memory queue keeps tasks in a private dict, so this helper tracks
     task ids from the project lifecycle instead of reaching into internals.
     """
-    queue = _queue_backend()
+    queue = _queue_backend(organization_id)
     list_tasks = getattr(queue, "list_tasks", None)
     if callable(list_tasks):
         return list_tasks()
@@ -126,18 +142,25 @@ def _task_payload(task: Any) -> dict[str, Any]:
     }
 
 
-def _project_report(project_id: str) -> dict[str, Any]:
+def _project_report(
+    organization_id: str,
+    project_id: str,
+    store: SwarmControlStore,
+) -> dict[str, Any]:
     counts = {s.value: 0 for s in QueuedTaskStatus}
-    for t in _queued_tasks():
-        if t.metadata.get("project_id") == project_id:
+    for t in _queued_tasks(organization_id):
+        if (
+            t.metadata.get("organization_id") == organization_id
+            and t.metadata.get("project_id") == project_id
+        ):
             counts[t.status.value] += 1
-    meta = _projects.get(project_id, {})
+    dispatch = store.get_project(organization_id, project_id)
     return {
         "project_id": project_id,
         "counts": counts,
         "total": sum(counts.values()),
-        "paused": _paused,
-        "created_at": meta.get("created_at"),
+        "paused": store.is_paused(organization_id),
+        "created_at": dispatch.created_at.isoformat() if dispatch else None,
     }
 
 
@@ -148,18 +171,29 @@ def _project_report(project_id: str) -> dict[str, Any]:
 async def start_project(
     body: StartProjectRequest,
     current_user: User = Depends(get_current_active_user),
+    store: SwarmControlStore = Depends(get_swarm_control_store),
 ) -> dict[str, Any]:
-    """Create a swarm project and enqueue its task plan (if provided)."""
-    project_id = body.project_id or f"proj-{len(_projects) + 1}"
-    if project_id in _projects:
+    """Register an existing canonical project for tenant-scoped dispatch."""
+    organization_id = require_user_organization(current_user)
+    if not body.project_id:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Project already exists"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="project_id must reference an existing canonical project",
         )
-    _projects[project_id] = {
-        "created_at": None,
-        "requirements": body.requirements,
-        "owner_id": current_user.username,
-    }
+    project_id = body.project_id
+    try:
+        _, created = store.register_project(
+            organization_id=organization_id,
+            project_id=project_id,
+            owner_id=current_user.username,
+            requirements=body.requirements,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="Canonical project not found"
+        ) from exc
+    except SwarmProjectConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if body.tasks:
         tasks = [
@@ -167,26 +201,29 @@ async def start_project(
                 **task,
                 "metadata": {
                     **dict(task.get("metadata", {})),
+                    "organization_id": organization_id,
                     "project_id": project_id,
                 },
             }
             for task in body.tasks
         ]
-        enqueued = _queue_backend().enqueue_wbs_plan(tasks)
-        return {"project_id": project_id, "enqueued": enqueued, "created": True}
+        enqueued = _queue_backend(organization_id).enqueue_wbs_plan(tasks)
+        return {"project_id": project_id, "enqueued": enqueued, "created": created}
 
-    return {"project_id": project_id, "enqueued": 0, "created": True}
+    return {"project_id": project_id, "enqueued": 0, "created": created}
 
 
 @router.post("/workers/claim")
 async def claim_task(
     body: ClaimRequest,
     current_user: User = Depends(get_current_active_user),
+    store: SwarmControlStore = Depends(get_swarm_control_store),
 ) -> dict[str, Any]:
     """Claim the next eligible task for a worker (respects global pause)."""
-    if _paused:
+    organization_id = require_user_organization(current_user)
+    if store.is_paused(organization_id):
         return {"claimed": False, "task": None, "reason": "paused"}
-    task = _queue_backend().claim_next_task(
+    task = _queue_backend(organization_id).claim_next_task(
         agent_id=_http_worker_id(current_user.username), capabilities=body.capabilities
     )
     return {"claimed": task is not None, "task": _task_payload(task) if task else None}
@@ -198,8 +235,9 @@ async def heartbeat(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Extend the lease of a claimed task."""
+    organization_id = require_user_organization(current_user)
     try:
-        _queue_backend().heartbeat(
+        _queue_backend(organization_id).heartbeat(
             task_id=body.task_id, agent_id=_http_worker_id(current_user.username)
         )
         return {"ok": True, "task_id": body.task_id}
@@ -213,20 +251,21 @@ async def complete_task(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Report success or failure for a claimed task."""
+    organization_id = require_user_organization(current_user)
     try:
         if body.success:
-            _queue_backend().complete_task(
+            _queue_backend(organization_id).complete_task(
                 task_id=body.task_id,
                 agent_id=_http_worker_id(current_user.username),
                 patch_result=body.patch_result,
             )
         else:
-            _queue_backend().fail_task(
+            _queue_backend(organization_id).fail_task(
                 task_id=body.task_id,
                 agent_id=_http_worker_id(current_user.username),
                 error=body.error or "worker reported failure",
             )
-        task = _queue_backend().get_task(body.task_id)
+        task = _queue_backend(organization_id).get_task(body.task_id)
         return {"ok": True, "task": _task_payload(task)}
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -236,25 +275,35 @@ async def complete_task(
 async def project_status(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
+    store: SwarmControlStore = Depends(get_swarm_control_store),
 ) -> dict[str, Any]:
     """Return per-status counts for a swarm project."""
-    require_project_access(project_id, current_user.username)
-    return _project_report(project_id)
+    organization_id = require_user_organization(current_user)
+    require_project_access(project_id, current_user, store)
+    return _project_report(organization_id, project_id, store)
 
 
 @router.post("/pause")
 async def pause(
     current_user: User = Depends(get_current_active_user),
+    store: SwarmControlStore = Depends(get_swarm_control_store),
 ) -> dict[str, bool]:
-    global _paused
-    _paused = True
-    return {"paused": _paused}
+    organization_id = require_user_organization(current_user)
+    return {
+        "paused": store.set_paused(
+            organization_id, paused=True, actor_id=current_user.username
+        )
+    }
 
 
 @router.post("/resume")
 async def resume(
     current_user: User = Depends(get_current_active_user),
+    store: SwarmControlStore = Depends(get_swarm_control_store),
 ) -> dict[str, bool]:
-    global _paused
-    _paused = False
-    return {"paused": _paused}
+    organization_id = require_user_organization(current_user)
+    return {
+        "paused": store.set_paused(
+            organization_id, paused=False, actor_id=current_user.username
+        )
+    }

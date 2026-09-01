@@ -30,7 +30,7 @@ from services.swarm_persistence import SQLiteTaskQueue
 from services.swarm_task_queue import SwarmTaskQueue
 
 _lock = threading.RLock()
-_registry: PipelineRegistry | None = None
+_registries: dict[str, "PipelineRegistry"] = {}
 
 
 class PipelineAwareQueue:
@@ -100,7 +100,13 @@ class PipelineAwareQueue:
 class PipelineRegistry:
     """Holds the single in-process orchestrator and the claimable task queue."""
 
-    def __init__(self, runtime: DORRuntime, *, lease_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        runtime: DORRuntime,
+        *,
+        lease_seconds: int = 300,
+        organization_id: str | None = None,
+    ) -> None:
         self.runtime = runtime
         backend = os.getenv("DOR_QUEUE_BACKEND", "local").strip().lower()
         if backend == "database":
@@ -113,7 +119,9 @@ class PipelineRegistry:
             database_url = os.getenv("DOR_PIPELINE_DATABASE_URL") or os.getenv(
                 "DATABASE_URL"
             )
-            organization_id = os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID")
+            organization_id = organization_id or os.getenv(
+                "DOR_PIPELINE_STATE_ORGANIZATION_ID"
+            )
             if not database_url or not organization_id:
                 raise RuntimeError(
                     "database queue requires DATABASE_URL and "
@@ -167,21 +175,27 @@ def get_pipeline_registry(
     runtime: DORRuntime | None = None,
     *,
     lease_seconds: int = 300,
+    organization_id: str | None = None,
 ) -> PipelineRegistry:
-    """Return the process-wide registry, creating it on first use."""
-    global _registry
+    """Return one process registry per authenticated organization."""
+    key = organization_id or os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID") or "local"
     with _lock:
-        if _registry is None:
+        registry = _registries.get(key)
+        if registry is None:
             if runtime is None:
                 raise RuntimeError(
                     "PipelineRegistry not initialised; pass a DORRuntime on first call"
                 )
-            _registry = PipelineRegistry(runtime, lease_seconds=lease_seconds)
-        return _registry
+            registry = PipelineRegistry(
+                runtime,
+                lease_seconds=lease_seconds,
+                organization_id=organization_id,
+            )
+            _registries[key] = registry
+        return registry
 
 
 def reset_pipeline_registry() -> None:
-    """Drop the singleton (tests)."""
-    global _registry
+    """Drop every tenant registry (tests)."""
     with _lock:
-        _registry = None
+        _registries.clear()
