@@ -1,56 +1,80 @@
-# Docker Deployment & Auto-Update Guide
+# Docker deployment status
 
-Systemet understøtter komplet containeriseret drift via Docker & Docker Compose med automatisk opdatering, når `main` grenen opdateres på GitHub.
+The only supported target for the forthcoming DOR demo is
+`compose.demo.yml`. The architecture and certification criteria are defined in
+`docs/DEMO_INSTALLATION_CONTRACT.md` and
+`ci/manifests/demo_installation_contract.json`.
 
----
+## Current status
 
-## 🏗️ Arkitektur i Docker
+The Compose topology is implemented but **not demo-certified yet**. Queue
+wiring, authenticated worker identity, tenant-scope remediation, consolidated
+startup validation, attested release gates, and the clean-room Docker test are
+still required.
 
-Docker Compose orkestrerer 4 sammenhængende services:
+Do not expose this stack to untrusted networks or describe it as production
+ready.
 
-| Service | Port | Beskrivelse |
-|---|---|---|
-| **`api`** | `8000` | FastAPI REST API backend & core engine |
-| **`dashboard`** | `8501` | Streamlit Visual Management & Controller GUI |
-| **`worker`** | - | Baggrunds-agent worker & swarm orchestrator |
-| **`watchtower`** | - | **Auto-updater:** Poller GHCR hvert 60. sekund og opdaterer kørende containere uden nedetid |
+## Configuration preparation
 
----
+Copy the environment template and replace every `generated-*` placeholder:
 
-## 🚀 Hurtig Start (Lokal eller Server)
-
-### 1. Klon eller hent `docker-compose.yml`
 ```bash
-git clone https://github.com/smoeberg/kodegenerator.git
-cd kodegenerator
+cp .env.demo.example .env
 ```
 
-### 2. Konfigurer miljøvariable (`.env`)
+Generate the Fernet key as documented in the template. Use URL-safe characters
+for the PostgreSQL password because it is interpolated into a SQLAlchemy URL.
+Never commit `.env`.
+
+## Canonical commands
+
+After the remaining certification phases are complete, start with:
+
 ```bash
-cp .env.example .env
-# Rediger .env med dine nøgler (f.eks. REDMINE_URL, REDMINE_API_KEY, DOR_ADMIN_PASSWORD)
+docker compose -f compose.demo.yml up --build -d
 ```
 
-### 3. Start hele systemet
+Inspect services:
+
 ```bash
-docker compose up -d
+docker compose -f compose.demo.yml ps
+docker compose -f compose.demo.yml logs --tail=200
 ```
 
-- **Dashboard / GUI:** [http://localhost:8501](http://localhost:8501)
-- **API & Swagger Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+Stop without deleting PostgreSQL or artifact data:
 
----
-
-## 🔄 Automatisk Opdatering ved Push til `main`
-
-Når du merger eller pusher kode til `main`:
-
-1. **GitHub Actions (`docker-publish.yml`)** bygger automatisk et nyt Docker image og pusher til GitHub Container Registry (`ghcr.io/smoeberg/kodegenerator:latest`).
-2. **Watchtower** (kørende på din server) opdager det nye image inden for 60 sekunder.
-3. Watchtower downloader det nye image og genstarter `api`, `dashboard` og `worker` med bevaret data (`dor-data` volume).
-
-### Manuel opdatering (hvis Watchtower ikke anvendes):
 ```bash
-docker compose pull
-docker compose up -d
+docker compose -f compose.demo.yml down
 ```
+
+The intended public surfaces are:
+
+- API health: `http://localhost:8000/health`
+- API readiness: `http://localhost:8000/health/ready`
+- API documentation: `http://localhost:8000/docs`
+- Dashboard: `http://localhost:8501`
+
+## Container lifecycle
+
+The `migrate` service is the only migration owner. It upgrades the database and
+creates the configured artifact bucket before API and worker startup. Runtime
+containers do not run migrations themselves.
+
+The API, worker, migration, and dashboard use the same non-root runtime image.
+Their root filesystems are read-only and Linux capabilities are dropped. API
+and dashboard receive explicit writable `/tmp` filesystems.
+
+## Legacy files
+
+These files are retained temporarily for compatibility and reference, but are
+not supported demo entrypoints:
+
+- `docker-compose.yml`
+- `docker-compose.prod.yml`
+- `docker-compose.production.yml`
+- root `Dockerfile`
+- `docker/Dockerfile.api`
+- `docker/Dockerfile.worker`
+
+They must not be combined with `compose.demo.yml`.

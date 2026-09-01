@@ -1,3 +1,5 @@
+# Superseded production prototype retained for migration reference.
+# The demo installation is defined exclusively by compose.demo.yml.
 services:
   postgres:
     image: postgres:16.10-alpine
