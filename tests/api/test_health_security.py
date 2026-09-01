@@ -28,6 +28,21 @@ async def test_readiness_does_not_disclose_database_exception(
     assert "readiness database check failed" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_readiness_reports_verified_migration_head(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_main, "verify_database_readiness", lambda database: "025_test_head"
+    )
+
+    response = await api_main.health_ready()
+
+    assert response == {
+        "status": "ready",
+        "database": "ok",
+        "migration_head": "025_test_head",
+    }
+
+
 def test_production_requires_admin_password(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "IS_PRODUCTION", True)
     monkeypatch.setenv("DOR_JWT_SECRET_KEY", "configured")

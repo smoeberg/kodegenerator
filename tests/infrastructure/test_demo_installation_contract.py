@@ -138,6 +138,16 @@ def test_demo_compose_exposes_contract_ports_and_healthchecks() -> None:
             assert "healthcheck" in compose["services"][name]
 
 
+def test_demo_application_services_declare_startup_validation_roles() -> None:
+    contract = _contract()
+    compose = yaml.safe_load((ROOT / contract["compose"]["file"]).read_text())
+
+    for role in ("api", "dashboard", "migrate", "worker"):
+        assert compose["services"][role]["environment"]["DOR_RUNTIME_ROLE"] == role
+    assert contract["runtime"]["requires_role_startup_validation"] is True
+    assert contract["runtime"]["readiness_requires_canonical_schema"] is True
+
+
 def test_demo_runtime_start_order_has_single_migration_owner() -> None:
     compose = yaml.safe_load((ROOT / "compose.demo.yml").read_text())
     services = compose["services"]

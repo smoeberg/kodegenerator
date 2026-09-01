@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from services.runtime_configuration import validate_runtime_configuration
+
 
 def _client(endpoint: str):
     try:
@@ -14,6 +16,7 @@ def _client(endpoint: str):
 
 
 def main() -> None:
+    validate_runtime_configuration(role="migrate")
     endpoint = os.environ["ARTIFACT_STORE_URL"]
     bucket = os.environ["ARTIFACT_BUCKET"]
     client = _client(endpoint)

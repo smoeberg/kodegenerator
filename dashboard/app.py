@@ -8,6 +8,9 @@ import streamlit as st
 
 from dashboard.catalog import STANDARD_CAPABILITIES, STANDARD_ROLES
 from dashboard.security import admin_password
+from services.runtime_configuration import validate_runtime_configuration
+
+validate_runtime_configuration(role="dashboard")
 
 try:
     from dashboard.decision_cockpit import render_decision_cockpit

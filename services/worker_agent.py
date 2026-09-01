@@ -6,12 +6,14 @@ import sys
 
 from cli.worker import main
 from infrastructure.runtime.db import build_session_factory
+from services.runtime_configuration import validate_runtime_configuration
 from services.worker_identity import WorkerIdentityStore, WorkerPrincipal
 
 __all__ = ["run"]
 
 
 def run(argv: list[str] | None = None) -> int:
+    validate_runtime_configuration(role="worker")
     args = list(sys.argv[1:] if argv is None else argv)
     verifier = None
     if not args:
