@@ -87,9 +87,9 @@ The Compose implementation now supplies the fixed service topology, shared
 runtime image, migration owner, dashboard, healthchecks, ports, PostgreSQL and
 MinIO persistence. This does not certify the runtime behavior.
 
-The next phase must wire the canonical database queue and authenticated worker
-identity. Later phases must close tenant context, startup validation, attested
-release gates, and Docker certification.
+The canonical database queue, authenticated worker identity, tenant-scoped
+Swarm control, and hardened startup/readiness validation are now implemented.
+Later phases must close attested release gates and Docker certification.
 
 ## Certification gate
 

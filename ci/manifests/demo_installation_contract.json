@@ -22,7 +22,9 @@
     "allows_process_local_queue": false,
     "allows_file_pipeline_state": false,
     "requires_non_root_containers": true,
-    "requires_read_only_root_filesystem": true
+    "requires_read_only_root_filesystem": true,
+    "requires_role_startup_validation": true,
+    "readiness_requires_canonical_schema": true
   },
   "services": {
     "postgres": {

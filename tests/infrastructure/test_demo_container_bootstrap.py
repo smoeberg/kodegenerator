@@ -84,3 +84,13 @@ def test_demo_environment_template_covers_contract_configuration() -> None:
     }
 
     assert set(contract["required_configuration"]) <= configured
+
+
+def test_entrypoint_validates_environment_before_mutation() -> None:
+    script = (Path(__file__).parents[2] / "scripts/entrypoint.sh").read_text()
+
+    validation = script.index("scripts.validate_runtime_environment")
+    migration = script.index("alembic upgrade head")
+    bootstrap = script.index("scripts.bootstrap_artifact_store")
+
+    assert validation < migration < bootstrap

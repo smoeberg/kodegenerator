@@ -8,11 +8,12 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
 
 from api.api_surface import validate_canonical_modules
 from infrastructure.persistence.database import Database
 from monitoring.tracer import configure_tracing
+from services.runtime_configuration import validate_runtime_configuration
+from services.runtime_readiness import verify_database_readiness
 
 # Determine environment
 DOR_ENV = os.environ.get("DOR_ENV", "development").lower()
@@ -48,9 +49,10 @@ def validate_production_security_configuration() -> None:
 
 
 validate_production_security_configuration()
+validate_runtime_configuration(role="api")
 
 # Initialize database for health checks
-_db = Database()
+_db = Database(os.environ.get("DATABASE_URL", "sqlite:///./dor_runtime.db"))
 
 from api.auth import User, get_current_active_user  # noqa: E402
 from api.endpoints import (  # noqa: E402
@@ -92,9 +94,12 @@ async def health() -> dict[str, str]:
 async def health_ready() -> Any:
     """Return readiness status including database connectivity check."""
     try:
-        with _db.session() as session:
-            session.execute(text("SELECT 1"))
-        return {"status": "ready", "database": "ok"}
+        migration_head = verify_database_readiness(_db)
+        return {
+            "status": "ready",
+            "database": "ok",
+            "migration_head": migration_head,
+        }
     except Exception:
         logger.exception("readiness database check failed")
         return JSONResponse(

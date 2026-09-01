@@ -79,6 +79,7 @@ services:
     restart: "no"
     environment:
       <<: *runtime-environment
+      DOR_RUNTIME_ROLE: migrate
       DOR_RUN_MIGRATIONS: "1"
       DOR_BOOTSTRAP_ARTIFACT_BUCKET: "1"
       DOR_BOOTSTRAP_WORKER_IDENTITY: "1"
@@ -97,6 +98,7 @@ services:
     <<: *runtime-service
     environment:
       <<: *runtime-environment
+      DOR_RUNTIME_ROLE: api
       DOR_API_HOST: 0.0.0.0
       DOR_API_PORT: "8000"
       DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
@@ -134,6 +136,7 @@ services:
     command: ["python", "-m", "services.worker_agent"]
     environment:
       <<: *runtime-environment
+      DOR_RUNTIME_ROLE: worker
       DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
       DOR_WORKER_ORGANIZATION_ID: ${DOR_DEMO_ORGANIZATION_ID:-demo-org}
       DOR_WORKER_SERVICE_ID: ${DOR_WORKER_SERVICE_ID:-factory-worker}
@@ -173,6 +176,7 @@ services:
       - --server.headless=true
     environment:
       <<: *runtime-environment
+      DOR_RUNTIME_ROLE: dashboard
       HOME: /tmp/dashboard-home
       DOR_API_BASE: http://api:8000
       DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}

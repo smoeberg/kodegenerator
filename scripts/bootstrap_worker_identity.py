@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 
 from infrastructure.runtime.db import build_session_factory
+from services.runtime_configuration import validate_runtime_configuration
 from services.worker_identity import WorkerIdentityStore
 
 
 def main() -> None:
+    validate_runtime_configuration(role="migrate")
     capabilities = tuple(
         sorted(
             item.strip()
