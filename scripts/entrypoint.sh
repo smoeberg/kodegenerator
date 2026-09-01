@@ -13,4 +13,8 @@ if [ "${DOR_BOOTSTRAP_ARTIFACT_BUCKET:-0}" = "1" ]; then
   python /app/scripts/bootstrap_artifact_store.py
 fi
 
+if [ "${DOR_BOOTSTRAP_WORKER_IDENTITY:-0}" = "1" ]; then
+  python /app/scripts/bootstrap_worker_identity.py
+fi
+
 exec "$@"

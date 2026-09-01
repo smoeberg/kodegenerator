@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import JSON, Integer, String, Text, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from infrastructure.persistence.database import apply_tenant_context
@@ -46,6 +48,10 @@ class QueueMessage:
     payload: dict[str, Any]
     attempts: int
     lease_id: str | None = None
+    status: str = "pending"
+    lease_until: datetime | None = None
+    worker_id: str | None = None
+    last_error: str | None = None
 
 
 class DatabaseQueue:
@@ -99,13 +105,34 @@ class DatabaseQueue:
     def publish(
         self, topic: str, payload: dict[str, Any], message_id: str | None = None
     ) -> str:
-        with self.session_factory() as session:
-            apply_tenant_context(session, self.organization_id)
-            message_id = self.enqueue_in_session(session, topic, payload, message_id)
-            session.commit()
+        try:
+            with self.session_factory() as session:
+                apply_tenant_context(session, self.organization_id)
+                message_id = self.enqueue_in_session(
+                    session, topic, payload, message_id
+                )
+                session.commit()
+                return message_id
+        except IntegrityError:
+            if message_id is None:
+                raise
+            existing = self.get(message_id)
+            if (
+                existing is None
+                or existing.topic != topic
+                or existing.payload != payload
+            ):
+                raise ValueError("queue message ID conflicts with existing payload")
             return message_id
 
-    def claim(self, topic: str, worker_id: str) -> QueueMessage | None:
+    def claim(
+        self,
+        topic: str,
+        worker_id: str,
+        *,
+        eligible: Callable[[dict[str, Any]], bool] | None = None,
+        order_key: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> QueueMessage | None:
         if not worker_id.strip():
             raise ValueError("worker_id must be non-empty")
         now = datetime.now(timezone.utc)
@@ -137,7 +164,7 @@ class DatabaseQueue:
                         updated_at=now,
                     )
                 )
-                row = session.scalar(
+                rows = session.scalars(
                     select(QueueMessageModel)
                     .where(
                         QueueMessageModel.topic == topic,
@@ -153,8 +180,17 @@ class DatabaseQueue:
                         ),
                     )
                     .order_by(QueueMessageModel.created_at, QueueMessageModel.id)
-                    .limit(1)
-                )
+                ).all()
+                candidates = [
+                    candidate
+                    for candidate in rows
+                    if eligible is None or eligible(dict(candidate.payload))
+                ]
+                if order_key is not None:
+                    candidates.sort(
+                        key=lambda candidate: order_key(dict(candidate.payload))
+                    )
+                row = candidates[0] if candidates else None
                 if row is None:
                     session.commit()
                     return None
@@ -194,12 +230,48 @@ class DatabaseQueue:
                         payload,
                         previous_attempts + 1,
                         lease_id,
+                        "leased",
+                        now + timedelta(seconds=self.lease_seconds),
+                        worker_id,
                     )
                 session.rollback()
         raise RuntimeError("queue claim contention exceeded retry limit")
 
-    def ack(self, message_id: str, worker_id: str, lease_id: str) -> None:
-        self._transition(message_id, worker_id, lease_id, "completed", None)
+    def heartbeat(self, message_id: str, worker_id: str, lease_id: str) -> None:
+        if not lease_id:
+            raise ValueError("lease_id must be non-empty")
+        now = datetime.now(timezone.utc)
+        with self.session_factory() as session:
+            apply_tenant_context(session, self.organization_id)
+            result = session.execute(
+                update(QueueMessageModel)
+                .where(
+                    QueueMessageModel.id == message_id,
+                    QueueMessageModel.organization_id == self.organization_id,
+                    QueueMessageModel.status == "leased",
+                    QueueMessageModel.worker_id == worker_id,
+                    QueueMessageModel.lease_id == lease_id,
+                    QueueMessageModel.lease_until >= now,
+                )
+                .values(
+                    lease_until=now + timedelta(seconds=self.lease_seconds),
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                raise ValueError("Queue message is not actively leased by this worker")
+            session.commit()
+
+    def ack(
+        self,
+        message_id: str,
+        worker_id: str,
+        lease_id: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        self._transition(
+            message_id, worker_id, lease_id, "completed", None, result=result
+        )
 
     def fail(
         self,
@@ -208,6 +280,8 @@ class DatabaseQueue:
         lease_id: str,
         error: str,
         retry_after_seconds: int = 5,
+        *,
+        retry: bool = True,
     ) -> None:
         if retry_after_seconds < 0:
             raise ValueError("retry_after_seconds must be non-negative")
@@ -229,7 +303,7 @@ class DatabaseQueue:
                 or row.lease_id != lease_id
             ):
                 raise ValueError("Queue message is not leased by this worker")
-            exhausted = row.attempts >= self.max_attempts
+            exhausted = not retry or row.attempts >= self.max_attempts
             row.status = "dead_letter" if exhausted else "pending"
             row.worker_id = None
             row.lease_id = None
@@ -279,6 +353,26 @@ class DatabaseQueue:
                 query = query.where(QueueMessageModel.topic == topic)
             return len(session.scalars(query).all())
 
+    def get(self, message_id: str) -> QueueMessage | None:
+        with self.session_factory() as session:
+            apply_tenant_context(session, self.organization_id)
+            row = session.get(QueueMessageModel, (self.organization_id, message_id))
+            return self._message(row) if row is not None else None
+
+    def list(self, topic: str | None = None) -> list[QueueMessage]:
+        with self.session_factory() as session:
+            apply_tenant_context(session, self.organization_id)
+            query = select(QueueMessageModel).where(
+                QueueMessageModel.organization_id == self.organization_id
+            )
+            if topic is not None:
+                query = query.where(QueueMessageModel.topic == topic)
+            rows = session.scalars(query.order_by(QueueMessageModel.created_at)).all()
+            return [self._message(row) for row in rows]
+
+    def pending_count(self, topic: str | None = None) -> int:
+        return sum(message.status == "pending" for message in self.list(topic))
+
     def _transition(
         self,
         message_id: str,
@@ -286,13 +380,30 @@ class DatabaseQueue:
         lease_id: str,
         status: str,
         error: str | None,
+        *,
+        result: dict[str, Any] | None = None,
     ) -> None:
         if not lease_id:
             raise ValueError("lease_id must be non-empty")
         now = datetime.now(timezone.utc)
         with self.session_factory() as session:
             apply_tenant_context(session, self.organization_id)
-            result = session.execute(
+            values: dict[str, Any] = {
+                "status": status,
+                "lease_id": None,
+                "lease_until": None,
+                "updated_at": now,
+                "last_error": error,
+            }
+            if result is not None:
+                row = session.get(QueueMessageModel, (self.organization_id, message_id))
+                if row is None:
+                    raise ValueError("Queue message is unavailable")
+                values["payload"] = {
+                    **dict(row.payload),
+                    "completion_result": result,
+                }
+            transition = session.execute(
                 update(QueueMessageModel)
                 .where(
                     QueueMessageModel.id == message_id,
@@ -301,15 +412,23 @@ class DatabaseQueue:
                     QueueMessageModel.worker_id == worker_id,
                     QueueMessageModel.lease_id == lease_id,
                 )
-                .values(
-                    status=status,
-                    worker_id=None,
-                    lease_id=None,
-                    lease_until=None,
-                    updated_at=now,
-                    last_error=error,
-                )
+                .values(**values)
             )
-            if result.rowcount != 1:
+            if transition.rowcount != 1:
                 raise ValueError("Queue message is not leased by this worker")
             session.commit()
+
+    @staticmethod
+    def _message(row: QueueMessageModel) -> QueueMessage:
+        return QueueMessage(
+            id=row.id,
+            organization_id=row.organization_id,
+            topic=row.topic,
+            payload=dict(row.payload),
+            attempts=row.attempts,
+            lease_id=row.lease_id,
+            status=row.status,
+            lease_until=row.lease_until,
+            worker_id=row.worker_id,
+            last_error=row.last_error,
+        )

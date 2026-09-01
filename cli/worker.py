@@ -14,13 +14,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import List
+from collections.abc import Callable
 
 from services.swarm_task_queue import SwarmTaskQueue
 from services.worker_agent_daemon import WorkerAgent
 
 
-def parse_capabilities(raw: str) -> List[str]:
+def parse_capabilities(raw: str) -> list[str]:
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if not parts:
         raise argparse.ArgumentTypeError("at least one capability is required")
@@ -105,7 +105,11 @@ def _resolve_queue(args: argparse.Namespace) -> SwarmTaskQueue:
     return registry.queue
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    identity_verifier: Callable[[], str] | None = None,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -152,6 +156,7 @@ def main(argv: List[str] | None = None) -> int:
         poll_interval=args.poll_interval,
         heartbeat_interval=args.heartbeat_interval,
         synthesizer=synthesizer,
+        identity_verifier=identity_verifier,
     )
     agent.run(install_signal_handlers=True)
     return 0

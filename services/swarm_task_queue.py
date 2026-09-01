@@ -6,14 +6,15 @@ threads cannot claim the same WBS task.  A stale lease is reclaimed lazily on
 queue operations, which makes crash recovery deterministic without a
 background reaper.
 """
+
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from threading import RLock
-from typing import Any, Iterable, Optional
-import uuid
+from typing import Any
 
 
 class QueuedTaskStatus(str, Enum):
@@ -31,12 +32,12 @@ class QueuedTask:
     capabilities: tuple[str, ...] = ()
     priority: int = 0
     status: QueuedTaskStatus = QueuedTaskStatus.PENDING
-    agent_id: Optional[str] = None
-    lease_expires_at: Optional[datetime] = None
-    heartbeat_at: Optional[datetime] = None
+    agent_id: str | None = None
+    lease_expires_at: datetime | None = None
+    heartbeat_at: datetime | None = None
     retry_count: int = 0
     max_retries: int = 3
-    error: Optional[str] = None
+    error: str | None = None
     patch_result: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -85,7 +86,7 @@ class SwarmTaskQueue:
 
     def claim_next_task(
         self, agent_id: str, capabilities: list[str]
-    ) -> Optional[QueuedTask]:
+    ) -> QueuedTask | None:
         if not agent_id.strip():
             raise ValueError("agent_id is required")
         capability_set = set(capabilities)
@@ -93,7 +94,8 @@ class SwarmTaskQueue:
             now = self._clock()
             self._reclaim_expired_locked(now)
             ready = [
-                task for task in self._tasks.values()
+                task
+                for task in self._tasks.values()
                 if task.status == QueuedTaskStatus.PENDING
                 and set(task.capabilities).issubset(capability_set)
                 and self._dependencies_completed_locked(task)
@@ -149,7 +151,9 @@ class SwarmTaskQueue:
     def pending_count(self) -> int:
         with self._lock:
             self._reclaim_expired_locked(self._clock())
-            return sum(t.status == QueuedTaskStatus.PENDING for t in self._tasks.values())
+            return sum(
+                t.status == QueuedTaskStatus.PENDING for t in self._tasks.values()
+            )
 
     def get_task(self, task_id: str) -> QueuedTask:
         with self._lock:
@@ -204,13 +208,15 @@ class SwarmTaskQueue:
         task_id = str(SwarmTaskQueue._task_value(item, "id", "task_id"))
         if not task_id or task_id == "None":
             task_id = str(uuid.uuid4())
-        dependencies = tuple(str(x) for x in (getattr(item, "dependencies", None) or []))
-        metadata = dict(getattr(item, "metadata", None) or {})
-        capabilities = getattr(item, "capabilities", None) or metadata.get("capabilities", [])
-        capabilities = tuple(
-            getattr(cap, "value", str(cap)) for cap in capabilities
+        dependencies = tuple(
+            str(x) for x in (SwarmTaskQueue._task_value(item, "dependencies") or [])
         )
-        priority = getattr(item, "priority", 0)
+        metadata = dict(SwarmTaskQueue._task_value(item, "metadata") or {})
+        capabilities = SwarmTaskQueue._task_value(item, "capabilities") or metadata.get(
+            "capabilities", []
+        )
+        capabilities = tuple(getattr(cap, "value", str(cap)) for cap in capabilities)
+        priority = SwarmTaskQueue._task_value(item, "priority") or 0
         priority = getattr(priority, "value", priority)
         try:
             priority = int(priority)
@@ -218,11 +224,11 @@ class SwarmTaskQueue:
             priority = 0
         return QueuedTask(
             task_id=task_id,
-            name=str(getattr(item, "name", task_id)),
+            name=str(SwarmTaskQueue._task_value(item, "name") or task_id),
             dependencies=dependencies,
             capabilities=capabilities,
             priority=priority,
-            max_retries=int(getattr(item, "max_retries", 3)),
+            max_retries=int(SwarmTaskQueue._task_value(item, "max_retries") or 3),
             metadata=metadata,
         )
 
