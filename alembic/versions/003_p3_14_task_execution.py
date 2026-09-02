@@ -1,13 +1,13 @@
 """P3-14 task execution receipts.
 
 Revision ID: 003_p3_14_task_execution
-Revises: 002b_authority_organization_scope
+Revises: 002b_authority_org_scope
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "003_p3_14_task_execution"
-down_revision = "002b_authority_organization_scope"
+down_revision = "002b_authority_org_scope"
 branch_labels = None
 depends_on = None
 

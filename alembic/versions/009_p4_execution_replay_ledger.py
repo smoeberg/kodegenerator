@@ -1,13 +1,13 @@
 """Create the durable P4-01 execution replay ledger.
 
-Revision ID: 009_p4_01_execution_replay_ledger
+Revision ID: 009_p4_execution_replay_ledger
 Revises: 008_phase7_runtime_queue
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "009_p4_01_execution_replay_ledger"
+revision = "009_p4_execution_replay_ledger"
 down_revision = "008_phase7_runtime_queue"
 branch_labels = None
 depends_on = None

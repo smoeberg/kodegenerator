@@ -1,7 +1,7 @@
 """Add lease fencing to the durable runtime queue.
 
 Revision ID: 010_runtime_queue_fencing
-Revises: 009_p4_01_execution_replay_ledger
+Revises: 009_p4_execution_replay_ledger
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "010_runtime_queue_fencing"
-down_revision = "009_p4_01_execution_replay_ledger"
+down_revision = "009_p4_execution_replay_ledger"
 branch_labels = None
 depends_on = None
 
