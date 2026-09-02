@@ -181,7 +181,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_002b_first
         run: |
           set -euo pipefail
-          alembic upgrade 002b_authority_organization_scope
+          alembic upgrade 002b_authority_org_scope
           alembic upgrade head
           test "$(alembic current)" = "025_swarm_control_state (head)"
 

@@ -71,7 +71,7 @@ def test_upgrade_converges_when_005_branch_was_applied_first(tmp_path: Path) -> 
 def test_upgrade_converges_when_002b_branch_was_applied_first(tmp_path: Path) -> None:
     database = tmp_path / "authority-002b-first.db"
 
-    _upgrade(database, "002b_authority_organization_scope")
+    _upgrade(database, "002b_authority_org_scope")
     _upgrade(database, "head")
 
     _assert_authority_scope(database)

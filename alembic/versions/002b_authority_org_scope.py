@@ -1,6 +1,6 @@
 """Backfill the Phase 3 role definition organization boundary.
 
-Revision ID: 002b_authority_organization_scope
+Revision ID: 002b_authority_org_scope
 Revises: 002_phase3_authority
 
 The original authority migration created role_definitions without the mandatory
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "002b_authority_organization_scope"
+revision = "002b_authority_org_scope"
 down_revision = "002_phase3_authority"
 branch_labels = None
 depends_on = None
