@@ -121,6 +121,80 @@ jobs:
           cat /tmp/dor-uvicorn.log
           exit 1
 
+  postgres-migrations:
+    name: PostgreSQL migration graph
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dor
+          POSTGRES_PASSWORD: dor-ci-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dor -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.lock
+
+      - name: Create migration test databases
+        env:
+          ADMIN_DATABASE_URL: postgresql://dor:dor-ci-password@127.0.0.1:5432/postgres
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["ADMIN_DATABASE_URL"], autocommit=True) as connection:
+              for database in ("dor_005_first", "dor_002b_first", "dor_fresh"):
+                  connection.execute(f'CREATE DATABASE "{database}"')
+          PY
+
+      - name: Verify upgrade after the 005 branch
+        env:
+          DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_005_first
+        run: |
+          set -euo pipefail
+          alembic upgrade 005_authority_org_scope
+          alembic upgrade head
+          test "$(alembic current)" = "025_swarm_control_state (head)"
+
+      - name: Verify upgrade after the 002b branch
+        env:
+          DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_002b_first
+        run: |
+          set -euo pipefail
+          alembic upgrade 002b_authority_organization_scope
+          alembic upgrade head
+          test "$(alembic current)" = "025_swarm_control_state (head)"
+
+      - name: Verify clean PostgreSQL migration
+        env:
+          DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_fresh
+        run: |
+          set -euo pipefail
+          alembic upgrade head
+          test "$(alembic current)" = "025_swarm_control_state (head)"
+          alembic downgrade base
+          test -z "$(alembic current)"
+
   security:
     runs-on: ubuntu-latest
     steps:
