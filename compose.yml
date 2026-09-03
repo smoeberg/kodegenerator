@@ -2,9 +2,9 @@ name: dor
 
 x-runtime-environment: &runtime-environment
   DOR_ENV: production
-  DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-dor}"
-  DOR_IDENTITY_DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-dor}"
-  DOR_PIPELINE_DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-dor}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-dor}"
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+  DOR_IDENTITY_DATABASE_URL: ${DOR_IDENTITY_DATABASE_URL:-${DATABASE_URL}}
+  DOR_PIPELINE_DATABASE_URL: ${DOR_PIPELINE_DATABASE_URL:-${DATABASE_URL}}
   DOR_PIPELINE_STATE_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
   DOR_QUEUE_BACKEND: database
   ARTIFACT_STORE_URL: http://minio:9000
@@ -16,6 +16,7 @@ x-runtime-environment: &runtime-environment
   DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:?DOR_JWT_ACTIVE_KEY_ID must be set}
   DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
   DOR_ENCRYPTION_KEY: ${DOR_ENCRYPTION_KEY:?DOR_ENCRYPTION_KEY must be set}
+  DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
 
 x-runtime-service: &runtime-service
@@ -38,13 +39,13 @@ services:
     image: postgres:16.10-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-dor}
-      POSTGRES_USER: ${POSTGRES_USER:-dor}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dor} -d ${POSTGRES_DB:-dor}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -79,6 +80,9 @@ services:
     restart: "no"
     environment:
       <<: *runtime-environment
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DOR_RUNTIME_ROLE: migrate
       DOR_RUN_MIGRATIONS: "1"
       DOR_BOOTSTRAP_ARTIFACT_BUCKET: "1"
