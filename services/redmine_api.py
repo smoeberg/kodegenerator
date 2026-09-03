@@ -181,3 +181,23 @@ class RedmineAPIClient:
         return [
             RedmineIssue.from_api(item, base_url=self.config.url) for item in issues
         ]
+
+    def list_issues(
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        status_id: str | None = None,
+    ) -> list[RedmineIssue]:
+        """List issues with optional filtering."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if status_id is not None:
+            params["status_id"] = status_id
+        try:
+            response = self._request("GET", "/issues.json", params=params)
+        except RedmineAPIError:
+            return []
+        issues = response.get("issues", [])
+        return [
+            RedmineIssue.from_api(item, base_url=self.config.url) for item in issues
+        ]
