@@ -405,27 +405,68 @@ def _step_wbs() -> None:
 
 def _step_code_verify() -> None:
     st.subheader("Trin 5 · Kode & Verifikation")
-    st.markdown("Genererede patches, AST-validering og test-resultater. Endelig PASS/FAIL ligger hos P3-20 — ikke hos Impl eller Test Agent.")
+    st.markdown("Genererede filer, arkitekturkontrakt og download af det færdige projekt.")
     w = _wiz()
-    st.markdown("#### Patches")
-    for p in _mock_patches():
-        icon = "✅" if p["ast_ok"] else "❌"
-        with st.expander(f"{icon} `{p['path']}` · {p['id']}"):
-            st.write(p["summary"])
-            st.caption(f"Diff: {p['lines']} · AST: {'OK' if p['ast_ok'] else 'FAIL'} · Fingerprint: `{p['fingerprint']}`")
-    st.markdown("#### Test & architecture checks")
-    st.dataframe(pd.DataFrame(_mock_test_results()), use_container_width=True, hide_index=True)
+    vision = w.get("vision", {})
+    arch = w.get("architecture", {})
+    name = (vision.get("system_name") or "wp-timezone-support").strip().replace(" ", "-").lower()
+
+    # Generer et rigtigt projekt on-the-fly via systemets ScaffoldEngine
+    st.markdown("#### 🛠️ Genererer projektartefakter...")
+    try:
+        from generation.project_spec import ProjectDefinition, ArchitectureKind
+        from generation.scaffold_engine import ScaffoldEngine
+        import io
+        import zipfile
+
+        arch_style = ArchitectureKind.PLUGIN if arch.get("style") == "plugin" else ArchitectureKind.HEXAGONAL
+        lang = "php" if arch.get("style") == "plugin" or "wp" in name or "wordpress" in name else "python"
+        api = "wordpress" if lang == "php" else "fastapi"
+
+        proj_def = ProjectDefinition(
+            name=name,
+            architecture=arch_style,
+            language=lang,
+            api=api,
+            database="none" if lang == "php" else "postgresql"
+        )
+        engine = ScaffoldEngine()
+        plan = engine.generate(proj_def)
+
+        st.success(f"✅ Projekt scaffolded succesfuldt! Fingerprint: `{plan.fingerprint[:16]}...`")
+
+        # Lav en ZIP fil i memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for s_file in plan.files:
+                zip_file.writestr(f"{name}/{s_file.path}", s_file.content)
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label=f"📦 Download færdig pakke ({name}.zip)",
+            data=zip_buffer,
+            file_name=f"{name}.zip",
+            mime="application/zip",
+            type="primary",
+        )
+
+        st.markdown("#### 📁 Genererede filer i pakken")
+        for f in plan.files:
+            with st.expander(f"📄 `{f.path}`"):
+                st.code(f.content, language="php" if f.path.endswith(".php") else "text")
+
+    except Exception as e:
+        st.error(f"Fejl under kodescaffolding: {e}")
+
     ver = w["verification"]
-    ver["patches_reviewed"] = st.checkbox("Patches gennemgået", value=bool(ver.get("patches_reviewed")))
-    ver["tests_reviewed"] = st.checkbox("Test- og AST-resultater gennemgået", value=bool(ver.get("tests_reviewed")))
+    ver["patches_reviewed"] = st.checkbox("Filer gennemgået", value=bool(ver.get("patches_reviewed")))
+    ver["tests_reviewed"] = st.checkbox("Arkitekturkontrakt valideret", value=bool(ver.get("tests_reviewed")))
     if ver["patches_reviewed"] and ver["tests_reviewed"]:
-        st.success("Controller har gennemgået evidence. I production sendes næste command via Control Plane under authority grant.")
+        st.success("Controller har godkendt koden.")
         st.balloons()
         if st.button("🏁 Afslut wizard / start forfra"):
             del st.session_state[_WIZ]
             st.rerun()
-    else:
-        st.info("Markér begge gennemgange for at lukke pipeline-demoen.")
 
 
 def _fmt(ts: str | None) -> str:
