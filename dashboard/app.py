@@ -213,7 +213,8 @@ elif menu == "Opret Ny Agent (Wizard)":
             status = st.selectbox("Initial Status", ["active", "idle", "disabled"])
 
         st.markdown("### Standard Rettigheder & Evner")
-        default_caps = STANDARD_ROLES.get(selected_role, [])
+        role_template = STANDARD_ROLES.get(selected_role)
+        default_caps = list(role_template.capabilities) if role_template else []
         selected_caps = st.multiselect(
             "Tilknyttede Capabilities", list(STANDARD_CAPABILITIES.keys()), default=default_caps
         )
