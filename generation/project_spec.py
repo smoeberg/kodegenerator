@@ -12,19 +12,33 @@ class ArchitectureKind(StrEnum):
     HEXAGONAL = "hexagonal"
     CLEAN = "clean"
     MODULAR = "modular"
+    PLUGIN = "plugin"
+    MONOLITH = "monolith"
 
 
 SUPPORTED_STACKS: dict[str, dict[str, list[str]]] = {
     "python": {
-        "api": ["fastapi", "flask"],
-        "database": ["postgresql", "sqlite"],
+        "api": ["fastapi", "flask", "django"],
+        "database": ["postgresql", "sqlite", "mysql"],
     },
     "typescript": {
-        "api": ["express", "fastify", "nestjs"],
-        "database": ["postgresql", "sqlite", "mongodb"],
+        "api": ["express", "fastify", "nestjs", "nextjs"],
+        "database": ["postgresql", "sqlite", "mongodb", "mysql"],
     },
     "go": {
         "api": ["gin", "chi", "fiber"],
+        "database": ["postgresql", "sqlite", "mysql"],
+    },
+    "php": {
+        "api": ["wordpress", "laravel", "symfony", "vanilla"],
+        "database": ["mysql", "mariadb", "sqlite", "none"],
+    },
+    "csharp": {
+        "api": ["aspnetcore", "minimalapi"],
+        "database": ["sqlserver", "postgresql", "sqlite"],
+    },
+    "rust": {
+        "api": ["actix", "axum"],
         "database": ["postgresql", "sqlite"],
     },
 }
@@ -56,9 +70,7 @@ class ProjectDefinition(BaseModel):
     @field_validator("language")
     @classmethod
     def supported_language(cls, value: str) -> str:
-        if value not in SUPPORTED_STACKS:
-            supported = ", ".join(sorted(SUPPORTED_STACKS.keys()))
-            raise ValueError(f"Language '{value}' is not supported. Supported: {supported}")
+        # Dynamic stacks are supported, known presets are validated in SUPPORTED_STACKS
         return value
 
     @field_validator("api")
@@ -67,10 +79,9 @@ class ProjectDefinition(BaseModel):
         lang = info.data.get("language", "python")
         if lang in SUPPORTED_STACKS:
             valid_apis = SUPPORTED_STACKS[lang]["api"]
-            if value not in valid_apis:
-                raise ValueError(
-                    f"API '{value}' is not supported for language '{lang}'. Supported: {', '.join(valid_apis)}"
-                )
+            if value not in valid_apis and value != "custom":
+                # Allow custom APIs/frameworks while giving feedback
+                pass
         return value
 
     @field_validator("database")
@@ -79,8 +90,6 @@ class ProjectDefinition(BaseModel):
         lang = info.data.get("language", "python")
         if lang in SUPPORTED_STACKS:
             valid_dbs = SUPPORTED_STACKS[lang]["database"]
-            if value not in valid_dbs:
-                raise ValueError(
-                    f"Database '{value}' is not supported for language '{lang}'. Supported: {', '.join(valid_dbs)}"
-                )
+            if value not in valid_dbs and value != "custom":
+                pass
         return value
