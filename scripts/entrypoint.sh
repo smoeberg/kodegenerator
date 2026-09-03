@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+# Initialiser database (opret database og bruger hvis de ikke eksisterer)
+if [ "${DOR_RUN_MIGRATIONS:-0}" = "1" ]; then
+  python -m scripts.init_database
+fi
+
 python -m scripts.validate_runtime_environment
 
 if [ "${DOR_RUN_MIGRATIONS:-0}" = "1" ]; then
