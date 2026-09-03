@@ -15,8 +15,8 @@ from runtime.core import DORRuntime
 
 logger = logging.getLogger("dor.seed")
 
-ORGANIZATION_ID = "demo-org"
-ACTOR_ID = "demo-actor"
+ORGANIZATION_ID = "dor-org"
+ACTOR_ID = "dor-actor"
 
 
 def seed() -> None:

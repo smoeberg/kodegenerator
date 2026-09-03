@@ -33,7 +33,7 @@ def verify_docker_available() -> bool:
     return res.returncode == 0
 
 
-def build_and_start_compose(project_name: str = "dor-demo") -> None:
+def build_and_start_compose(project_name: str = "dor") -> None:
     env = dict(os.environ)
     env.setdefault("POSTGRES_PASSWORD", "demo-password-123")
     env.setdefault("MINIO_ROOT_PASSWORD", "minio-password-123")
@@ -43,7 +43,7 @@ def build_and_start_compose(project_name: str = "dor-demo") -> None:
     run_cmd(["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project_name, "up", "--build", "-d"])
 
 
-def stop_compose(project_name: str = "dor-demo") -> None:
+def stop_compose(project_name: str = "dor") -> None:
     run_cmd(["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project_name, "down", "-v", "--remove-orphans"], check=False)
 
 
@@ -65,7 +65,7 @@ def run_certification_suite() -> dict:
     end_time = datetime.now(timezone.utc).isoformat()
 
     receipt = {
-        "contract_id": "dor-demo-installation-v1",
+        "contract_id": "dor-installation-v1",
         "status": "PASSED" if success else "FAILED",
         "certified_at": end_time,
         "started_at": start_time,
@@ -101,7 +101,7 @@ def main() -> None:
     args = parser.parse_args()
 
     use_docker = args.docker and verify_docker_available()
-    project_name = f"dor-demo-cert-{int(time.time())}"
+    project_name = f"dor-cert-{int(time.time())}"
 
     if use_docker:
         print("=== Starting clean-room Docker Compose stack ===")

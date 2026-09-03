@@ -1,7 +1,7 @@
 # DOR demo installation contract
 
 Status: **Compose implementation present; runtime certification pending**
-Contract ID: `dor-demo-installation-v1`
+Contract ID: `dor-installation-v1`
 
 This document defines the only supported installation target for the DOR
 demonstration. It does not certify the current Docker files. Certification is
@@ -26,9 +26,10 @@ Teardown without deleting durable data:
 docker compose -f compose.demo.yml down
 ```
 
-No other Compose combination is a supported demo installation. Existing
-`docker-compose*.yml` files are explicitly marked as legacy development or
-superseded prototype paths.
+No other Compose combination is a supported demo installation. The former
+`docker-compose.production.yml` superseded prototype has been removed. The
+remaining `docker-compose*.yml` files are explicitly marked as legacy
+development paths and are not installation targets.
 
 ## Fixed topology
 

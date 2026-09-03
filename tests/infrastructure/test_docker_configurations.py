@@ -47,7 +47,6 @@ def test_legacy_docker_paths_are_explicitly_not_demo_paths():
         "docker/Dockerfile.worker",
         "docker-compose.yml",
         "docker-compose.prod.yml",
-        "docker-compose.production.yml",
     )
     for path in paths:
         text = (ROOT / path).read_text().lower()

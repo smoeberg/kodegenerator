@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "contract_id": "dor-demo-installation-v1",
+  "contract_id": "dor-installation-v1",
   "status": "implementation_present_certification_pending",
   "owner": "core-platform",
   "compose": {
     "file": "compose.demo.yml",
     "start_command": "docker compose -f compose.demo.yml up --build -d",
     "stop_command": "docker compose -f compose.demo.yml down",
-    "project_name": "dor-demo"
+    "project_name": "dor"
   },
   "implementation": {
     "runtime_dockerfile": "docker/Dockerfile.runtime",
@@ -16,7 +16,7 @@
     "certified": false
   },
   "runtime": {
-    "environment": "demo",
+    "environment": "production",
     "production_equivalent_wiring": true,
     "allows_sqlite": false,
     "allows_process_local_queue": false,

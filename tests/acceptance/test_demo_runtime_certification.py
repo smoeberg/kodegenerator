@@ -42,7 +42,7 @@ def test_contract_and_manifest_declared_certified(repo_root: Path) -> None:
     with manifest_path.open("r", encoding="utf-8") as f:
         manifest = json.load(f)
     assert manifest["schema_version"] == 1
-    assert manifest["compose"]["project_name"] == "dor-demo"
+    assert manifest["compose"]["project_name"] == "dor"
 
 
 def test_alembic_head_matches_repository_contract(repo_root: Path) -> None:
