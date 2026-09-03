@@ -143,7 +143,14 @@ def _validate_identity(
     if not normalized or normalized != capabilities:
         raise ValueError("worker capabilities must be sorted, unique and non-empty")
     for item in normalized:
-        Capability(item)
+        try:
+            Capability(item)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid worker capability {item!r}: expected dot-separated "
+                "naming (e.g. 'pipeline.code'); check DOR_WORKER_CAPABILITIES "
+                "against .env.demo.example"
+            ) from exc
     return organization_id, service_id, normalized
 
 
