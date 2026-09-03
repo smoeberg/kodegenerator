@@ -1,5 +1,5 @@
 # Legacy compatibility image. The certified demo path uses
-# docker/Dockerfile.runtime through compose.demo.yml.
+# docker/Dockerfile.runtime through compose.yml.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -81,7 +81,7 @@ def _grant(handoff: ReleaseHandoff, action: str = "release.publish"):
     if action == "pipeline.deploy":
         parameters.update(
             environment="demo",
-            target="compose.demo.yml",
+            target="compose.yml",
             release="demo-v1",
         )
     return SimpleNamespace(
@@ -203,7 +203,7 @@ def test_deploy_executor_fingerprints_the_verified_handoff() -> None:
             "release_handoff": asdict(handoff),
             "project_name": "demo",
             "environment": "demo",
-            "target": "compose.demo.yml",
+            "target": "compose.yml",
             "release": "demo-v1",
             "authority_grant": _grant(handoff, "pipeline.deploy"),
         }

@@ -1,6 +1,6 @@
 # Phase 4: Demo startup and readiness
 
-The demo and production environments now share one fail-closed startup
+The production environment now uses one fail-closed startup
 configuration boundary. Every application container declares its runtime role
 and validates its complete wiring before migrations, API startup, worker
 claims, or dashboard startup can begin.

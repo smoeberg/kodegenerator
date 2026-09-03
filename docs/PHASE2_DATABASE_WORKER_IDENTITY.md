@@ -1,6 +1,6 @@
 # Phase 2: database queue and worker service identity
 
-The demo and production worker path uses one tenant-scoped database queue for
+The production worker path uses one tenant-scoped database queue for
 API publication and worker claims. Local SQLite and in-memory queues remain
 development-only compatibility backends.
 
@@ -19,7 +19,7 @@ claim owner is `<service_id>@<instance_id>`, and the credential is revalidated
 before claims, heartbeats, completions and failures. Disabling the service
 account therefore fences a running worker at its next queue transition.
 
-The migration service provisions the configured demo identity idempotently
+The migration service provisions the configured worker identity idempotently
 after Alembic completes. Provisioning refuses to overwrite a different
 credential or capability set.
 

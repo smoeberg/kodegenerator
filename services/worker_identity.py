@@ -149,7 +149,7 @@ def _validate_identity(
             raise ValueError(
                 f"invalid worker capability {item!r}: expected dot-separated "
                 "naming (e.g. 'pipeline.code'); check DOR_WORKER_CAPABILITIES "
-                "against .env.demo.example"
+                "against .env.example"
             ) from exc
     return organization_id, service_id, normalized
 
