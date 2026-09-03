@@ -237,29 +237,29 @@ elif menu == "Opret Ny Agent (Wizard)":
             "Tilknyttede Capabilities", all_cap_ids, default=default_caps
         )
 
-            submitted = st.form_submit_button("Opret Agent")
-            if submitted:
-                if not name.strip():
-                    st.error("Navn må ikke være tomt.")
-                else:
-                    try:
-                        import uuid
-                        new_id = f"agent-{uuid.uuid4().hex[:8]}"
-                        insert_query = """
-                        INSERT INTO agents (agent_id, name, role, status, is_active, created_at)
-                        VALUES (:id, :name, :role, :status, 1, CURRENT_TIMESTAMP)
-                        """
-                        with conn.connect() if hasattr(conn, "connect") else conn as cur:
-                            if hasattr(cur, "execute"):
-                                from sqlalchemy import text
-                                cur.execute(text(insert_query), {"id": new_id, "name": name, "role": selected_role, "status": status})
-                                if hasattr(cur, "commit"):
-                                    cur.commit()
-                            else:
-                                cur.execute("INSERT INTO agents (agent_id, name, role, status, is_active) VALUES (?, ?, ?, ?, 1)", (new_id, name, selected_role, status))
-                        st.success(f"Agent '{name}' oprettet i databasen med ID `{new_id}`!")
-                    except Exception as ex:
-                        st.error(f"Fejl ved oprettelse i databasen: {ex}")
+        submitted = st.form_submit_button("Opret Agent")
+        if submitted:
+            if not name.strip():
+                st.error("Navn må ikke være tomt.")
+            else:
+                try:
+                    import uuid
+                    new_id = f"agent-{uuid.uuid4().hex[:8]}"
+                    insert_query = """
+                    INSERT INTO agents (agent_id, name, role, status, is_active, created_at)
+                    VALUES (:id, :name, :role, :status, 1, CURRENT_TIMESTAMP)
+                    """
+                    with conn.connect() if hasattr(conn, "connect") else conn as cur:
+                        if hasattr(cur, "execute"):
+                            from sqlalchemy import text
+                            cur.execute(text(insert_query), {"id": new_id, "name": name, "role": selected_role, "status": status})
+                            if hasattr(cur, "commit"):
+                                cur.commit()
+                        else:
+                            cur.execute("INSERT INTO agents (agent_id, name, role, status, is_active) VALUES (?, ?, ?, ?, 1)", (new_id, name, selected_role, status))
+                    st.success(f"Agent '{name}' oprettet i databasen med ID `{new_id}`!")
+                except Exception as ex:
+                    st.error(f"Fejl ved oprettelse i databasen: {ex}")
 
 # --- Sektion: Afdelinger & Teams ---
 elif menu == "Afdelinger & Teams":
