@@ -265,6 +265,47 @@ elif menu == "⚙️ Indstillinger & Integrationer":
         "Konfigurer forbindelser til eksterne issue trackers, metrics og runtime-miljø."
     )
 
+
+def _persist_env_vars(vars_dict: dict[str, str]) -> None:
+    env_paths = [".env", "/app/.env", "/root/kodegenerator/.env"]
+    target_path = ".env"
+    for p in env_paths:
+        if os.path.exists(p) or os.access(os.path.dirname(os.path.abspath(p)) or ".", os.W_OK):
+            target_path = p
+            break
+
+    lines = []
+    if os.path.exists(target_path):
+        try:
+            with open(target_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            pass
+
+    updated = set()
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        matched = False
+        for k, v in vars_dict.items():
+            if stripped.startswith(f"{k}=") or stripped.startswith(f"# {k}=") or stripped.startswith(f"#{k}="):
+                new_lines.append(f"{k}={v}\n")
+                updated.add(k)
+                matched = True
+                break
+        if not matched:
+            new_lines.append(line)
+
+    for k, v in vars_dict.items():
+        if k not in updated:
+            new_lines.append(f"{k}={v}\n")
+
+    try:
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception:
+        pass
+
     tab_redmine, tab_general = st.tabs(["🐞 Redmine Issue Tracker", "🌐 Generelt"])
 
     with tab_redmine:
@@ -365,8 +406,16 @@ elif menu == "⚙️ Indstillinger & Integrationer":
                 os.environ["REDMINE_PROJECT_ID"] = project_id.strip() or "dor"
                 os.environ["REDMINE_TRACKER_ID"] = tracker_id.strip() or "1"
                 os.environ["REDMINE_SEVERITY"] = severity
+                
+                _persist_env_vars({
+                    "REDMINE_URL": redmine_url.strip(),
+                    "REDMINE_API_KEY": api_key.strip(),
+                    "REDMINE_PROJECT_ID": project_id.strip() or "dor",
+                    "REDMINE_TRACKER_ID": tracker_id.strip() or "1",
+                    "REDMINE_SEVERITY": severity,
+                })
                 st.success(
-                    "✅ Redmine-indstillinger opdateret i aktiv runtime-session!"
+                    "✅ Redmine-indstillinger opdateret og gemt permanent i .env-filen!"
                 )
 
     with tab_general:
