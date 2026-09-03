@@ -42,6 +42,7 @@ def test_root_entrypoint_reexports_canonical_api(
 
 
 def test_compose_binds_fail_closed_runtime_configuration() -> None:
+    # Test the legacy docker-compose.yml for backward compatibility
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}" in compose
