@@ -38,7 +38,6 @@ x-runtime-service: &runtime-service
     - no-new-privileges:true
   cap_drop:
     - ALL
-  environment: *runtime-environment
 
 services:
   postgres:
