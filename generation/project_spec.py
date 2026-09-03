@@ -70,7 +70,8 @@ class ProjectDefinition(BaseModel):
     @field_validator("language")
     @classmethod
     def supported_language(cls, value: str) -> str:
-        # Dynamic stacks are supported, known presets are validated in SUPPORTED_STACKS
+        if value not in SUPPORTED_STACKS:
+            raise ValueError(f"unsupported language '{value}'. Supported: {list(SUPPORTED_STACKS.keys())}")
         return value
 
     @field_validator("api")
@@ -79,15 +80,19 @@ class ProjectDefinition(BaseModel):
         lang = info.data.get("language", "python")
         if lang in SUPPORTED_STACKS:
             valid_apis = SUPPORTED_STACKS[lang]["api"]
-            if value not in valid_apis and value != "custom":
-                # Allow custom APIs/frameworks while giving feedback
-                pass
+            if value not in valid_apis:
+                raise ValueError(f"unsupported api '{value}' for language '{lang}'")
         return value
 
     @field_validator("database")
     @classmethod
     def supported_database(cls, value: str, info) -> str:
         lang = info.data.get("language", "python")
+        if lang in SUPPORTED_STACKS:
+            valid_dbs = SUPPORTED_STACKS[lang]["database"]
+            if value not in valid_dbs:
+                raise ValueError(f"unsupported database '{value}' for language '{lang}'")
+        return value
         if lang in SUPPORTED_STACKS:
             valid_dbs = SUPPORTED_STACKS[lang]["database"]
             if value not in valid_dbs and value != "custom":
