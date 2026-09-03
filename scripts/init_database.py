@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Automatisk database initialisering for DOR.
+"""Vent på PostgreSQL database er klar.
 
-Dette script:
-1. Venter på at PostgreSQL er klar
-2. Opretter databasen hvis den ikke eksisterer
-3. Sikrer at brugeren har adgang til databasen
+PostgreSQL Docker container opretter allerede databasen og brugeren automatisk
+baseret på POSTGRES_DB, POSTGRES_USER og POSTGRES_PASSWORD miljøvariable.
+Dette script venter blot på at databasen er klar til forbindelse.
 
 Bruger DATABASE_URL som single source of truth for alle database credentials.
 """
@@ -12,7 +11,6 @@ Bruger DATABASE_URL som single source of truth for alle database credentials.
 import os
 import time
 import psycopg
-from psycopg.sql import SQL
 from urllib.parse import urlparse
 
 
@@ -24,7 +22,6 @@ def get_db_params():
 
     parsed = urlparse(db_url)
 
-    # Forventet format: postgresql+psycopg://user:password@host:port/database
     if parsed.scheme not in ("postgresql", "postgresql+psycopg"):
         raise RuntimeError(
             f"DATABASE_URL skal starte med postgresql:// eller postgresql+psycopg://, got: {parsed.scheme}"
@@ -40,21 +37,23 @@ def get_db_params():
 
 
 def wait_for_postgres(max_attempts=30, interval=2):
-    """Vent på at PostgreSQL serveren er klar til forbindelse."""
+    """Vent på at PostgreSQL serveren og databasen er klar til forbindelse."""
     params = get_db_params()
 
     for attempt in range(max_attempts):
         try:
+            # Forbind direkte til den database der skal bruges
+            # PostgreSQL container har allerede oprettet den baseret på POSTGRES_DB
             conn = psycopg.connect(
                 host=params["host"],
                 port=params["port"],
                 user=params["user"],
                 password=params["password"],
-                dbname="postgres",  # Forbind til default database for at oprette ny
+                dbname=params["dbname"],
                 connect_timeout=5
             )
             conn.close()
-            print("✅ PostgreSQL server er klar")
+            print(f"✅ PostgreSQL database '{params['dbname']}' er klar")
             return True
         except Exception as e:
             print(f"⏳ Venter på PostgreSQL (forsøg {attempt + 1}/{max_attempts}): {e}")
@@ -63,50 +62,7 @@ def wait_for_postgres(max_attempts=30, interval=2):
     raise RuntimeError("PostgreSQL startede ikke i tide - tjek container logs")
 
 
-def create_database():
-    """Opret database og konfigurer brugeradgang."""
-    params = get_db_params()
-    dbname = params["dbname"]
-
-    # Forbind til default 'postgres' database for at oprette ny database
-    conn = psycopg.connect(
-        host=params["host"],
-        port=params["port"],
-        user=params["user"],
-        password=params["password"],
-        dbname="postgres"
-    )
-    cursor = conn.cursor()
-
-    # Tjek om databasen eksisterer
-    cursor.execute(SQL("SELECT 1 FROM pg_database WHERE datname = {}").format(SQL(dbname)))
-    if cursor.fetchone() is None:
-        # Opret database
-        cursor.execute(SQL("CREATE DATABASE {} OWNER {}").format(
-            SQL(dbname), SQL(params["user"])
-        ))
-        print(f"✅ Oprettede database: {dbname}")
-    else:
-        print(f"ℹ️  Database {dbname} eksisterer allerede")
-
-    # Giv brugeren fuld adgang til databasen
-    cursor.execute(SQL("GRANT ALL PRIVILEGES ON DATABASE {} TO {}").format(
-        SQL(dbname), SQL(params["user"])
-    ))
-    
-    # Sikre at brugeren har nødvendige rettigheder
-    cursor.execute(SQL("ALTER DATABASE {} OWNER TO {}").format(
-        SQL(dbname), SQL(params["user"])
-    ))
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print("✅ Database konfiguration færdig")
-
-
 if __name__ == "__main__":
-    print("🚀 Starter database initialisering...")
+    print("🚀 Venter på PostgreSQL database...")
     wait_for_postgres()
-    create_database()
-    print("✨ Database initialisering fuldført")
+    print("✨ PostgreSQL er klar - database oprettet af container")
