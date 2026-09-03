@@ -206,6 +206,55 @@ class OpenAIAdapter(BaseLLMAdapter):
         )
 
 
+class MistralAdapter(BaseLLMAdapter):
+    """Mistral AI API adapter (OpenAI-compatible)."""
+
+    provider = "mistral"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "mistral-large-latest",
+        *,
+        base_url: str = "https://api.mistral.ai/v1",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
+
+    def _generate(
+        self, prompt: str, schema: Mapping[str, Any] | None, temperature: float
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": self.max_output_tokens,
+        }
+        if schema is not None:
+            payload["response_format"] = {"type": "json_object"}
+        req = Request(
+            validate_http_url(f"{self.base_url}/chat/completions"),
+            json.dumps(payload).encode(),
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urlopen(req, timeout=self.timeout_seconds) as result:  # nosec B310 - URL is explicitly restricted to HTTP(S).
+            data = json.load(result)
+        usage = data.get("usage", {})
+        return LLMResponse(
+            data["choices"][0]["message"]["content"],
+            data.get("model", self.model),
+            int(usage.get("prompt_tokens", 0)),
+            int(usage.get("completion_tokens", 0)),
+            int(usage.get("total_tokens", 0)),
+            data,
+            request_id=data.get("id"),
+        )
+
+
 class AnthropicAdapter(BaseLLMAdapter):
     """Anthropic Messages API adapter."""
 
