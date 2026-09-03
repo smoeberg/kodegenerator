@@ -215,7 +215,7 @@ elif menu == "Opret Ny Agent (Wizard)":
         st.markdown("### Standard Rettigheder & Evner")
         default_caps = STANDARD_ROLES.get(selected_role, [])
         selected_caps = st.multiselect(
-            "Tilknyttede Capabilities", STANDARD_CAPABILITIES, default=default_caps
+            "Tilknyttede Capabilities", list(STANDARD_CAPABILITIES.keys()), default=default_caps
         )
 
         submitted = st.form_submit_button("Opret Agent")
