@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 
-HARDENED_ENVIRONMENTS = frozenset({"production"})
+HARDENED_ENVIRONMENTS = frozenset({"demo", "production"})
 RUNTIME_ROLES = frozenset({"api", "dashboard", "migrate", "worker"})
 _PLACEHOLDER_FRAGMENTS = (
     "change-me",
