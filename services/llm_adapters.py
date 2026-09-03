@@ -348,6 +348,151 @@ class OllamaAdapter(BaseLLMAdapter):
         )
 
 
+class DeepSeekAdapter(BaseLLMAdapter):
+    """DeepSeek API adapter (OpenAI-compatible)."""
+
+    provider = "deepseek"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "deepseek-chat",
+        *,
+        base_url: str = "https://api.deepseek.com/v1",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
+
+    def _generate(
+        self, prompt: str, schema: Mapping[str, Any] | None, temperature: float
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": self.max_output_tokens,
+        }
+        if schema is not None:
+            payload["response_format"] = {"type": "json_object"}
+        req = Request(
+            validate_http_url(f"{self.base_url}/chat/completions"),
+            json.dumps(payload).encode(),
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urlopen(req, timeout=self.timeout_seconds) as result:  # nosec B310
+            data = json.load(result)
+        usage = data.get("usage", {})
+        return LLMResponse(
+            data["choices"][0]["message"]["content"],
+            data.get("model", self.model),
+            int(usage.get("prompt_tokens", 0)),
+            int(usage.get("completion_tokens", 0)),
+            int(usage.get("total_tokens", 0)),
+            data,
+            request_id=data.get("id"),
+        )
+
+
+class StabilityAIAdapter(BaseLLMAdapter):
+    """Stability AI API adapter for generation/multimodal tasks."""
+
+    provider = "stability"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "stable-diffusion-xl-1024-v1-0",
+        *,
+        base_url: str = "https://api.stability.ai/v1",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
+
+    def _generate(
+        self, prompt: str, schema: Mapping[str, Any] | None, temperature: float
+    ) -> LLMResponse:
+        payload = {
+            "text_prompts": [{"text": prompt, "weight": 1}],
+            "cfg_scale": 7,
+            "steps": 30,
+        }
+        req = Request(
+            validate_http_url(f"{self.base_url}/generation/{self.model}/text-to-image"),
+            json.dumps(payload).encode(),
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        with urlopen(req, timeout=self.timeout_seconds) as result:  # nosec B310
+            data = json.load(result)
+        artifacts = data.get("artifacts", [])
+        content = artifacts[0].get("base64", "") if artifacts else "No artifact generated"
+        return LLMResponse(
+            content,
+            self.model,
+            len(prompt.split()),
+            len(content.split()),
+            len(prompt.split()) + len(content.split()),
+            data,
+        )
+
+
+class RoolAIAdapter(BaseLLMAdapter):
+    """Rool.ai / Rool.dev Cloud Native LLM adapter."""
+
+    provider = "rool"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "rool-omni-v1",
+        *,
+        base_url: str = "https://api.rool.dev/v1",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        self.api_key, self.base_url = api_key, validate_http_url(base_url).rstrip("/")
+
+    def _generate(
+        self, prompt: str, schema: Mapping[str, Any] | None, temperature: float
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "prompt": prompt,
+            "temperature": temperature,
+            "max_tokens": self.max_output_tokens,
+        }
+        if schema is not None:
+            payload["schema"] = schema
+        req = Request(
+            validate_http_url(f"{self.base_url}/completions"),
+            json.dumps(payload).encode(),
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "X-Rool-Machine": "gye7h8",
+            },
+        )
+        with urlopen(req, timeout=self.timeout_seconds) as result:  # nosec B310
+            data = json.load(result)
+        usage = data.get("usage", {})
+        return LLMResponse(
+            data.get("content", data.get("text", "")),
+            data.get("model", self.model),
+            int(usage.get("prompt_tokens", 0)),
+            int(usage.get("completion_tokens", 0)),
+            int(usage.get("total_tokens", 0)),
+            data,
+        )
+
+
 class MockLLMAdapter(BaseLLMAdapter):
     """Deterministic adapter for tests and safe fallback operation."""
 
