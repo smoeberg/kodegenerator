@@ -5,31 +5,52 @@ Dette script:
 1. Venter på at PostgreSQL er klar
 2. Opretter databasen hvis den ikke eksisterer
 3. Sikrer at brugeren har adgang til databasen
+
+Bruger DATABASE_URL som single source of truth for alle database credentials.
 """
 
 import os
 import time
 import psycopg
 from psycopg.sql import SQL
+from urllib.parse import urlparse
+
+
+def get_db_params():
+    """Parse database forbindelsesparametre fra DATABASE_URL."""
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL er ikke sat i miljøvariable")
+
+    parsed = urlparse(db_url)
+
+    # Forventet format: postgresql+psycopg://user:password@host:port/database
+    if parsed.scheme not in ("postgresql", "postgresql+psycopg"):
+        raise RuntimeError(
+            f"DATABASE_URL skal starte med postgresql:// eller postgresql+psycopg://, got: {parsed.scheme}"
+        )
+
+    return {
+        "host": parsed.hostname or "postgres",
+        "port": parsed.port or 5432,
+        "user": parsed.username or "dor",
+        "password": parsed.password or "",
+        "dbname": parsed.path.lstrip("/") or "dor"
+    }
 
 
 def wait_for_postgres(max_attempts=30, interval=2):
     """Vent på at PostgreSQL serveren er klar til forbindelse."""
-    user = os.environ.get("POSTGRES_USER", "dor")
-    password = os.environ.get("POSTGRES_PASSWORD")
-    host = os.environ.get("POSTGRES_HOST", "postgres")
-
-    if not password:
-        raise RuntimeError("POSTGRES_PASSWORD er ikke sat i miljøvariable")
+    params = get_db_params()
 
     for attempt in range(max_attempts):
         try:
             conn = psycopg.connect(
-                host=host,
-                port=5432,
-                user=user,
-                password=password,
-                dbname="postgres",  # Forbind til default database
+                host=params["host"],
+                port=params["port"],
+                user=params["user"],
+                password=params["password"],
+                dbname="postgres",  # Forbind til default database for at oprette ny
                 connect_timeout=5
             )
             conn.close()
@@ -44,20 +65,15 @@ def wait_for_postgres(max_attempts=30, interval=2):
 
 def create_database():
     """Opret database og konfigurer brugeradgang."""
-    user = os.environ.get("POSTGRES_USER", "dor")
-    password = os.environ.get("POSTGRES_PASSWORD")
-    dbname = os.environ.get("POSTGRES_DB", "dor")
-    host = os.environ.get("POSTGRES_HOST", "postgres")
-
-    if not password:
-        raise RuntimeError("POSTGRES_PASSWORD er ikke sat")
+    params = get_db_params()
+    dbname = params["dbname"]
 
     # Forbind til default 'postgres' database for at oprette ny database
     conn = psycopg.connect(
-        host=host,
-        port=5432,
-        user=user,
-        password=password,
+        host=params["host"],
+        port=params["port"],
+        user=params["user"],
+        password=params["password"],
         dbname="postgres"
     )
     cursor = conn.cursor()
@@ -67,7 +83,7 @@ def create_database():
     if cursor.fetchone() is None:
         # Opret database
         cursor.execute(SQL("CREATE DATABASE {} OWNER {}").format(
-            SQL(dbname), SQL(user)
+            SQL(dbname), SQL(params["user"])
         ))
         print(f"✅ Oprettede database: {dbname}")
     else:
@@ -75,12 +91,12 @@ def create_database():
 
     # Giv brugeren fuld adgang til databasen
     cursor.execute(SQL("GRANT ALL PRIVILEGES ON DATABASE {} TO {}").format(
-        SQL(dbname), SQL(user)
+        SQL(dbname), SQL(params["user"])
     ))
     
     # Sikre at brugeren har nødvendige rettigheder
     cursor.execute(SQL("ALTER DATABASE {} OWNER TO {}").format(
-        SQL(dbname), SQL(user)
+        SQL(dbname), SQL(params["user"])
     ))
     
     conn.commit()
