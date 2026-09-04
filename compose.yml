@@ -110,6 +110,9 @@ services:
       DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
       DOR_ADMIN_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
       DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
+      REDMINE_URL: ${REDMINE_URL:-}
+      REDMINE_API_KEY: ${REDMINE_API_KEY:-}
+      REDMINE_PROJECT_ID: ${REDMINE_PROJECT_ID:-}
     ports:
       - "${DOR_API_PORT:-8000}:8000"
     healthcheck:
@@ -208,7 +211,7 @@ services:
           memory: 1G
 
   otel-collector:
-    image: otel/opentelemetry-collector:0.132.0
+    image: opentelemetry-collector:0.132.0
     restart: unless-stopped
     command: ["--config", "/etc/otelcol/config.yml"]
     volumes:
