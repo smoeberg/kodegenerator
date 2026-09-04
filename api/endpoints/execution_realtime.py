@@ -16,7 +16,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocketState
 
@@ -76,8 +76,8 @@ def _resolve_session(token: str | None, workflow_id: str) -> User | None:
     return User.model_validate(user)
 
 
-def _header_token(websocket: WebSocket) -> str | None:
-    authorization = websocket.headers.get("authorization", "")
+def _header_token(headers: Any) -> str | None:
+    authorization = headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
     return token if scheme.lower() == "bearer" and token else None
 
@@ -86,13 +86,26 @@ def _authenticate_websocket(websocket: WebSocket, workflow_id: str) -> User | No
     session_user = _resolve_session(websocket.cookies.get(STREAM_SESSION_COOKIE), workflow_id)
     if session_user is not None:
         return session_user
-    token = _header_token(websocket)
+    token = _header_token(websocket.headers)
     if not token:
         return None
     try:
         return authenticate_access_token(token)
     except HTTPException:
         return None
+
+
+def _authenticate_http_stream(request: Request, workflow_id: str) -> User:
+    session_user = _resolve_session(request.cookies.get(STREAM_SESSION_COOKIE), workflow_id)
+    if session_user is not None:
+        return session_user
+    token = _header_token(request.headers)
+    if token:
+        try:
+            return authenticate_access_token(token)
+        except HTTPException:
+            pass
+    raise HTTPException(status_code=401, detail="Could not validate credentials")
 
 
 def _authorize_workflow(dor: DORRuntime, workflow_id: str, user: User) -> tuple[Any, str]:
@@ -132,7 +145,12 @@ def create_stream_session(
 
 
 @router.delete("/stream-session/{workflow_id}", status_code=204)
-def delete_stream_session(workflow_id: str, response: Response) -> None:
+def delete_stream_session(
+    workflow_id: str,
+    response: Response,
+    current_user: User = Depends(get_current_active_user),
+) -> None:
+    del workflow_id, current_user
     response.delete_cookie(STREAM_SESSION_COOKIE, path="/api/v1/execution")
 
 
@@ -165,8 +183,6 @@ async def browser_execution_websocket(websocket: WebSocket, workflow_id: str) ->
         await websocket.close(code=1008, reason="authentication required")
         return
     try:
-        from api.dependencies import get_dor
-
         dor = get_dor()
         workflow, project_id = _authorize_workflow(dor, workflow_id, user)
     except HTTPException:
@@ -216,10 +232,11 @@ async def browser_execution_websocket(websocket: WebSocket, workflow_id: str) ->
 @router.get("/events/{workflow_id}")
 async def browser_execution_sse(
     workflow_id: str,
+    request: Request,
     dor: DORRuntime = Depends(get_dor),
-    current_user: User = Depends(get_current_active_user),
 ) -> StreamingResponse:
-    """SSE fallback; HTTP auth establishes the cookie before EventSource."""
+    """SSE fallback; native EventSource authenticates with the stream cookie."""
+    current_user = _authenticate_http_stream(request, workflow_id)
     workflow, _ = _authorize_workflow(dor, workflow_id, current_user)
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
     topic, sub_id = _subscribe_stream(workflow, queue)
