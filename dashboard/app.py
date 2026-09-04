@@ -14,6 +14,7 @@ from dashboard.cockpit_view_model import (
     normalize_proposals,
 )
 from dashboard.evidence_trace import render_evidence_trace
+from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
 from dashboard.realtime import WorkflowRealtime
 from dashboard.redmine_integration import render_redmine_integration
 from dashboard.state import authenticated, clear_auth, init_state
@@ -97,25 +98,43 @@ def realtime_pump(workflow_id: str) -> None:
         st.rerun()
     if events:
         st.session_state["last_realtime_event"] = events[-1].event_type
-        st.session_state["realtime_event_count"] = st.session_state.get("realtime_event_count", 0) + len(events)
+        st.session_state["realtime_event_count"] = (
+            st.session_state.get("realtime_event_count", 0) + len(events)
+        )
         st.rerun()
 
 
 def project_page(client: DORAPIClient) -> None:
     st.header("🏗️ Logik 1: Projekt & Kravspecifikation")
-    st.write("**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane og behandles som immutable.")
+    st.write(
+        "**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane "
+        "og behandles som immutable."
+    )
     with st.form("project_create"):
-        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "")
+        organization_id = st.text_input(
+            "Organisation ID", value=st.session_state.get("organization_id") or ""
+        )
         name = st.text_input("System-/projektnavn")
         goal = st.text_area("Mål", height=100)
         description = st.text_area("Beskrivelse", height=100)
-        priority = st.selectbox("Prioritet", ["low", "medium", "high", "critical"], index=1)
-        constraints_text = st.text_area("Begrænsninger", help="Én nøgle=værdi pr. linje")
-        capabilities = st.text_area("Påkrævede capabilities", help="Én pr. linje")
+        priority = st.selectbox(
+            "Prioritet", ["low", "medium", "high", "critical"], index=1
+        )
+        constraints_text = st.text_area(
+            "Begrænsninger", help="Én nøgle=værdi pr. linje"
+        )
+        capabilities = st.text_area(
+            "Påkrævede capabilities", help="Én pr. linje"
+        )
         command_id = st.text_input("Command ID", value=str(uuid.uuid4()))
         create = st.form_submit_button("Opret projekt", type="primary")
     if create:
-        if not organization_id.strip() or not name.strip() or not goal.strip() or not command_id.strip():
+        if (
+            not organization_id.strip()
+            or not name.strip()
+            or not goal.strip()
+            or not command_id.strip()
+        ):
             st.warning("Organisation ID, navn, mål og Command ID er påkrævet.")
             return
         constraints: dict[str, str] = {}
@@ -132,7 +151,13 @@ def project_page(client: DORAPIClient) -> None:
                 "description": description.strip(),
                 "priority": priority,
                 "constraints": constraints,
-                "required_capabilities": list(dict.fromkeys(x.strip() for x in capabilities.splitlines() if x.strip())),
+                "required_capabilities": list(
+                    dict.fromkeys(
+                        item.strip()
+                        for item in capabilities.splitlines()
+                        if item.strip()
+                    )
+                ),
             },
         }
         try:
@@ -140,32 +165,65 @@ def project_page(client: DORAPIClient) -> None:
             project = result.get("project", result)
             st.session_state["organization_id"] = organization_id.strip()
             st.session_state["selected_project_id"] = project.get("project_id")
-            st.session_state["selected_project_fingerprint"] = project.get("project_fingerprint")
+            st.session_state["selected_project_fingerprint"] = project.get(
+                "project_fingerprint"
+            )
             st.success("Projekt oprettet.")
             st.json(result)
         except DORAPIError as exc:
             st.error(f"API-fejl ({exc.status_code}): {exc}")
 
-    project_id = st.text_input("Eksisterende projekt ID", value=st.session_state.get("selected_project_id") or "")
+    project_id = st.text_input(
+        "Eksisterende projekt ID",
+        value=st.session_state.get("selected_project_id") or "",
+    )
     if project_id:
         st.session_state["selected_project_id"] = project_id
-        org = st.session_state.get("organization_id") or st.text_input("Organisation ID for projekt", key="project_lookup_org")
+        org = st.session_state.get("organization_id") or st.text_input(
+            "Organisation ID for projekt", key="project_lookup_org"
+        )
         try:
-            project = client.get(f"/api/v1/control-plane/projects/{project_id}", params={"organization_id": org})
-            st.session_state["selected_project_fingerprint"] = project.get("project_fingerprint")
+            project = client.get(
+                f"/api/v1/control-plane/projects/{project_id}",
+                params={"organization_id": org},
+            )
+            st.session_state["selected_project_fingerprint"] = project.get(
+                "project_fingerprint"
+            )
             st.subheader("Projektstatus")
             st.json(project)
             st.subheader("Launch")
-            confirm = st.checkbox("Jeg bekræfter launch-operationen", key=f"confirm_launch_{project_id}")
-            launch_command_id = st.text_input("Launch Command ID", value=str(uuid.uuid4()), key=f"launch_command_{project_id}")
+            confirm = st.checkbox(
+                "Jeg bekræfter launch-operationen",
+                key=f"confirm_launch_{project_id}",
+            )
+            launch_command_id = st.text_input(
+                "Launch Command ID",
+                value=str(uuid.uuid4()),
+                key=f"launch_command_{project_id}",
+            )
             if st.button("🚀 Request launch", type="primary"):
                 if not confirm or not launch_command_id.strip():
                     st.warning("Bekræft operationen og angiv Launch Command ID.")
                 else:
-                    payload = {"organization_id": org, "command_id": launch_command_id.strip(), "expected_project_fingerprint": project["project_fingerprint"]}
-                    st.json(client.post(f"/api/v1/control-plane/projects/{project_id}/launch", json=payload))
+                    payload = {
+                        "organization_id": org,
+                        "command_id": launch_command_id.strip(),
+                        "expected_project_fingerprint": project[
+                            "project_fingerprint"
+                        ],
+                    }
+                    st.json(
+                        client.post(
+                            f"/api/v1/control-plane/projects/{project_id}/launch",
+                            json=payload,
+                        )
+                    )
             if st.button("↻ Hent project events"):
-                events = client.get(f"/api/v1/control-plane/projects/{project_id}/events", params={"organization_id": org})
+                events = client.get(
+                    f"/api/v1/control-plane/projects/{project_id}/events",
+                    params={"organization_id": org},
+                )
                 st.json(events)
         except DORAPIError as exc:
             st.warning(f"Projekt kunne ikke hentes ({exc.status_code}): {exc}")
@@ -173,9 +231,15 @@ def project_page(client: DORAPIClient) -> None:
 
 def development_page(client: DORAPIClient) -> None:
     st.header("⚙️ Logik 2: Udvikling & Decision Cockpit")
-    st.write("**Hvordan bygger vi?** Realtime execution-status, Quality Gates (HITL) og kodeforslag fra den kanoniske Execution API.")
+    st.write(
+        "**Hvordan bygger vi?** Realtime execution-status, Quality Gates (HITL) "
+        "og kodeforslag fra den kanoniske Execution API."
+    )
 
-    workflow_id = st.text_input("Aktivt Workflow ID", value=st.session_state.get("selected_workflow_id") or "")
+    workflow_id = st.text_input(
+        "Aktivt Workflow ID",
+        value=st.session_state.get("selected_workflow_id") or "",
+    )
     if not workflow_id:
         stop_realtime()
         st.info("Angiv et Workflow ID for at aktivere realtids-cockpit og streams.")
@@ -188,8 +252,12 @@ def development_page(client: DORAPIClient) -> None:
 
     connection_cols = st.columns(4)
     connection_cols[0].metric("Realtime", manager.status)
-    connection_cols[1].metric("Stream events", st.session_state.get("realtime_event_count", 0))
-    connection_cols[2].metric("Seneste event", st.session_state.get("last_realtime_event", "—"))
+    connection_cols[1].metric(
+        "Stream events", st.session_state.get("realtime_event_count", 0)
+    )
+    connection_cols[2].metric(
+        "Seneste event", st.session_state.get("last_realtime_event", "—")
+    )
     connection_cols[3].metric("Workflow", workflow_id)
 
     st.divider()
@@ -201,7 +269,9 @@ def development_page(client: DORAPIClient) -> None:
         status_cols = st.columns(4)
         status_cols[0].metric("Projekt", summary["project_name"])
         status_cols[1].metric("Aktuel fase", summary["current_state"])
-        status_cols[2].metric("Tasks færdige", f"{summary['task_completed']} / {summary['task_total']}")
+        status_cols[2].metric(
+            "Tasks færdige", f"{summary['task_completed']} / {summary['task_total']}"
+        )
         status_cols[3].metric("Åbne tasks", summary["task_open"])
 
         if summary["error"]:
@@ -216,12 +286,19 @@ def development_page(client: DORAPIClient) -> None:
         advance_reason = st.text_input(
             "Reason for advance (valgfri)",
             key=f"advance_reason_{workflow_id}",
-            help="Sendes til backend som audit-kontekst; backend afgør om workflowet må fortsætte.",
+            help=(
+                "Sendes til backend som audit-kontekst; backend afgør om "
+                "workflowet må fortsætte."
+            ),
         )
-        if st.button("⏩ Advance workflow", type="primary", key=f"advance_{workflow_id}"):
+        if st.button(
+            "⏩ Advance workflow", type="primary", key=f"advance_{workflow_id}"
+        ):
             try:
-                payload = {"reason": advance_reason.strip() or None}
-                adv = client.post(f"/api/v1/execution/{workflow_id}/advance", json=payload)
+                adv = client.post(
+                    f"/api/v1/execution/{workflow_id}/advance",
+                    json={"reason": advance_reason.strip() or None},
+                )
                 st.success("Advance-kommando accepteret af Execution API.")
                 with st.expander("Backend-resultat"):
                     st.json(adv)
@@ -231,7 +308,10 @@ def development_page(client: DORAPIClient) -> None:
                 if error_state["kind"] == "gate_blocked":
                     st.warning(error_state["message"])
                 else:
-                    st.error(f"Advance afvist ({exc.status_code}): {error_state['message']}")
+                    st.error(
+                        f"Advance afvist ({exc.status_code}): "
+                        f"{error_state['message']}"
+                    )
 
         with st.expander("Tekniske execution-data"):
             st.json(exec_status)
@@ -271,7 +351,9 @@ def development_page(client: DORAPIClient) -> None:
         for gate in gates:
             if gate["status"] == "rejected":
                 icon = "🛑"
-                status_label = "REJECTED / BLOCKING" if gate["blocking"] else "REJECTED"
+                status_label = (
+                    "REJECTED / BLOCKING" if gate["blocking"] else "REJECTED"
+                )
             elif gate["status"] == "approved":
                 icon = "✅"
                 status_label = "APPROVED"
@@ -297,8 +379,8 @@ def development_page(client: DORAPIClient) -> None:
                 if not gate["can_decide"]:
                     if gate["status"] == "rejected":
                         st.warning(
-                            "Gate er afvist. Workflowet forbliver fail-closed, indtil backend "
-                            "tilbyder en eksplicit rework/retry-handling."
+                            "Gate er afvist. Workflowet forbliver fail-closed, indtil "
+                            "backend tilbyder en eksplicit rework/retry-handling."
                         )
                     elif gate["status"] == "approved":
                         st.success("Gate er godkendt af backend.")
@@ -313,29 +395,42 @@ def development_page(client: DORAPIClient) -> None:
                     key=f"approve_gate_{workflow_id}_{gate['id']}",
                 ):
                     try:
-                        payload = gate_decision_payload(gate["id"], "approved")
-                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                        result = client.post(
+                            f"/api/v1/execution/{workflow_id}/gates/decide",
+                            json=gate_decision_payload(gate["id"], "approved"),
+                        )
                         st.success("Gate blev godkendt af Execution API.")
                         with st.expander("Backend-resultat"):
                             st.json(result)
                         st.rerun()
                     except DORAPIError as exc:
-                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
+                        st.error(
+                            f"Gate-beslutning afvist ({exc.status_code}): {exc}"
+                        )
 
                 if decision_cols[1].button(
                     "❌ Afvis gate",
                     key=f"reject_gate_{workflow_id}_{gate['id']}",
-                    help="Registrerer rejected i Execution API. Backend holder workflowet fail-closed.",
+                    help=(
+                        "Registrerer rejected i Execution API. Backend holder "
+                        "workflowet fail-closed."
+                    ),
                 ):
                     try:
-                        payload = gate_decision_payload(gate["id"], "rejected")
-                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
-                        st.warning("Gate blev afvist. Workflowet forbliver blokeret af backend.")
+                        result = client.post(
+                            f"/api/v1/execution/{workflow_id}/gates/decide",
+                            json=gate_decision_payload(gate["id"], "rejected"),
+                        )
+                        st.warning(
+                            "Gate blev afvist. Workflowet forbliver blokeret af backend."
+                        )
                         with st.expander("Backend-resultat"):
                             st.json(result)
                         st.rerun()
                     except DORAPIError as exc:
-                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
+                        st.error(
+                            f"Gate-beslutning afvist ({exc.status_code}): {exc}"
+                        )
 
         with st.expander("Tekniske gate-data"):
             st.json(gates_payload)
@@ -368,7 +463,9 @@ def development_page(client: DORAPIClient) -> None:
                         if file_item["diff"]:
                             st.code(file_item["diff"], language="diff")
                         else:
-                            st.caption("Backend leverede ikke diff/patch for denne fil.")
+                            st.caption(
+                                "Backend leverede ikke diff/patch for denne fil."
+                            )
                             st.json(file_item["raw"])
 
                 with st.expander("Tekniske proposal-data"):
@@ -381,31 +478,22 @@ def development_page(client: DORAPIClient) -> None:
 
 def administration_page(client: DORAPIClient) -> None:
     st.header("🛡️ Logik 3: Systemadministration & Governance")
-    st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog, council, og integrationer.")
+    st.write(
+        "**Hvordan styres DOR?** Tenant-scoped governance af bot catalog, "
+        "council og integrationer gennem den samme authenticated API-session."
+    )
 
     tabs = st.tabs(["Bot Governance", "Redmine Integration", "System Health"])
 
     with tabs[0]:
-        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
-        st.info("Append-only: ingen DELETE. Disable registreres kun som eksplicit backend-handling.")
-        if not organization_id.strip():
-            st.warning("Angiv organisation ID for at læse governance-data.")
-        else:
+        organization_id = st.text_input(
+            "Organisation ID",
+            value=st.session_state.get("organization_id") or "",
+            key="admin_org",
+        )
+        if organization_id.strip():
             st.session_state["organization_id"] = organization_id.strip()
-            paths = {
-                "Profiles": "/api/v1/bot-governance/profiles",
-                "Roles": "/api/v1/bot-governance/roles",
-                "Templates": "/api/v1/bot-governance/templates",
-                "Connections": "/api/v1/bot-governance/connections",
-                "Deployments": "/api/v1/bot-governance/deployments",
-                "Allocations": "/api/v1/bot-governance/allocations",
-            }
-            for label, path in paths.items():
-                with st.expander(label):
-                    try:
-                        st.json(client.get(path, params={"organization_id": organization_id.strip()}))
-                    except DORAPIError as exc:
-                        st.caption(f"Ikke tilgængelig: {exc}")
+        render_multi_bot_control_plane(client, organization_id)
 
     with tabs[1]:
         render_redmine_integration(client)
@@ -426,11 +514,14 @@ def main() -> None:
         return
     client = api()
     header(client)
-    page = st.sidebar.radio("Kontrolplan", [
-        "🏗️ Logik 1: Projekt & Krav",
-        "⚙️ Logik 2: Udvikling & Cockpit",
-        "🛡️ Logik 3: Administration & Governance"
-    ])
+    page = st.sidebar.radio(
+        "Kontrolplan",
+        [
+            "🏗️ Logik 1: Projekt & Krav",
+            "⚙️ Logik 2: Udvikling & Cockpit",
+            "🛡️ Logik 3: Administration & Governance",
+        ],
+    )
     try:
         if page.startswith("🏗️"):
             stop_realtime()
