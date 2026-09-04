@@ -63,6 +63,7 @@ from api.endpoints import (  # noqa: E402
     control_plane,
     decisions,
     execution,
+    execution_realtime,
     implementation_agent,
     pipeline,
     pipeline_gates,
@@ -152,6 +153,9 @@ if HAS_AUTH:
     )
 
     app.include_router(auth.router)
+    # Mount browser-compatible realtime before the canonical execution router
+    # so its transport paths take precedence over the legacy header-only stream.
+    app.include_router(execution_realtime.router)
     for canonical_router in CANONICAL_AUTHENTICATED_ROUTERS:
         app.include_router(
             canonical_router,
