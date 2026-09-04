@@ -8,6 +8,8 @@ RETIRED_DASHBOARD_PATHS = (
     "dashboard/fixtures.py",
     "dashboard/index.html",
     "dashboard/control_plane_api.py",
+    "dashboard/catalog.py",
+    "dashboard/security.py",
 )
 
 
