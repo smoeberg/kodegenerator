@@ -9,7 +9,8 @@ def normalize_redmine_health(payload: Any) -> dict[str, Any]:
     data = payload if isinstance(payload, Mapping) else {}
     configured = data.get("configured") is True
     reachable = data.get("reachable") is True
-    verified = data.get("verified") is True
+    backend_verified = data.get("verified") is True
+    verified = backend_verified and configured and reachable
     error = str(data.get("error") or "").strip() or None
 
     missing_value = data.get("missing_configuration")
@@ -19,7 +20,7 @@ def normalize_redmine_health(payload: Any) -> dict[str, Any]:
         else []
     )
 
-    if verified and configured and reachable:
+    if verified:
         status = "verified"
         level = "success"
         message = "Redmine-forbindelsen er verificeret af backend."
