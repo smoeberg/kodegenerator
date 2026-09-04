@@ -38,6 +38,7 @@ _TERMINAL = frozenset(
         PipelineState.CANCELLED,
     }
 )
+_SUPPORTED_GATE_DECISIONS = frozenset({"approved", "rejected"})
 
 
 class PipelineSnapshotStore(Protocol):
@@ -323,11 +324,132 @@ class PipelineOrchestrator:
         # Advance further automatically.
         self.advance_pipeline(workflow.id)
 
+    def get_gate_decision(self, workflow_id: str, gate_id: str) -> str | None:
+        """Return the recorded gate decision, preserving legacy approvals."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        if gate is None:
+            raise ValueError(f"Gate {gate_id} not found")
+        return self._gate_decision(workflow, gate)
+
+    def get_blocking_gate(self, workflow_id: str) -> dict[str, str] | None:
+        """Return the current gate that blocks progression, if any."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        blocker = self._blocking_gate(workflow)
+        if blocker is None:
+            return None
+        gate, decision = blocker
+        return {"gate_id": gate.id, "decision": decision or "pending"}
+
+    def decide_gate(
+        self,
+        workflow_id: str,
+        gate_id: str,
+        approver: str,
+        decision: str,
+    ) -> dict[str, Any]:
+        """Record a human gate decision and only advance on approval.
+
+        A rejection is a completed human decision but remains fail-closed for
+        progression. A later rework/retry operation must explicitly clear or
+        replace that decision; simply calling ``advance_pipeline`` cannot bypass it.
+        """
+        normalized_decision = str(decision).strip().lower()
+        if normalized_decision not in _SUPPORTED_GATE_DECISIONS:
+            raise ValueError(
+                "decision must be one of: "
+                + ", ".join(sorted(_SUPPORTED_GATE_DECISIONS))
+            )
+
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        if gate is None:
+            raise ValueError(f"Gate {gate_id} not found")
+        if gate.decision_id:
+            existing = self._gate_decision(workflow, gate) or "unknown"
+            raise ValueError(
+                f"Gate {gate_id} already decided ({existing})"
+            )
+
+        gate.decision_id = f"decision-{workflow_id[:8]}-{gate_id}"
+        record = {
+            "gate_id": gate_id,
+            "approver": approver,
+            "decision": normalized_decision,
+        }
+        workflow.context["gate_decision_history"] = list(
+            workflow.context.get("gate_decision_history", []) or []
+        ) + [record]
+        if normalized_decision == "approved":
+            workflow.context["gate_approvals"] = list(
+                workflow.context.get("gate_approvals", []) or []
+            ) + [record]
+
+        state_before = workflow.current_state
+        self._persist()
+        if normalized_decision == "approved":
+            self.advance_pipeline(workflow_id)
+
+        return {
+            "decision": normalized_decision,
+            "approved": normalized_decision == "approved",
+            "workflow_advanced": workflow.current_state != state_before,
+        }
+
+    def approve_gate(
+        self, workflow_id: str, gate_id: str, approver: str, decision: str = "approved"
+    ) -> bool:
+        """Backward-compatible approval-only wrapper around ``decide_gate``."""
+        if str(decision).strip().lower() != "approved":
+            raise ValueError("approve_gate only accepts 'approved'; use decide_gate")
+        result = self.decide_gate(
+            workflow_id,
+            gate_id,
+            approver=approver,
+            decision="approved",
+        )
+        return bool(result["approved"])
+
     # ------------------------------------------------------------------ #
     # Internals
     # ------------------------------------------------------------------ #
-    def _has_pending_gate(self, workflow: Workflow) -> bool:
-        """True when the current state's transition requires an unapproved gate."""
+    @staticmethod
+    def _gate_decision(workflow: Workflow, gate: Any) -> str | None:
+        """Resolve decision semantics from audit context with legacy fallback."""
+        history = workflow.context.get("gate_decision_history", []) or []
+        if isinstance(history, list):
+            for record in reversed(history):
+                if not isinstance(record, dict) or record.get("gate_id") != gate.id:
+                    continue
+                decision = str(record.get("decision") or "").strip().lower()
+                if decision in _SUPPORTED_GATE_DECISIONS:
+                    return decision
+
+        # Historical versions stored all gate calls under gate_approvals,
+        # including rejected values. Preserve those decisions during rollout.
+        legacy = workflow.context.get("gate_approvals", []) or []
+        if isinstance(legacy, list):
+            for record in reversed(legacy):
+                if not isinstance(record, dict) or record.get("gate_id") != gate.id:
+                    continue
+                decision = str(record.get("decision") or "").strip().lower()
+                if decision in _SUPPORTED_GATE_DECISIONS:
+                    return decision
+
+        # A pre-fix persisted decision_id with no audit record was necessarily
+        # treated as approval by the old progression logic. Keep it compatible.
+        if getattr(gate, "decision_id", None):
+            return "approved"
+        return None
+
+    def _blocking_gate(self, workflow: Workflow) -> tuple[Any, str | None] | None:
+        """Find the current transition gate unless its decision is approved."""
         for transition in getattr(workflow, "transitions", []) or []:
             if not hasattr(transition, "from_state"):
                 continue
@@ -337,30 +459,16 @@ class PipelineOrchestrator:
             if not gate_id:
                 continue
             gate = next((g for g in workflow.gates if g.id == gate_id), None)
-            if gate is not None and not getattr(gate, "decision_id", None):
-                return True
-        return False
+            if gate is None:
+                continue
+            decision = self._gate_decision(workflow, gate)
+            if decision != "approved":
+                return gate, decision
+        return None
 
-    def approve_gate(
-        self, workflow_id: str, gate_id: str, approver: str, decision: str = "approved"
-    ) -> bool:
-        """Approve a pending gate and mark it resolved (decision_id set)."""
-        workflow = self._get_workflow(workflow_id)
-        if workflow is None:
-            raise ValueError(f"Pipeline {workflow_id} not found")
-        gate = next((g for g in workflow.gates if g.id == gate_id), None)
-        if gate is None:
-            raise ValueError(f"Gate {gate_id} not found")
-        if gate.decision_id:
-            raise ValueError(f"Gate {gate_id} already resolved")
-        gate.decision_id = f"decision-{workflow_id[:8]}-{gate_id}"
-        # Record approval in workflow context for auditability.
-        workflow.context["gate_approvals"] = workflow.context.get(
-            "gate_approvals", []
-        ) + [{"gate_id": gate_id, "approver": approver, "decision": decision}]
-        self._persist()
-        self.advance_pipeline(workflow_id)
-        return True
+    def _has_pending_gate(self, workflow: Workflow) -> bool:
+        """True when the current transition is not explicitly approved."""
+        return self._blocking_gate(workflow) is not None
 
     def _get_next_state_for_pipeline(
         self, workflow: Workflow
@@ -393,7 +501,7 @@ class PipelineOrchestrator:
             return None
 
         next_state = state_sequence[current_index + 1]
-        # skip states that have gates (they need human approval via approve_gate).
+        # skip states that have gates (they need human approval via decide_gate).
         if self._has_pending_gate(workflow):
             return None
         return next_state
