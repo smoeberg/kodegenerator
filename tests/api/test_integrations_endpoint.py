@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from api.auth import get_current_active_user
 from api.endpoints import integrations
+from api.main import app
 
 
 def test_integrations_router_exposes_redmine_health_contract() -> None:
@@ -9,6 +11,19 @@ def test_integrations_router_exposes_redmine_health_contract() -> None:
         for route in integrations.router.routes
     }
     assert ("/api/v1/integrations/redmine/health", frozenset({"GET"})) in routes
+
+
+def test_redmine_health_is_mounted_with_authenticated_dependency() -> None:
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/v1/integrations/redmine/health"
+    )
+    dependency_calls = {
+        dependency.call
+        for dependency in getattr(route, "dependant").dependencies
+    }
+    assert get_current_active_user in dependency_calls
 
 
 def test_redmine_health_endpoint_returns_sanitized_service_result(monkeypatch) -> None:
