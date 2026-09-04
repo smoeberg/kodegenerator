@@ -1,7 +1,6 @@
 """DOR Control Plane GUI: three business logics over the canonical FastAPI API."""
 from __future__ import annotations
 
-import os
 import uuid
 
 import streamlit as st
@@ -16,6 +15,7 @@ from dashboard.cockpit_view_model import (
 )
 from dashboard.evidence_trace import render_evidence_trace
 from dashboard.realtime import WorkflowRealtime
+from dashboard.redmine_integration import render_redmine_integration
 from dashboard.state import authenticated, clear_auth, init_state
 
 st.set_page_config(page_title="DOR Control Plane", page_icon="⚡", layout="wide")
@@ -408,12 +408,7 @@ def administration_page(client: DORAPIClient) -> None:
                         st.caption(f"Ikke tilgængelig: {exc}")
 
     with tabs[1]:
-        st.subheader("Redmine Konfiguration")
-        redmine_url = st.text_input("Redmine URL", value=os.getenv("REDMINE_URL", "https://redmine.it-kbh.dk"))
-        redmine_key = st.text_input("API Nøgle", value="****************" if os.getenv("REDMINE_API_KEY") else "", type="password")
-        redmine_project = st.text_input("Projekt Identifier", value=os.getenv("REDMINE_PROJECT_ID", "digital-medarbejdere"))
-        if st.button("Test Forbindelse"):
-            st.success("Forbindelse til Redmine verificeret.")
+        render_redmine_integration(client)
 
     with tabs[2]:
         st.subheader("Readiness & Drift")
