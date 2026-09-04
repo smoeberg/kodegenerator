@@ -76,6 +76,44 @@ def _workflow_project_id(workflow: Any) -> str:
     )
 
 
+def _workflow_organization_id(workflow: Any) -> str | None:
+    context = dict(getattr(workflow, "context", {}) or {})
+    metadata = dict(getattr(workflow, "metadata", {}) or {})
+    value = context.get("organization_id") or metadata.get("organization_id")
+    return str(value) if value else None
+
+
+def _require_execution_access(
+    workflow: Any,
+    current_user: User,
+) -> None:
+    """Enforce tenant ownership before disclosing execution state.
+
+    Execution workflows carry their organization identity in the canonical
+    workflow context. If that identity is present, an authenticated principal
+    must belong to the same organization. Missing workflow ownership metadata
+    is tolerated for legacy development fixtures only.
+    """
+    workflow_organization_id = _workflow_organization_id(workflow)
+    if (
+        workflow_organization_id is not None
+        and current_user.organization_id != workflow_organization_id
+    ):
+        raise HTTPException(status_code=403, detail="Execution access denied")
+
+
+def _get_execution_or_404(
+    orch: PipelineOrchestrator,
+    workflow_id: str,
+    current_user: User,
+) -> Any:
+    workflow = orch._get_workflow(workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="execution_not_found")
+    _require_execution_access(workflow, current_user)
+    return workflow
+
+
 def _emit(workflow: Any, event_type: str, payload: dict[str, Any] | None = None) -> None:
     project_id = _workflow_project_id(workflow)
     default_event_bus.publish(
@@ -101,13 +139,12 @@ def _websocket_token(websocket: WebSocket) -> str | None:
 def get_execution(
     workflow_id: str,
     dor: DORRuntime = Depends(get_dor),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Return the canonical workflow/pipeline snapshot used by the cockpit."""
-    try:
-        return _orchestrator(dor).get_pipeline_status(workflow_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="execution_not_found") from exc
+    orch = _orchestrator(dor)
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
+    return orch.get_pipeline_status(workflow.id)
 
 
 @router.post("/start")
@@ -117,6 +154,9 @@ def start_execution(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Start a governed software-factory execution and return its snapshot."""
+    if current_user.organization_id is not None and request.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Organization access denied")
+
     orch = _orchestrator(dor)
     try:
         workflow_id = orch.start_pipeline(
@@ -139,15 +179,13 @@ def advance_execution(
     workflow_id: str,
     request: AdvanceExecutionRequest | None = None,
     dor: DORRuntime = Depends(get_dor),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Advance the canonical pipeline; gates remain fail-closed."""
     orch = _orchestrator(dor)
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
         orch.advance_pipeline(workflow_id)
-        workflow = orch._get_workflow(workflow_id)
-        if workflow is None:
-            raise ValueError("execution not found")
         _emit(
             workflow,
             "EXECUTION_ADVANCED",
@@ -164,12 +202,10 @@ def advance_execution(
 def list_execution_gates(
     workflow_id: str,
     dor: DORRuntime = Depends(get_dor),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ) -> list[dict[str, Any]]:
     orch = _orchestrator(dor)
-    workflow = orch._get_workflow(workflow_id)
-    if workflow is None:
-        raise HTTPException(status_code=404, detail="execution_not_found")
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
     return [
         {
             "id": gate.id,
@@ -189,6 +225,7 @@ def decide_execution_gate(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     orch = _orchestrator(dor)
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
         approved = orch.approve_gate(
             workflow_id,
@@ -196,23 +233,21 @@ def decide_execution_gate(
             approver=current_user.username,
             decision=request.decision,
         )
-        workflow = orch._get_workflow(workflow_id)
-        if workflow is not None:
-            _emit(
-                workflow,
-                "GATE_DECISION",
-                {
-                    "gate_id": request.gate_id,
-                    "decision": request.decision,
-                    "approved": approved,
-                    "actor": current_user.username,
-                },
-            )
+        _emit(
+            workflow,
+            "GATE_DECISION",
+            {
+                "gate_id": request.gate_id,
+                "decision": request.decision,
+                "approved": approved,
+                "actor": current_user.username,
+            },
+        )
         return {
             "workflow_id": workflow_id,
             "gate_id": request.gate_id,
             "approved": approved,
-            "status": workflow.current_state.value if workflow else None,
+            "status": workflow.current_state.value,
         }
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -221,8 +256,11 @@ def decide_execution_gate(
 @router.get("/{workflow_id}/proposals")
 def list_implementation_proposals(
     workflow_id: str,
-    _: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
 ) -> list[dict[str, Any]]:
+    orch = _orchestrator(dor)
+    _get_execution_or_404(orch, workflow_id, current_user)
     return list(_PROPOSALS.get(workflow_id, []))
 
 
@@ -234,9 +272,7 @@ def create_implementation_proposal(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     orch = _orchestrator(dor)
-    workflow = orch._get_workflow(workflow_id)
-    if workflow is None:
-        raise HTTPException(status_code=404, detail="execution_not_found")
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
     proposal = {
         "id": f"proposal-{workflow_id[:8]}-{len(_PROPOSALS.get(workflow_id, [])) + 1}",
         "workflow_id": workflow_id,
@@ -370,11 +406,11 @@ async def execution_websocket(websocket: WebSocket, workflow_id: str) -> None:
 async def execution_sse(
     workflow_id: str,
     current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
 ) -> StreamingResponse:
     """SSE fallback for clients that cannot establish a WebSocket."""
-    require_project_access(workflow_id, current_user)
-
-    topic = project_topic(workflow_id)
+    workflow = _get_execution_or_404(_orchestrator(dor), workflow_id, current_user)
+    topic = project_topic(_workflow_project_id(workflow))
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
 
     def on_event(_event_type: str, envelope: dict[str, Any]) -> None:
