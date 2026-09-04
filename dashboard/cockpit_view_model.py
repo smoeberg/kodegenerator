@@ -50,7 +50,7 @@ def build_execution_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def normalize_gates(payload: Any) -> list[dict[str, Any]]:
-    """Normalize gate records without inventing governance fields."""
+    """Normalize gate records while preserving backend governance semantics."""
     if not isinstance(payload, list):
         return []
 
@@ -61,14 +61,31 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
         gate_id = str(item.get("id") or "").strip()
         if not gate_id:
             continue
+
         resolved = bool(item.get("resolved"))
+        raw_decision = str(item.get("decision") or "").strip().lower()
+        decision = raw_decision if raw_decision in {"approved", "rejected"} else None
+        blocking = bool(item.get("blocking"))
+
+        if decision == "rejected":
+            status = "rejected"
+        elif decision == "approved":
+            status = "approved"
+        elif resolved:
+            status = "resolved"
+        else:
+            status = "human_required"
+
         normalized.append(
             {
                 "id": gate_id,
                 "name": str(item.get("name") or gate_id),
                 "description": str(item.get("description") or "Ingen beskrivelse fra backend."),
                 "resolved": resolved,
-                "status": "resolved" if resolved else "human_required",
+                "decision": decision,
+                "blocking": blocking,
+                "can_decide": not resolved,
+                "status": status,
             }
         )
     return normalized
@@ -83,6 +100,34 @@ def gate_decision_payload(gate_id: str, decision: str) -> dict[str, str]:
     if decision not in {"approved", "rejected"}:
         raise ValueError("decision must be 'approved' or 'rejected'")
     return {"gate_id": gate_id, "decision": decision}
+
+
+def interpret_advance_error(status_code: int, message: str) -> dict[str, Any]:
+    """Map a backend advance error to a cockpit-facing governance state."""
+    text = str(message or "").strip()
+    prefix = "workflow_blocked_by_gate:"
+    if status_code == 409 and text.startswith(prefix):
+        remainder = text[len(prefix):]
+        gate_id, separator, decision = remainder.partition(":")
+        gate_id = gate_id.strip() or "unknown"
+        decision = decision.strip() if separator else "pending"
+        decision = decision or "pending"
+        return {
+            "kind": "gate_blocked",
+            "gate_id": gate_id,
+            "decision": decision,
+            "message": (
+                f"Workflowet er blokeret af quality gate `{gate_id}` "
+                f"(beslutning: `{decision}`)."
+            ),
+        }
+
+    return {
+        "kind": "api_error",
+        "gate_id": None,
+        "decision": None,
+        "message": text or f"API-fejl ({status_code})",
+    }
 
 
 def normalize_proposals(payload: Any) -> list[dict[str, Any]]:
