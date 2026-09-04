@@ -25,8 +25,12 @@ def _sanitize_base_url(value: str) -> str | None:
     raw = str(value or "").strip().rstrip("/")
     if not raw:
         return None
-    parsed = urlparse(raw)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlparse(raw)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not hostname:
         return None
     if parsed.username or parsed.password:
         return None
@@ -100,6 +104,7 @@ def check_redmine_health(
                 "X-Redmine-API-Key": key,
             },
             timeout=(_DEFAULT_CONNECT_TIMEOUT, _DEFAULT_READ_TIMEOUT),
+            allow_redirects=False,
         )
     except requests.Timeout:
         base_result["error"] = "timeout"
