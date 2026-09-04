@@ -67,8 +67,8 @@ def test_redmine_health_verifies_authenticated_project_response() -> None:
     assert result["reachable"] is True
     assert result["verified"] is True
     assert result["error"] is None
-    assert result["base_url"] == "https://redmine.example.test/root"
-    assert result["project_id"] == "digital medarbejdere"
+    assert "base_url" not in result
+    assert "project_id" not in result
     url, kwargs = session.calls[0]
     assert url == (
         "https://redmine.example.test/root/projects/"
@@ -130,6 +130,8 @@ def test_redmine_health_never_returns_api_key_or_upstream_body() -> None:
     serialized = repr(result)
     assert secret not in serialized
     assert upstream_secret not in serialized
+    assert "redmine.example.test" not in serialized
+    assert "project-a" not in serialized
     assert result["error"] == "upstream_error"
 
 
