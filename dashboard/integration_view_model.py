@@ -56,8 +56,6 @@ def normalize_redmine_health(payload: Any) -> dict[str, Any]:
         "configured": configured,
         "reachable": reachable,
         "verified": verified,
-        "base_url": str(data.get("base_url") or "—"),
-        "project_id": str(data.get("project_id") or "—"),
         "checked_at": str(data.get("checked_at") or "—"),
         "error": error,
         "missing_configuration": missing,
