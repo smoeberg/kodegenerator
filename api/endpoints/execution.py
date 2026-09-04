@@ -184,6 +184,15 @@ def advance_execution(
     """Advance the canonical pipeline; gates remain fail-closed."""
     orch = _orchestrator(dor)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
+    blocker = orch.get_blocking_gate(workflow_id)
+    if blocker is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "workflow_blocked_by_gate:"
+                f"{blocker['gate_id']}:{blocker['decision']}"
+            ),
+        )
     try:
         orch.advance_pipeline(workflow_id)
         _emit(
@@ -206,12 +215,15 @@ def list_execution_gates(
 ) -> list[dict[str, Any]]:
     orch = _orchestrator(dor)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
+    blocker = orch.get_blocking_gate(workflow_id)
     return [
         {
             "id": gate.id,
             "name": gate.name,
             "description": gate.description,
             "resolved": gate.decision_id is not None,
+            "decision": orch.get_gate_decision(workflow_id, gate.id),
+            "blocking": blocker is not None and blocker["gate_id"] == gate.id,
         }
         for gate in workflow.gates
     ]
@@ -227,7 +239,7 @@ def decide_execution_gate(
     orch = _orchestrator(dor)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
-        approved = orch.approve_gate(
+        result = orch.decide_gate(
             workflow_id,
             request.gate_id,
             approver=current_user.username,
@@ -238,15 +250,18 @@ def decide_execution_gate(
             "GATE_DECISION",
             {
                 "gate_id": request.gate_id,
-                "decision": request.decision,
-                "approved": approved,
+                "decision": result["decision"],
+                "approved": result["approved"],
+                "workflow_advanced": result["workflow_advanced"],
                 "actor": current_user.username,
             },
         )
         return {
             "workflow_id": workflow_id,
             "gate_id": request.gate_id,
-            "approved": approved,
+            "decision": result["decision"],
+            "approved": result["approved"],
+            "workflow_advanced": result["workflow_advanced"],
             "status": workflow.current_state.value,
         }
     except ValueError as exc:
