@@ -1,10 +1,16 @@
 """Contract tests for the Development & Execution control-plane API."""
 
+from types import SimpleNamespace
+
+from fastapi import HTTPException
+
+from api.auth import User
 from api.endpoints.execution import (
     AdvanceExecutionRequest,
     GateDecisionRequest,
     ImplementationProposalRequest,
     StartExecutionRequest,
+    _require_execution_access,
     _websocket_token,
     router,
 )
@@ -70,6 +76,33 @@ def test_execution_gate_decision_model_only_accepts_supported_decisions() -> Non
         pass
     else:
         raise AssertionError("GateDecisionRequest accepted unsupported decision")
+
+
+def test_execution_tenant_access_allows_matching_organization() -> None:
+    workflow = SimpleNamespace(context={"organization_id": "org-1"}, metadata={})
+    user = User(username="alice", organization_id="org-1")
+
+    _require_execution_access(workflow, user)
+
+
+def test_execution_tenant_access_rejects_cross_organization_disclosure() -> None:
+    workflow = SimpleNamespace(context={"organization_id": "org-1"}, metadata={})
+    user = User(username="mallory", organization_id="org-2")
+
+    try:
+        _require_execution_access(workflow, user)
+    except HTTPException as exc:
+        assert exc.status_code == 403
+        assert exc.detail == "Execution access denied"
+    else:
+        raise AssertionError("cross-tenant execution access was accepted")
+
+
+def test_execution_tenant_access_uses_metadata_for_legacy_workflows() -> None:
+    workflow = SimpleNamespace(context={}, metadata={"organization_id": "org-1"})
+    user = User(username="alice", organization_id="org-1")
+
+    _require_execution_access(workflow, user)
 
 
 def test_websocket_token_parser_requires_bearer_scheme() -> None:
