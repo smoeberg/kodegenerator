@@ -7,6 +7,12 @@ import uuid
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.cockpit_view_model import (
+    build_execution_summary,
+    gate_decision_payload,
+    normalize_gates,
+    normalize_proposals,
+)
 from dashboard.realtime import WorkflowRealtime
 from dashboard.state import authenticated, clear_auth, init_state
 
@@ -164,37 +170,65 @@ def project_page(client: DORAPIClient) -> None:
 
 
 def development_page(client: DORAPIClient) -> None:
-    st.header("⚙️ Logik 2: Udvikling & Eksekverings-Cockpit")
-    st.write("**Hvordan bygger vi?** Realtime overvågning, Quality Gates beslutninger (HITL) og kodeforslag.")
-    
+    st.header("⚙️ Logik 2: Udvikling & Decision Cockpit")
+    st.write("**Hvordan bygger vi?** Realtime execution-status, Quality Gates (HITL) og kodeforslag fra den kanoniske Execution API.")
+
     workflow_id = st.text_input("Aktivt Workflow ID", value=st.session_state.get("selected_workflow_id") or "")
     if not workflow_id:
         stop_realtime()
         st.info("Angiv et Workflow ID for at aktivere realtids-cockpit og streams.")
         return
 
+    workflow_id = workflow_id.strip()
     st.session_state["selected_workflow_id"] = workflow_id
     manager = ensure_realtime(workflow_id)
     realtime_pump(workflow_id)
 
-    status_cols = st.columns(4)
-    status_cols[0].metric("Realtime Forbindelse", manager.status)
-    status_cols[1].metric("Stream Events", st.session_state.get("realtime_event_count", 0))
-    status_cols[2].caption(f"Seneste event: `{st.session_state.get('last_realtime_event', '—')}`")
-    
-    # 1. Execution Live Status (/api/v1/execution/{workflow_id})
+    connection_cols = st.columns(4)
+    connection_cols[0].metric("Realtime", manager.status)
+    connection_cols[1].metric("Stream events", st.session_state.get("realtime_event_count", 0))
+    connection_cols[2].metric("Seneste event", st.session_state.get("last_realtime_event", "—"))
+    connection_cols[3].metric("Workflow", workflow_id)
+
     st.divider()
-    st.subheader("📊 Eksekveringsstatus & Fasefremdrift")
+    st.subheader("📊 Workflowstatus")
     try:
         exec_status = client.get(f"/api/v1/execution/{workflow_id}")
-        st.json(exec_status)
-        if st.button("⏩ Advance Workflow (Næste Fase)"):
+        summary = build_execution_summary(exec_status)
+
+        status_cols = st.columns(4)
+        status_cols[0].metric("Projekt", summary["project_name"])
+        status_cols[1].metric("Aktuel fase", summary["current_state"])
+        status_cols[2].metric("Tasks færdige", f"{summary['task_completed']} / {summary['task_total']}")
+        status_cols[3].metric("Åbne tasks", summary["task_open"])
+
+        if summary["error"]:
+            st.error(f"Execution-fejl: {summary['error']}")
+        st.info(f"**Næste forventede handling:** {summary['next_action']}")
+
+        if summary["tasks"]:
+            st.dataframe(summary["tasks"], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Ingen tasks rapporteret af backend for denne execution.")
+
+        advance_reason = st.text_input(
+            "Reason for advance (valgfri)",
+            key=f"advance_reason_{workflow_id}",
+            help="Sendes til backend som audit-kontekst; backend afgør om workflowet må fortsætte.",
+        )
+        if st.button("⏩ Advance workflow", type="primary", key=f"advance_{workflow_id}"):
             try:
-                adv = client.post(f"/api/v1/execution/{workflow_id}/advance")
-                st.success("Workflow rykket frem.")
-                st.json(adv)
+                payload = {"reason": advance_reason.strip() or None}
+                adv = client.post(f"/api/v1/execution/{workflow_id}/advance", json=payload)
+                st.success("Advance-kommando accepteret af Execution API.")
+                with st.expander("Backend-resultat"):
+                    st.json(adv)
+                st.rerun()
             except DORAPIError as exc:
-                st.error(f"Fejl ved advance: {exc}")
+                st.error(f"Advance afvist ({exc.status_code}): {exc}")
+
+        with st.expander("Tekniske execution-data"):
+            st.json(exec_status)
     except DORAPIError as exc:
         if exc.status_code == 401:
             stop_realtime()
@@ -203,34 +237,99 @@ def development_page(client: DORAPIClient) -> None:
             st.rerun()
         st.warning(f"Execution API: {exc}")
 
-    # 2. Quality Gates & HITL Decisions (/api/v1/execution/{workflow_id}/gates)
     st.divider()
-    st.subheader("🛡️ Quality Gates & Human-In-The-Loop Beslutninger")
+    st.subheader("🛡️ Quality Gates & Human-In-The-Loop")
     try:
-        gates = client.get(f"/api/v1/execution/{workflow_id}/gates")
-        st.json(gates)
-        
-        with st.expander("Beslut Gate (Godkend / Afvis Gate Manuelt)"):
-            gate_id = st.text_input("Gate ID / Navn (f.eks. security_gate, test_gate)")
-            decision = st.selectbox("Beslutning", ["approve", "reject"])
-            reason = st.text_input("Begrundelse for beslutning")
-            if st.button("Indsend Gate Beslutning", type="primary"):
-                if not gate_id or not reason:
-                    st.warning("Angiv både Gate ID og begrundelse.")
-                else:
-                    payload = {"gate_id": gate_id, "decision": decision, "reason": reason}
-                    res = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
-                    st.success("Gate beslutning registreret.")
-                    st.json(res)
+        gates_payload = client.get(f"/api/v1/execution/{workflow_id}/gates")
+        gates = normalize_gates(gates_payload)
+        unresolved = [gate for gate in gates if not gate["resolved"]]
+
+        gate_cols = st.columns(3)
+        gate_cols[0].metric("Quality gates", len(gates))
+        gate_cols[1].metric("Kræver beslutning", len(unresolved))
+        gate_cols[2].metric("Resolved", len(gates) - len(unresolved))
+
+        if not gates:
+            st.caption("Ingen quality gates rapporteret af backend.")
+
+        for gate in gates:
+            icon = "✅" if gate["resolved"] else "⚠️"
+            status_label = "Resolved" if gate["resolved"] else "HUMAN_REQUIRED"
+            with st.container(border=True):
+                st.markdown(f"### {icon} {gate['name']}")
+                st.caption(f"Gate ID: `{gate['id']}` · Status: `{status_label}`")
+                st.write(gate["description"])
+
+                if gate["resolved"]:
+                    st.success("Gate er allerede afgjort af backend.")
+                    continue
+
+                decision_cols = st.columns(2)
+                if decision_cols[0].button(
+                    "✅ Godkend gate",
+                    type="primary",
+                    key=f"approve_gate_{workflow_id}_{gate['id']}",
+                ):
+                    try:
+                        payload = gate_decision_payload(gate["id"], "approved")
+                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                        st.success("Gate blev godkendt af Execution API.")
+                        with st.expander("Backend-resultat"):
+                            st.json(result)
+                        st.rerun()
+                    except DORAPIError as exc:
+                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
+
+                if decision_cols[1].button(
+                    "❌ Afvis gate",
+                    key=f"reject_gate_{workflow_id}_{gate['id']}",
+                ):
+                    try:
+                        payload = gate_decision_payload(gate["id"], "rejected")
+                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                        st.warning("Gate blev afvist af Execution API.")
+                        with st.expander("Backend-resultat"):
+                            st.json(result)
+                        st.rerun()
+                    except DORAPIError as exc:
+                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
+
+        with st.expander("Tekniske gate-data"):
+            st.json(gates_payload)
     except DORAPIError as exc:
         st.caption(f"Gates ikke tilgængelige: {exc}")
 
-    # 3. Kodeforslag & Diff Inspektion (/api/v1/execution/{workflow_id}/proposals)
     st.divider()
     st.subheader("📝 Kodeforslag & Diffs")
     try:
-        proposals = client.get(f"/api/v1/execution/{workflow_id}/proposals")
-        st.json(proposals)
+        proposals_payload = client.get(f"/api/v1/execution/{workflow_id}/proposals")
+        proposals = normalize_proposals(proposals_payload)
+
+        if not proposals:
+            st.caption("Ingen implementation proposals rapporteret af backend.")
+
+        for proposal in proposals:
+            with st.container(border=True):
+                st.markdown(f"### {proposal['title']}")
+                st.caption(
+                    f"Proposal `{proposal['id']}` · status `{proposal['status']}` · "
+                    f"oprettet af `{proposal['created_by']}` · {proposal['created_at']}"
+                )
+                if proposal["summary"]:
+                    st.write(proposal["summary"])
+
+                if not proposal["files"]:
+                    st.caption("Forslaget indeholder ingen filer.")
+                for file_item in proposal["files"]:
+                    with st.expander(f"📄 {file_item['display_name']}"):
+                        if file_item["diff"]:
+                            st.code(file_item["diff"], language="diff")
+                        else:
+                            st.caption("Backend leverede ikke diff/patch for denne fil.")
+                            st.json(file_item["raw"])
+
+                with st.expander("Tekniske proposal-data"):
+                    st.json(proposal["raw"])
     except DORAPIError as exc:
         st.caption(f"Kodeforslag ikke tilgængelige: {exc}")
 
@@ -238,9 +337,9 @@ def development_page(client: DORAPIClient) -> None:
 def administration_page(client: DORAPIClient) -> None:
     st.header("🛡️ Logik 3: Systemadministration & Governance")
     st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog, council, og integrationer.")
-    
+
     tabs = st.tabs(["Bot Governance", "Redmine Integration", "System Health"])
-    
+
     with tabs[0]:
         organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
         st.info("Append-only: ingen DELETE. Disable registreres kun som eksplicit backend-handling.")
@@ -288,8 +387,8 @@ def main() -> None:
     client = api()
     header(client)
     page = st.sidebar.radio("Kontrolplan", [
-        "🏗️ Logik 1: Projekt & Krav", 
-        "⚙️ Logik 2: Udvikling & Cockpit", 
+        "🏗️ Logik 1: Projekt & Krav",
+        "⚙️ Logik 2: Udvikling & Cockpit",
         "🛡️ Logik 3: Administration & Governance"
     ])
     try:
