@@ -10,6 +10,7 @@ from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_view_model import (
     build_execution_summary,
     gate_decision_payload,
+    interpret_advance_error,
     normalize_gates,
     normalize_proposals,
 )
@@ -225,7 +226,11 @@ def development_page(client: DORAPIClient) -> None:
                     st.json(adv)
                 st.rerun()
             except DORAPIError as exc:
-                st.error(f"Advance afvist ({exc.status_code}): {exc}")
+                error_state = interpret_advance_error(exc.status_code, str(exc))
+                if error_state["kind"] == "gate_blocked":
+                    st.warning(error_state["message"])
+                else:
+                    st.error(f"Advance afvist ({exc.status_code}): {error_state['message']}")
 
         with st.expander("Tekniske execution-data"):
             st.json(exec_status)
@@ -242,26 +247,62 @@ def development_page(client: DORAPIClient) -> None:
     try:
         gates_payload = client.get(f"/api/v1/execution/{workflow_id}/gates")
         gates = normalize_gates(gates_payload)
-        unresolved = [gate for gate in gates if not gate["resolved"]]
+        unresolved = [gate for gate in gates if gate["status"] == "human_required"]
+        rejected = [gate for gate in gates if gate["status"] == "rejected"]
+        blocking = [gate for gate in gates if gate["blocking"]]
 
-        gate_cols = st.columns(3)
+        gate_cols = st.columns(4)
         gate_cols[0].metric("Quality gates", len(gates))
         gate_cols[1].metric("Kræver beslutning", len(unresolved))
-        gate_cols[2].metric("Resolved", len(gates) - len(unresolved))
+        gate_cols[2].metric("Afvist", len(rejected))
+        gate_cols[3].metric("Blocking", len(blocking))
+
+        if blocking:
+            blocking_ids = ", ".join(gate["id"] for gate in blocking)
+            st.error(
+                "Workflowet er blokeret af quality gate(s): "
+                f"{blocking_ids}. Backend er eneste authority for videre progression."
+            )
 
         if not gates:
             st.caption("Ingen quality gates rapporteret af backend.")
 
         for gate in gates:
-            icon = "✅" if gate["resolved"] else "⚠️"
-            status_label = "Resolved" if gate["resolved"] else "HUMAN_REQUIRED"
+            if gate["status"] == "rejected":
+                icon = "🛑"
+                status_label = "REJECTED / BLOCKING" if gate["blocking"] else "REJECTED"
+            elif gate["status"] == "approved":
+                icon = "✅"
+                status_label = "APPROVED"
+            elif gate["status"] == "resolved":
+                icon = "✅"
+                status_label = "RESOLVED"
+            else:
+                icon = "⚠️"
+                status_label = "HUMAN_REQUIRED"
+
             with st.container(border=True):
                 st.markdown(f"### {icon} {gate['name']}")
-                st.caption(f"Gate ID: `{gate['id']}` · Status: `{status_label}`")
+                decision_label = gate["decision"] or "pending"
+                st.caption(
+                    f"Gate ID: `{gate['id']}` · Status: `{status_label}` · "
+                    f"Decision: `{decision_label}`"
+                )
                 st.write(gate["description"])
 
-                if gate["resolved"]:
-                    st.success("Gate er allerede afgjort af backend.")
+                if gate["blocking"]:
+                    st.error("Denne gate blokerer workflowets progression.")
+
+                if not gate["can_decide"]:
+                    if gate["status"] == "rejected":
+                        st.warning(
+                            "Gate er afvist. Workflowet forbliver fail-closed, indtil backend "
+                            "tilbyder en eksplicit rework/retry-handling."
+                        )
+                    elif gate["status"] == "approved":
+                        st.success("Gate er godkendt af backend.")
+                    else:
+                        st.info("Gate er allerede afgjort af backend.")
                     continue
 
                 decision_cols = st.columns(2)
@@ -280,16 +321,20 @@ def development_page(client: DORAPIClient) -> None:
                     except DORAPIError as exc:
                         st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
 
-                decision_cols[1].button(
+                if decision_cols[1].button(
                     "❌ Afvis gate",
-                    disabled=True,
                     key=f"reject_gate_{workflow_id}_{gate['id']}",
-                    help="Deaktiveret fail-closed: backend behandler aktuelt rejected som resolved og fortsætter pipeline.",
-                )
-                st.caption(
-                    "Afvisning er midlertidigt deaktiveret i GUI'en, fordi den nuværende backend "
-                    "ikke har en sikker reject-transition."
-                )
+                    help="Registrerer rejected i Execution API. Backend holder workflowet fail-closed.",
+                ):
+                    try:
+                        payload = gate_decision_payload(gate["id"], "rejected")
+                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                        st.warning("Gate blev afvist. Workflowet forbliver blokeret af backend.")
+                        with st.expander("Backend-resultat"):
+                            st.json(result)
+                        st.rerun()
+                    except DORAPIError as exc:
+                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
 
         with st.expander("Tekniske gate-data"):
             st.json(gates_payload)
