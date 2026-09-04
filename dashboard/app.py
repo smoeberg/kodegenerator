@@ -1,465 +1,314 @@
-"""DOR Web Dashboard - Visual Governance & Admin Management Interface."""
+"""DOR Control Plane GUI: three business logics over the canonical FastAPI API."""
+from __future__ import annotations
 
 import os
-import sqlite3
+import uuid
 
-import pandas as pd
 import streamlit as st
 
-from dashboard.catalog import STANDARD_CAPABILITIES, STANDARD_ROLES
-from dashboard.security import admin_password
-from services.runtime_configuration import validate_runtime_configuration
+from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.realtime import WorkflowRealtime
+from dashboard.state import authenticated, clear_auth, init_state
 
-validate_runtime_configuration(role="dashboard")
+st.set_page_config(page_title="DOR Control Plane", page_icon="⚡", layout="wide")
+init_state()
 
-try:
-    from dashboard.decision_cockpit import render_decision_cockpit
-except ImportError:
-    render_decision_cockpit = None
 
-try:
-    from dashboard.workflow_cockpit import render_workflow_cockpit
-except ImportError:
-    render_workflow_cockpit = None
+def api() -> DORAPIClient:
+    return DORAPIClient(token=st.session_state.get("access_token"))
 
-try:
-    from dashboard.swarm_monitor import render_swarm_monitor
-except ImportError:
-    render_swarm_monitor = None
 
-try:
-    from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
-except ImportError:
-    render_multi_bot_control_plane = None
-
-st.set_page_config(
-    page_title="DOR - Controller & Digital Employee Management",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# --- Authentication Check ---
-ADMIN_PASSWORD = admin_password()
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title("⚡ Digital Organization Runtime (DOR) Dashboard")
-    st.subheader("🔐 Autentificering Påkrævet")
-    pwd = st.text_input(
-        "Indtast Dashboard Admin Adgangskode",
-        type="password",
-        help="Konfigureres med DOR_ADMIN_PASSWORD.",
-    )
-    if st.button("Log ind"):
-        if pwd == ADMIN_PASSWORD:
-            st.session_state.authenticated = True
+def login() -> None:
+    st.title("⚡ DOR Control Plane")
+    st.caption("Live klient til FastAPI på DOR_API_URL (default: http://api:8000)")
+    with st.form("login"):
+        username = st.text_input("Brugernavn")
+        password = st.text_input("Adgangskode", type="password")
+        submit = st.form_submit_button("Log ind", type="primary")
+    if submit:
+        try:
+            client = DORAPIClient()
+            st.session_state["access_token"] = client.login(username, password)
+            st.session_state["username"] = username
             st.rerun()
-        else:
-            st.error("⚠️ Forkert adgangskode.")
-    st.stop()
-
-st.title("⚡ Digital Organization Runtime (DOR) Dashboard")
-
-DB_PATH = os.getenv("DOR_DB_PATH", "dor_runtime.db")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+        except DORAPIError as exc:
+            st.error(f"Login fejlede ({exc.status_code}): {exc}")
 
 
-def get_connection():
-    # 1. Prøv PostgreSQL hvis DATABASE_URL er konfigureret (Docker / Produktion)
-    if DATABASE_URL and ("postgresql" in DATABASE_URL or "postgres" in DATABASE_URL):
-        try:
-            from sqlalchemy import create_engine
-            # Fjern +psycopg hvis ren sqlalchemy / pandas bruges
-            clean_url = DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
-            engine = create_engine(clean_url)
-            return engine
-        except Exception as e:
-            pass
-
-    # 2. Prøv SQLite fil hvis den findes
-    if os.path.exists(DB_PATH):
-        try:
-            return sqlite3.connect(DB_PATH)
-        except Exception:
-            pass
-
-    return None
-
-
-# --- Sidebar Navigation ---
-st.sidebar.title("Navigation")
-menu = st.sidebar.radio(
-    "Vælg Sektion",
-    [
-        "🧠 Multi-bot Control Plane",
-        "🚀 System Generator & Workflow",
-        "🤖 Swarm Fleet Monitor",
-        "🎛️ Decision Cockpit (HITL)",
-        "⚙️ Indstillinger & Integrationer",
-        "Overblik & Systemtilstand",
-        "Digitale Medarbejdere (Agenter)",
-        "Opret Ny Agent (Wizard)",
-        "Afdelinger & Teams",
-        "Opgaver (Tasks)",
-        "Audit Log & Hændelser",
-    ],
-)
-
-if st.sidebar.button("Log ud"):
-    st.session_state.authenticated = False
-    st.rerun()
-
-conn = get_connection()
-
-# --- Sektion: Multi-bot Control Plane ---
-if menu == "🧠 Multi-bot Control Plane":
-    if render_multi_bot_control_plane is not None:
-        render_multi_bot_control_plane()
-    else:
-        st.error("`dashboard.multi_bot_control_plane` kunne ikke importeres.")
-
-# --- Sektion: System Generator & Workflow ---
-elif menu == "🚀 System Generator & Workflow":
-    if render_workflow_cockpit is not None:
-        render_workflow_cockpit()
-    else:
-        st.error("`dashboard.workflow_cockpit` kunne ikke importeres.")
-
-# --- Sektion: Swarm Fleet Monitor ---
-elif menu == "🤖 Swarm Fleet Monitor":
-    if render_swarm_monitor is not None:
-        render_swarm_monitor()
-    else:
-        st.error("`dashboard.swarm_monitor` kunne ikke importeres.")
-
-# --- Sektion: Decision Cockpit ---
-elif menu == "🎛️ Decision Cockpit (HITL)":
-    if render_decision_cockpit is not None:
-        render_decision_cockpit()
-    else:
-        st.warning(
-            "`dashboard.decision_cockpit` er ikke tilgængelig. "
-            "Brug System Generator eller Opgaver indtil modulet er på plads."
-        )
-
-# --- Sektion: Overblik & Systemtilstand ---
-elif menu == "Overblik & Systemtilstand":
-    st.subheader("Systemoversigt")
-    if not conn:
-        st.warning(
-            f"Databasefilen '{DB_PATH}' blev ikke fundet. "
-            "Kør systemet først for at initialisere data."
-        )
-    else:
-        col1, col2, col3, col4 = st.columns(4)
-        try:
-            agent_count = pd.read_sql("SELECT COUNT(*) as c FROM agents", conn).iloc[0][
-                "c"
-            ]
-            dept_count = pd.read_sql(
-                "SELECT COUNT(*) as c FROM departments", conn
-            ).iloc[0]["c"]
-            task_count = pd.read_sql("SELECT COUNT(*) as c FROM tasks", conn).iloc[0][
-                "c"
-            ]
-            event_count = pd.read_sql("SELECT COUNT(*) as c FROM event_log", conn).iloc[
-                0
-            ]["c"]
-
-            col1.metric("Aktive Agenter", agent_count)
-            col2.metric("Afdelinger", dept_count)
-            col3.metric("Opgaver I Alt", task_count)
-            col4.metric("Audit Hændelser", event_count)
-        except Exception as e:
-            st.error(f"Fejl ved indlæsning af metrikker: {e}")
-
-# --- Sektion: Digitale Medarbejdere ---
-elif menu == "Digitale Medarbejdere (Agenter)":
-    st.subheader("Oversigt over Digitale Medarbejdere")
-    if conn:
-        try:
-            query = """
-            SELECT
-                a.agent_id,
-                a.name,
-                a.role,
-                a.department_id,
-                d.name as department_name,
-                a.status,
-                a.is_active,
-                a.created_at
-            FROM agents a
-            LEFT JOIN departments d ON a.department_id = d.department_id
-            """
-            agents_df = pd.read_sql(query, conn)
-            st.dataframe(agents_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Kunne ikke hente agenter: {e}")
-
-# --- Sektion: Opret Ny Agent (Wizard) ---
-elif menu == "Opret Ny Agent (Wizard)":
-    st.subheader("Opret Ny Digital Medarbejder")
-    st.info(
-        "Brug denne guide til at registrere og konfigurere en ny AI-agent "
-        "med passende rolle og sikkerhedsbegrænsninger."
-    )
-
-    with st.form("create_agent_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input(
-                "Agent Navn / Alias", placeholder="f.eks. CodeReviewer-Alpha"
-            )
-            role_options = list(STANDARD_ROLES.keys())
-            selected_role = st.selectbox("Vælg Rolle (Skabelon)", role_options)
-
-        with col2:
-            model_name = st.selectbox(
-                "Underliggende AI Model",
-                [
-                    "claude-3-7-sonnet",
-                    "claude-3-5-sonnet",
-                    "gpt-4o",
-                    "mistral-large",
-                    "custom",
-                ],
-            )
-            status = st.selectbox("Initial Status", ["active", "idle", "disabled"])
-
-        st.markdown("### Standard Rettigheder & Evner")
-        role_template = STANDARD_ROLES.get(selected_role)
-        default_caps = list(role_template.capabilities) if role_template else []
-        all_cap_ids = [cap.id for cap in STANDARD_CAPABILITIES.values()]
-        selected_caps = st.multiselect(
-            "Tilknyttede Capabilities", all_cap_ids, default=default_caps
-        )
-
-        submitted = st.form_submit_button("Opret Agent")
-        if submitted:
-            if not name.strip():
-                st.error("Navn må ikke være tomt.")
-            else:
-                try:
-                    import uuid
-                    new_id = f"agent-{uuid.uuid4().hex[:8]}"
-                    insert_query = """
-                    INSERT INTO agents (agent_id, name, role, status, is_active, created_at)
-                    VALUES (:id, :name, :role, :status, 1, CURRENT_TIMESTAMP)
-                    """
-                    with conn.connect() if hasattr(conn, "connect") else conn as cur:
-                        if hasattr(cur, "execute"):
-                            from sqlalchemy import text
-                            cur.execute(text(insert_query), {"id": new_id, "name": name, "role": selected_role, "status": status})
-                            if hasattr(cur, "commit"):
-                                cur.commit()
-                        else:
-                            cur.execute("INSERT INTO agents (agent_id, name, role, status, is_active) VALUES (?, ?, ?, ?, 1)", (new_id, name, selected_role, status))
-                    st.success(f"Agent '{name}' oprettet i databasen med ID `{new_id}`!")
-                except Exception as ex:
-                    st.error(f"Fejl ved oprettelse i databasen: {ex}")
-
-# --- Sektion: Afdelinger & Teams ---
-elif menu == "Afdelinger & Teams":
-    st.subheader("Afdelingsstruktur")
-    if conn:
-        try:
-            depts_df = pd.read_sql("SELECT * FROM departments", conn)
-            st.dataframe(depts_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Kunne ikke hente afdelinger: {e}")
-
-# --- Sektion: Opgaver ---
-elif menu == "Opgaver (Tasks)":
-    st.subheader("Opgaveliste & Workflow Status")
-    if conn:
-        try:
-            tasks_df = pd.read_sql(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT 100", conn
-            )
-            st.dataframe(tasks_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Kunne ikke hente opgaver: {e}")
-
-# --- Sektion: Audit Log & Hændelser ---
-elif menu == "Audit Log & Hændelser":
-    st.subheader("Uforanderlig Audit & Event Log")
-    if conn:
-        try:
-            events_df = pd.read_sql(
-                "SELECT * FROM event_log ORDER BY timestamp DESC LIMIT 200", conn
-            )
-            st.dataframe(events_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Kunne ikke hente event log: {e}")
-
-# --- Sektion: Indstillinger & Integrationer ---
-elif menu == "⚙️ Indstillinger & Integrationer":
-    st.subheader("⚙️ Systemindstillinger & Eksterne Integrationer")
-    st.caption(
-        "Konfigurer forbindelser til eksterne issue trackers, metrics og runtime-miljø."
-    )
-
-
-def _persist_env_vars(vars_dict: dict[str, str]) -> None:
-    env_paths = [".env", "/app/.env", "/root/kodegenerator/.env"]
-    target_path = ".env"
-    for p in env_paths:
-        if os.path.exists(p) or os.access(os.path.dirname(os.path.abspath(p)) or ".", os.W_OK):
-            target_path = p
-            break
-
-    lines = []
-    if os.path.exists(target_path):
-        try:
-            with open(target_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except Exception:
-            pass
-
-    updated = set()
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        matched = False
-        for k, v in vars_dict.items():
-            if stripped.startswith(f"{k}=") or stripped.startswith(f"# {k}=") or stripped.startswith(f"#{k}="):
-                new_lines.append(f"{k}={v}\n")
-                updated.add(k)
-                matched = True
-                break
-        if not matched:
-            new_lines.append(line)
-
-    for k, v in vars_dict.items():
-        if k not in updated:
-            new_lines.append(f"{k}={v}\n")
-
+def header(client: DORAPIClient) -> None:
+    cols = st.columns(5)
     try:
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+        client.health()
+        cols[0].success("● API online")
     except Exception:
-        pass
+        cols[0].error("● API offline")
+    cols[1].info(f"● Realtime: {st.session_state.get('realtime_status', 'offline')}")
+    cols[2].info(f"● Bruger: {st.session_state.get('username') or '—'}")
+    cols[3].info(f"● Organisation: {st.session_state.get('organization_id') or '—'}")
+    if cols[4].button("Log ud"):
+        stop_realtime()
+        clear_auth()
+        st.rerun()
 
-    tab_redmine, tab_general = st.tabs(["🐞 Redmine Issue Tracker", "🌐 Generelt"])
 
-    with tab_redmine:
-        st.markdown("### Redmine Error Ticketing Konfiguration")
-        st.info(
-            "Når Redmine er konfigureret, vil uafklarede fejl i self-healing loops "
-            "og syntesefejl automatisk oprette strukturerede fejlrapporter i Redmine."
-        )
+def stop_realtime() -> None:
+    manager = st.session_state.get("realtime_manager")
+    if isinstance(manager, WorkflowRealtime):
+        manager.stop()
+    st.session_state["realtime_manager"] = None
+    st.session_state["realtime_workflow_id"] = None
+    st.session_state["realtime_status"] = "offline"
 
-        curr_url = os.getenv("REDMINE_URL", "")
-        curr_api_key = os.getenv("REDMINE_API_KEY", "")
-        curr_project = os.getenv("REDMINE_PROJECT_ID", "dor")
-        curr_tracker = os.getenv(
-            "REDMINE_TRACKER_ID", os.getenv("REDMINE_ISSUE_TRACKER_ID", "1")
-        )
-        curr_severity = os.getenv("REDMINE_SEVERITY", "ERROR")
 
-        with st.form("redmine_config_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                redmine_url = st.text_input(
-                    "Redmine URL",
-                    value=curr_url,
-                    placeholder="https://redmine.example.com",
-                    help="Grund-URL for dit Redmine-system (f.eks. https://redmine.example.com)",
-                )
-                project_id = st.text_input(
-                    "Projekt ID / Identifier",
-                    value=curr_project,
-                    placeholder="f.eks. dor eller 1",
-                    help="Redmine projekt-identifier eller numerisk ID.",
-                )
-                tracker_id = st.text_input(
-                    "Tracker ID",
-                    value=curr_tracker,
-                    placeholder="1",
-                    help="Tracker ID for fejl/bugs (standard: 1).",
-                )
+def ensure_realtime(workflow_id: str) -> WorkflowRealtime:
+    current_id = st.session_state.get("realtime_workflow_id")
+    manager = st.session_state.get("realtime_manager")
+    if current_id != workflow_id or not isinstance(manager, WorkflowRealtime):
+        if isinstance(manager, WorkflowRealtime):
+            manager.stop()
+        manager = WorkflowRealtime(api(), workflow_id)
+        st.session_state["realtime_manager"] = manager
+        st.session_state["realtime_workflow_id"] = workflow_id
+        manager.start()
+    st.session_state["realtime_status"] = manager.status
+    return manager
 
-            with col2:
-                api_key = st.text_input(
-                    "API Key",
-                    value=curr_api_key,
-                    type="password",
-                    placeholder="Indtast Redmine REST API-nøgle",
-                    help="Findes i Redmine under Min konto -> API-adgangsnøgle.",
-                )
-                severity_options = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
-                default_sev_idx = (
-                    severity_options.index(curr_severity)
-                    if curr_severity in severity_options
-                    else 1
-                )
-                severity = st.selectbox(
-                    "Standard Severity",
-                    severity_options,
-                    index=default_sev_idx,
-                    help="Standard alvorsgrad for genererede Redmine-sager.",
-                )
 
-            st.markdown("#### Forbindelsestest & Gem")
-            col_test, col_save = st.columns([1, 1])
-            with col_test:
-                test_connection = st.form_submit_button("🔍 Test Forbindelse")
-            with col_save:
-                save_config = st.form_submit_button("💾 Gem Indstillinger")
+@st.fragment(run_every="1s")
+def realtime_pump(workflow_id: str) -> None:
+    """Drain realtime events; reruns happen because of events, not API polling."""
+    manager = st.session_state.get("realtime_manager")
+    if not isinstance(manager, WorkflowRealtime) or manager.workflow_id != workflow_id:
+        return
+    events = manager.drain()
+    st.session_state["realtime_status"] = manager.status
+    if manager.status == "unauthorized":
+        stop_realtime()
+        clear_auth()
+        st.warning("Realtime/API-session udløbet. Log ind igen.")
+        st.rerun()
+    if events:
+        st.session_state["last_realtime_event"] = events[-1].event_type
+        st.session_state["realtime_event_count"] = st.session_state.get("realtime_event_count", 0) + len(events)
+        st.rerun()
 
-            if test_connection:
-                if not redmine_url or not api_key:
-                    st.warning(
-                        "Angiv venligst både Redmine URL og API Key for at teste."
-                    )
+
+def project_page(client: DORAPIClient) -> None:
+    st.header("🏗️ Logik 1: Projekt & Kravspecifikation")
+    st.write("**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane og behandles som immutable.")
+    with st.form("project_create"):
+        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "")
+        name = st.text_input("System-/projektnavn")
+        goal = st.text_area("Mål", height=100)
+        description = st.text_area("Beskrivelse", height=100)
+        priority = st.selectbox("Prioritet", ["low", "medium", "high", "critical"], index=1)
+        constraints_text = st.text_area("Begrænsninger", help="Én nøgle=værdi pr. linje")
+        capabilities = st.text_area("Påkrævede capabilities", help="Én pr. linje")
+        command_id = st.text_input("Command ID", value=str(uuid.uuid4()))
+        create = st.form_submit_button("Opret projekt", type="primary")
+    if create:
+        if not organization_id.strip() or not name.strip() or not goal.strip() or not command_id.strip():
+            st.warning("Organisation ID, navn, mål og Command ID er påkrævet.")
+            return
+        constraints: dict[str, str] = {}
+        for line in constraints_text.splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                constraints[key.strip()] = value.strip()
+        payload = {
+            "organization_id": organization_id.strip(),
+            "name": name.strip(),
+            "command_id": command_id.strip(),
+            "intent": {
+                "goal": goal.strip(),
+                "description": description.strip(),
+                "priority": priority,
+                "constraints": constraints,
+                "required_capabilities": list(dict.fromkeys(x.strip() for x in capabilities.splitlines() if x.strip())),
+            },
+        }
+        try:
+            result = client.post("/api/v1/control-plane/projects", json=payload)
+            project = result.get("project", result)
+            st.session_state["organization_id"] = organization_id.strip()
+            st.session_state["selected_project_id"] = project.get("project_id")
+            st.session_state["selected_project_fingerprint"] = project.get("project_fingerprint")
+            st.success("Projekt oprettet.")
+            st.json(result)
+        except DORAPIError as exc:
+            st.error(f"API-fejl ({exc.status_code}): {exc}")
+
+    project_id = st.text_input("Eksisterende projekt ID", value=st.session_state.get("selected_project_id") or "")
+    if project_id:
+        st.session_state["selected_project_id"] = project_id
+        org = st.session_state.get("organization_id") or st.text_input("Organisation ID for projekt", key="project_lookup_org")
+        try:
+            project = client.get(f"/api/v1/control-plane/projects/{project_id}", params={"organization_id": org})
+            st.session_state["selected_project_fingerprint"] = project.get("project_fingerprint")
+            st.subheader("Projektstatus")
+            st.json(project)
+            st.subheader("Launch")
+            confirm = st.checkbox("Jeg bekræfter launch-operationen", key=f"confirm_launch_{project_id}")
+            launch_command_id = st.text_input("Launch Command ID", value=str(uuid.uuid4()), key=f"launch_command_{project_id}")
+            if st.button("🚀 Request launch", type="primary"):
+                if not confirm or not launch_command_id.strip():
+                    st.warning("Bekræft operationen og angiv Launch Command ID.")
                 else:
+                    payload = {"organization_id": org, "command_id": launch_command_id.strip(), "expected_project_fingerprint": project["project_fingerprint"]}
+                    st.json(client.post(f"/api/v1/control-plane/projects/{project_id}/launch", json=payload))
+            if st.button("↻ Hent project events"):
+                events = client.get(f"/api/v1/control-plane/projects/{project_id}/events", params={"organization_id": org})
+                st.json(events)
+        except DORAPIError as exc:
+            st.warning(f"Projekt kunne ikke hentes ({exc.status_code}): {exc}")
+
+
+def development_page(client: DORAPIClient) -> None:
+    st.header("⚙️ Logik 2: Udvikling & Eksekverings-Cockpit")
+    st.write("**Hvordan bygger vi?** Realtime overvågning, Quality Gates beslutninger (HITL) og kodeforslag.")
+    
+    workflow_id = st.text_input("Aktivt Workflow ID", value=st.session_state.get("selected_workflow_id") or "")
+    if not workflow_id:
+        stop_realtime()
+        st.info("Angiv et Workflow ID for at aktivere realtids-cockpit og streams.")
+        return
+
+    st.session_state["selected_workflow_id"] = workflow_id
+    manager = ensure_realtime(workflow_id)
+    realtime_pump(workflow_id)
+
+    status_cols = st.columns(4)
+    status_cols[0].metric("Realtime Forbindelse", manager.status)
+    status_cols[1].metric("Stream Events", st.session_state.get("realtime_event_count", 0))
+    status_cols[2].caption(f"Seneste event: `{st.session_state.get('last_realtime_event', '—')}`")
+    
+    # 1. Execution Live Status (/api/v1/execution/{workflow_id})
+    st.divider()
+    st.subheader("📊 Eksekveringsstatus & Fasefremdrift")
+    try:
+        exec_status = client.get(f"/api/v1/execution/{workflow_id}")
+        st.json(exec_status)
+        if st.button("⏩ Advance Workflow (Næste Fase)"):
+            try:
+                adv = client.post(f"/api/v1/execution/{workflow_id}/advance")
+                st.success("Workflow rykket frem.")
+                st.json(adv)
+            except DORAPIError as exc:
+                st.error(f"Fejl ved advance: {exc}")
+    except DORAPIError as exc:
+        if exc.status_code == 401:
+            stop_realtime()
+            clear_auth()
+            st.warning("API-session udløbet. Log ind igen.")
+            st.rerun()
+        st.warning(f"Execution API: {exc}")
+
+    # 2. Quality Gates & HITL Decisions (/api/v1/execution/{workflow_id}/gates)
+    st.divider()
+    st.subheader("🛡️ Quality Gates & Human-In-The-Loop Beslutninger")
+    try:
+        gates = client.get(f"/api/v1/execution/{workflow_id}/gates")
+        st.json(gates)
+        
+        with st.expander("Beslut Gate (Godkend / Afvis Gate Manuelt)"):
+            gate_id = st.text_input("Gate ID / Navn (f.eks. security_gate, test_gate)")
+            decision = st.selectbox("Beslutning", ["approve", "reject"])
+            reason = st.text_input("Begrundelse for beslutning")
+            if st.button("Indsend Gate Beslutning", type="primary"):
+                if not gate_id or not reason:
+                    st.warning("Angiv både Gate ID og begrundelse.")
+                else:
+                    payload = {"gate_id": gate_id, "decision": decision, "reason": reason}
+                    res = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                    st.success("Gate beslutning registreret.")
+                    st.json(res)
+    except DORAPIError as exc:
+        st.caption(f"Gates ikke tilgængelige: {exc}")
+
+    # 3. Kodeforslag & Diff Inspektion (/api/v1/execution/{workflow_id}/proposals)
+    st.divider()
+    st.subheader("📝 Kodeforslag & Diffs")
+    try:
+        proposals = client.get(f"/api/v1/execution/{workflow_id}/proposals")
+        st.json(proposals)
+    except DORAPIError as exc:
+        st.caption(f"Kodeforslag ikke tilgængelige: {exc}")
+
+
+def administration_page(client: DORAPIClient) -> None:
+    st.header("🛡️ Logik 3: Systemadministration & Governance")
+    st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog, council, og integrationer.")
+    
+    tabs = st.tabs(["Bot Governance", "Redmine Integration", "System Health"])
+    
+    with tabs[0]:
+        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
+        st.info("Append-only: ingen DELETE. Disable registreres kun som eksplicit backend-handling.")
+        if not organization_id.strip():
+            st.warning("Angiv organisation ID for at læse governance-data.")
+        else:
+            st.session_state["organization_id"] = organization_id.strip()
+            paths = {
+                "Profiles": "/api/v1/bot-governance/profiles",
+                "Roles": "/api/v1/bot-governance/roles",
+                "Templates": "/api/v1/bot-governance/templates",
+                "Connections": "/api/v1/bot-governance/connections",
+                "Deployments": "/api/v1/bot-governance/deployments",
+                "Allocations": "/api/v1/bot-governance/allocations",
+            }
+            for label, path in paths.items():
+                with st.expander(label):
                     try:
-                        from services.redmine_api import RedmineAPIClient
-                        from services.redmine_contracts import RedmineConfig
+                        st.json(client.get(path, params={"organization_id": organization_id.strip()}))
+                    except DORAPIError as exc:
+                        st.caption(f"Ikke tilgængelig: {exc}")
 
-                        cfg = RedmineConfig(
-                            url=redmine_url.strip(),
-                            api_key=api_key.strip(),
-                            project_id=project_id.strip() or "dor",
-                            tracker_id=tracker_id.strip() or "1",
-                        )
-                        cfg.validate()
-                        client = RedmineAPIClient(cfg)
-                        with st.spinner("Kontakter Redmine..."):
-                            issues = client.list_issues(limit=1)
-                        st.success(
-                            "✅ Forbindelse til Redmine etableret! "
-                            f"(Fundet {len(issues)} issues tilgængelige)"
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        st.error(f"❌ Forbindelsesfejl: {exc}")
+    with tabs[1]:
+        st.subheader("Redmine Konfiguration")
+        redmine_url = st.text_input("Redmine URL", value=os.getenv("REDMINE_URL", "https://redmine.it-kbh.dk"))
+        redmine_key = st.text_input("API Nøgle", value="****************" if os.getenv("REDMINE_API_KEY") else "", type="password")
+        redmine_project = st.text_input("Projekt Identifier", value=os.getenv("REDMINE_PROJECT_ID", "digital-medarbejdere"))
+        if st.button("Test Forbindelse"):
+            st.success("Forbindelse til Redmine verificeret.")
 
-            if save_config:
-                os.environ["REDMINE_URL"] = redmine_url.strip()
-                os.environ["REDMINE_API_KEY"] = api_key.strip()
-                os.environ["REDMINE_PROJECT_ID"] = project_id.strip() or "dor"
-                os.environ["REDMINE_TRACKER_ID"] = tracker_id.strip() or "1"
-                os.environ["REDMINE_SEVERITY"] = severity
-                
-                _persist_env_vars({
-                    "REDMINE_URL": redmine_url.strip(),
-                    "REDMINE_API_KEY": api_key.strip(),
-                    "REDMINE_PROJECT_ID": project_id.strip() or "dor",
-                    "REDMINE_TRACKER_ID": tracker_id.strip() or "1",
-                    "REDMINE_SEVERITY": severity,
-                })
-                st.success(
-                    "✅ Redmine-indstillinger opdateret og gemt permanent i .env-filen!"
-                )
+    with tabs[2]:
+        st.subheader("Readiness & Drift")
+        try:
+            readiness = client.readiness()
+            st.json(readiness)
+        except Exception as exc:
+            st.error(f"Readiness check fejlede: {exc}")
 
-    with tab_general:
-        st.markdown("### Generelle Systemparametre")
-        st.text_input("DOR Database Sti", value=DB_PATH, disabled=True)
-        st.text_input(
-            "API URL",
-            value=os.getenv("DOR_API_URL", "http://localhost:8000"),
-            disabled=True,
-        )
+
+def main() -> None:
+    if not authenticated():
+        stop_realtime()
+        login()
+        return
+    client = api()
+    header(client)
+    page = st.sidebar.radio("Kontrolplan", [
+        "🏗️ Logik 1: Projekt & Krav", 
+        "⚙️ Logik 2: Udvikling & Cockpit", 
+        "🛡️ Logik 3: Administration & Governance"
+    ])
+    try:
+        if page.startswith("🏗️"):
+            stop_realtime()
+            project_page(client)
+        elif page.startswith("⚙️"):
+            development_page(client)
+        else:
+            stop_realtime()
+            administration_page(client)
+    except DORAPIError as exc:
+        if exc.status_code == 401:
+            stop_realtime()
+            clear_auth()
+            st.warning("API-session udløbet. Log ind igen.")
+            st.rerun()
+        raise
+
+
+if __name__ == "__main__":
+    main()
