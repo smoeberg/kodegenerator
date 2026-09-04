@@ -32,8 +32,6 @@ def test_redmine_health_endpoint_returns_sanitized_service_result(monkeypatch) -
         "configured": True,
         "reachable": True,
         "verified": True,
-        "base_url": "https://redmine.example.test",
-        "project_id": "project-a",
         "checked_at": "2026-09-04T19:00:00Z",
         "error": None,
         "missing_configuration": [],
