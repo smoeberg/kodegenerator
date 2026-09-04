@@ -19,7 +19,10 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.execution",
 )
 
-CANONICAL_REALTIME_MODULES = ("api.endpoints.swarm_websocket",)
+CANONICAL_REALTIME_MODULES = (
+    "api.endpoints.swarm_websocket",
+    "api.endpoints.execution_realtime",
+)
 
 # These modules were removed because their ID-only lookups did not derive
 # tenant scope from the authenticated principal. The denylist is intentionally
