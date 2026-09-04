@@ -8,7 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
-from dashboard.control_plane_api import CREATE_EXAMPLES, resource_path
+from dashboard.governance_catalog import CREATE_EXAMPLES, resource_path
 
 
 def _org_params(organization_id: str) -> dict[str, str]:
