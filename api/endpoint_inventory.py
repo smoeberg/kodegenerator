@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from fastapi.routing import APIRoute
-from starlette.routing import BaseRoute
-from starlette.routing import WebSocketRoute
+from starlette.routing import BaseRoute, WebSocketRoute
 
 
 @dataclass(frozen=True, order=True)
@@ -29,29 +28,54 @@ class EndpointRecord:
     tags: tuple[str, ...]
 
 
+def _flatten_routes(routes: Iterable[BaseRoute]) -> list[BaseRoute]:
+    """Recursively extract all nested routes from FastAPI routers."""
+    flat: list[BaseRoute] = []
+    for route in routes:
+        if hasattr(route, "routes"):
+            flat.extend(_flatten_routes(route.routes))
+        elif hasattr(route, "original_router") and hasattr(route.original_router, "routes"):
+            flat.extend(_flatten_routes(route.original_router.routes))
+        else:
+            flat.append(route)
+    return flat
+
+
 def build_inventory(routes: Iterable[BaseRoute]) -> list[EndpointRecord]:
     """Build a deterministic inventory from the application's mounted routes."""
+    flat_routes = _flatten_routes(routes)
     records: list[EndpointRecord] = []
-    for route in routes:
+    seen_keys: set[tuple[str, str]] = set()
+
+    for route in flat_routes:
         if isinstance(route, APIRoute):
             for method in sorted(route.methods):
+                method_upper = method.upper()
+                key = (route.path, method_upper)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
                 records.append(
                     EndpointRecord(
                         path=route.path,
-                        method=method.upper(),
+                        method=method_upper,
                         name=route.name,
                         module=getattr(route.endpoint, "__module__", ""),
-                        tags=tuple(sorted(route.tags or ())),
+                        tags=tuple(sorted(getattr(route, "tags", None) or ())),
                     )
                 )
         elif isinstance(route, WebSocketRoute):
+            key = (route.path, "WEBSOCKET")
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             records.append(
                 EndpointRecord(
                     path=route.path,
                     method="WEBSOCKET",
                     name=route.name,
                     module=getattr(route.endpoint, "__module__", ""),
-                    tags=tuple(sorted(route.tags or ())),
+                    tags=tuple(sorted(getattr(route, "tags", None) or ())),
                 )
             )
     return sorted(records)

@@ -38,7 +38,7 @@ def test_inventory_is_machine_derived_and_unique() -> None:
 def test_committed_inventory_matches_mounted_routes() -> None:
     actual = [asdict(record) for record in build_inventory(app.routes)]
     committed = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))["endpoints"]
-    assert committed == actual
+    assert committed == [dict(item, tags=list(item["tags"])) for item in actual]
 
 
 def test_path_and_method_are_distinct_operations() -> None:

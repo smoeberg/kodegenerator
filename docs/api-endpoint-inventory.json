@@ -1,6 +1,651 @@
 {
+  "count": 72,
+  "endpoints": [
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_candidate_selection",
+      "path": "/api/v1/bot-evidence/candidate-selections/{selection_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_candidate",
+      "path": "/api/v1/bot-evidence/candidates/{candidate_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_evaluation",
+      "path": "/api/v1/bot-evidence/evaluations/{evaluation_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_integration_plan",
+      "path": "/api/v1/bot-evidence/integration-plans/{plan_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_integration_receipt",
+      "path": "/api/v1/bot-evidence/integration-receipts/{plan_fingerprint}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_observation",
+      "path": "/api/v1/bot-evidence/observations/{observation_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_rubric",
+      "path": "/api/v1/bot-evidence/rubrics/{rubric_id}/{version}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_snapshot",
+      "path": "/api/v1/bot-evidence/snapshots/{snapshot_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_evidence",
+      "name": "get_work_package",
+      "path": "/api/v1/bot-evidence/work-packages/{package_id}",
+      "tags": [
+        "bot-evidence"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_allocation",
+      "path": "/api/v1/bot-governance/allocations",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "get_allocation",
+      "path": "/api/v1/bot-governance/allocations/{allocation_id}",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "list_connections",
+      "path": "/api/v1/bot-governance/connections",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_connection",
+      "path": "/api/v1/bot-governance/connections",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "disable_connection",
+      "path": "/api/v1/bot-governance/connections/{connection_id}/disable",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "list_deployments",
+      "path": "/api/v1/bot-governance/deployments",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_deployment",
+      "path": "/api/v1/bot-governance/deployments",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "disable_deployment",
+      "path": "/api/v1/bot-governance/deployments/{deployment_id}/disable",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "list_profiles",
+      "path": "/api/v1/bot-governance/profiles",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_profile",
+      "path": "/api/v1/bot-governance/profiles",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "disable_profile",
+      "path": "/api/v1/bot-governance/profiles/{bot_profile_id}/disable",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "list_roles",
+      "path": "/api/v1/bot-governance/roles",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_role",
+      "path": "/api/v1/bot-governance/roles",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_governance",
+      "name": "list_templates",
+      "path": "/api/v1/bot-governance/templates",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_governance",
+      "name": "create_template",
+      "path": "/api/v1/bot-governance/templates",
+      "tags": [
+        "bot-governance"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.bot_selection",
+      "name": "create_selection",
+      "path": "/api/v1/bot-selections",
+      "tags": [
+        "bot-selections"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.bot_selection",
+      "name": "get_selection",
+      "path": "/api/v1/bot-selections/{run_id}",
+      "tags": [
+        "bot-selections"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.control_plane",
+      "name": "create_project",
+      "path": "/api/v1/control-plane/projects",
+      "tags": [
+        "control-plane-v1"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.control_plane",
+      "name": "get_project",
+      "path": "/api/v1/control-plane/projects/{project_id}",
+      "tags": [
+        "control-plane-v1"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.control_plane",
+      "name": "get_project_events",
+      "path": "/api/v1/control-plane/projects/{project_id}/events",
+      "tags": [
+        "control-plane-v1"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.control_plane",
+      "name": "launch_project",
+      "path": "/api/v1/control-plane/projects/{project_id}/launch",
+      "tags": [
+        "control-plane-v1"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.decisions",
+      "name": "create_decision",
+      "path": "/api/v1/decisions",
+      "tags": [
+        "decisions"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.decisions",
+      "name": "get_pending_decisions",
+      "path": "/api/v1/decisions/pending",
+      "tags": [
+        "decisions"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.decisions",
+      "name": "get_decision",
+      "path": "/api/v1/decisions/{decision_id}",
+      "tags": [
+        "decisions"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.decisions",
+      "name": "resolve_decision",
+      "path": "/api/v1/decisions/{decision_id}/resolve",
+      "tags": [
+        "decisions"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.execution_realtime",
+      "name": "browser_execution_sse",
+      "path": "/api/v1/execution/events/{workflow_id}",
+      "tags": [
+        "execution-realtime"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution",
+      "name": "start_execution",
+      "path": "/api/v1/execution/start",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "module": "api.endpoints.execution_realtime",
+      "name": "delete_stream_session",
+      "path": "/api/v1/execution/stream-session/{workflow_id}",
+      "tags": [
+        "execution-realtime"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution_realtime",
+      "name": "create_stream_session",
+      "path": "/api/v1/execution/stream-session/{workflow_id}",
+      "tags": [
+        "execution-realtime"
+      ]
+    },
+    {
+      "method": "WEBSOCKET",
+      "module": "api.endpoints.execution_realtime",
+      "name": "browser_execution_websocket",
+      "path": "/api/v1/execution/ws/{workflow_id}",
+      "tags": []
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.execution",
+      "name": "get_execution",
+      "path": "/api/v1/execution/{workflow_id}",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution",
+      "name": "advance_execution",
+      "path": "/api/v1/execution/{workflow_id}/advance",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.execution",
+      "name": "list_execution_gates",
+      "path": "/api/v1/execution/{workflow_id}/gates",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution",
+      "name": "decide_execution_gate",
+      "path": "/api/v1/execution/{workflow_id}/gates/decide",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.execution",
+      "name": "list_implementation_proposals",
+      "path": "/api/v1/execution/{workflow_id}/proposals",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution",
+      "name": "create_implementation_proposal",
+      "path": "/api/v1/execution/{workflow_id}/proposals",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.pipeline_gates",
+      "name": "approve_gate",
+      "path": "/api/v1/pipeline-gates/approve",
+      "tags": [
+        "pipeline_gates"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.pipeline_gates",
+      "name": "list_gates",
+      "path": "/api/v1/pipeline-gates/{workflow_id}",
+      "tags": [
+        "pipeline_gates"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.swarm_websocket",
+      "name": "swarm_sse",
+      "path": "/api/v1/swarm/events/{project_id}",
+      "tags": [
+        "swarm-realtime"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.swarm_operations",
+      "name": "ops_health",
+      "path": "/api/v1/swarm/ops/health",
+      "tags": [
+        "swarm-ops"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.swarm_operations",
+      "name": "ops_prometheus_metrics",
+      "path": "/api/v1/swarm/ops/metrics",
+      "tags": [
+        "swarm-ops"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.swarm_operations",
+      "name": "ops_snapshot",
+      "path": "/api/v1/swarm/ops/snapshot",
+      "tags": [
+        "swarm-ops"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "pause",
+      "path": "/api/v1/swarm/pause",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "start_project",
+      "path": "/api/v1/swarm/projects",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.swarm",
+      "name": "project_status",
+      "path": "/api/v1/swarm/projects/{project_id}",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "resume",
+      "path": "/api/v1/swarm/resume",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "claim_task",
+      "path": "/api/v1/swarm/workers/claim",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "complete_task",
+      "path": "/api/v1/swarm/workers/complete",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.swarm",
+      "name": "heartbeat",
+      "path": "/api/v1/swarm/workers/heartbeat",
+      "tags": [
+        "swarm"
+      ]
+    },
+    {
+      "method": "WEBSOCKET",
+      "module": "api.endpoints.swarm_websocket",
+      "name": "swarm_websocket",
+      "path": "/api/v1/swarm/ws/{project_id}",
+      "tags": []
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.auth",
+      "name": "login_for_access_token",
+      "path": "/auth/token",
+      "tags": [
+        "auth"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.main",
+      "name": "health",
+      "path": "/health",
+      "tags": [
+        "system"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.main",
+      "name": "health_ready",
+      "path": "/health/ready",
+      "tags": [
+        "system"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.implementation_agent",
+      "name": "execute_patch",
+      "path": "/implementation-agent/executions",
+      "tags": [
+        "implementation-agent"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.implementation_agent",
+      "name": "propose_patch",
+      "path": "/implementation-agent/proposals",
+      "tags": [
+        "implementation-agent"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.pipeline",
+      "name": "list_pipelines",
+      "path": "/pipeline/",
+      "tags": [
+        "pipeline"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.pipeline",
+      "name": "start_pipeline",
+      "path": "/pipeline/start",
+      "tags": [
+        "pipeline"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.pipeline",
+      "name": "get_pipeline_status",
+      "path": "/pipeline/{workflow_id}",
+      "tags": [
+        "pipeline"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.pipeline",
+      "name": "advance_pipeline",
+      "path": "/pipeline/{workflow_id}/advance",
+      "tags": [
+        "pipeline"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.main",
+      "name": "protected_route",
+      "path": "/protected",
+      "tags": [
+        "system"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.workflows",
+      "name": "create_workflow",
+      "path": "/workflows/",
+      "tags": [
+        "workflows"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.workflows",
+      "name": "get_workflow",
+      "path": "/workflows/{workflow_id}",
+      "tags": [
+        "workflows"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.workflows",
+      "name": "transition_workflow",
+      "path": "/workflows/{workflow_id}/transition",
+      "tags": [
+        "workflows"
+      ]
+    }
+  ],
   "schema_version": 1,
-  "source": "FastAPI app.routes",
-  "generated_by": "api.endpoint_inventory.write_inventory",
-  "endpoints": []
+  "source": "FastAPI app.routes"
 }
