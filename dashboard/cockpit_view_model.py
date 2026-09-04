@@ -173,3 +173,189 @@ def normalize_proposals(payload: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def build_evidence_trace(
+    execution_payload: Any,
+    gates_payload: Any,
+    proposals_payload: Any,
+) -> dict[str, Any]:
+    """Build a read-only evidence trace from canonical Execution API payloads.
+
+    The current backend has workflow-scoped requirements and phase-scoped tasks,
+    but no explicit requirement_id -> task_id provenance edge. The view model
+    therefore labels those joins as ``workflow_scope`` instead of inventing a
+    direct relationship. Gate -> human decision is explicit via ``gate_id``.
+    """
+    execution = execution_payload if isinstance(execution_payload, Mapping) else {}
+    context_value = execution.get("context")
+    context = context_value if isinstance(context_value, Mapping) else {}
+
+    requirements_spec = context.get("requirements")
+    requirements_value = (
+        requirements_spec.get("requirements")
+        if isinstance(requirements_spec, Mapping)
+        else []
+    )
+    requirements: list[dict[str, Any]] = []
+    if isinstance(requirements_value, list):
+        for item in requirements_value:
+            if not isinstance(item, Mapping):
+                continue
+            requirement_id = str(item.get("id") or "").strip()
+            if not requirement_id:
+                continue
+            criteria = item.get("acceptance_criteria")
+            if isinstance(criteria, list):
+                acceptance_criteria = [str(value) for value in criteria]
+            elif criteria is None:
+                acceptance_criteria = []
+            else:
+                acceptance_criteria = [str(criteria)]
+            requirements.append(
+                {
+                    "id": requirement_id,
+                    "description": str(item.get("description") or ""),
+                    "acceptance_criteria": acceptance_criteria,
+                    "linkage": "workflow_scope",
+                }
+            )
+
+    tasks_value = execution.get("tasks")
+    tasks: list[dict[str, Any]] = []
+    if isinstance(tasks_value, list):
+        for item in tasks_value:
+            if not isinstance(item, Mapping):
+                continue
+            task_id = str(item.get("id") or "").strip()
+            if not task_id:
+                continue
+            tasks.append(
+                {
+                    "id": task_id,
+                    "task_type": str(item.get("task_type") or "unknown"),
+                    "status": str(item.get("status") or "unknown"),
+                    "linkage": "workflow_scope",
+                }
+            )
+
+    agent_work = [
+        {
+            "task_id": task["id"],
+            "task_type": task["task_type"],
+            "status": task["status"],
+            "linkage": "task_id",
+            "evidence_level": "task_execution_only",
+        }
+        for task in tasks
+    ]
+
+    proposals = normalize_proposals(proposals_payload)
+    proposal_trace = [
+        {
+            "id": proposal["id"],
+            "title": proposal["title"],
+            "status": proposal["status"],
+            "created_by": proposal["created_by"],
+            "file_count": len(proposal["files"]),
+            "linkage": "workflow_scope",
+        }
+        for proposal in proposals
+    ]
+
+    test_tasks = [
+        task for task in tasks if "test" in task["task_type"].strip().lower()
+    ]
+    tests = {
+        "tasks": test_tasks,
+        "tests_generated": bool(context.get("tests_generated")),
+        "tests_passed": bool(context.get("tests_passed")),
+        "error": str(context.get("error")) if context.get("error") else None,
+        "linkage": "workflow_scope",
+    }
+
+    gates = normalize_gates(gates_payload)
+    gate_trace = [
+        {
+            "id": gate["id"],
+            "name": gate["name"],
+            "status": gate["status"],
+            "decision": gate["decision"],
+            "blocking": gate["blocking"],
+            "linkage": "workflow_scope",
+        }
+        for gate in gates
+    ]
+
+    history_value = context.get("gate_decision_history")
+    decisions: list[dict[str, Any]] = []
+    seen_gate_ids: set[str] = set()
+    if isinstance(history_value, list):
+        for item in history_value:
+            if not isinstance(item, Mapping):
+                continue
+            gate_id = str(item.get("gate_id") or "").strip()
+            decision = str(item.get("decision") or "").strip().lower()
+            if not gate_id or decision not in {"approved", "rejected"}:
+                continue
+            seen_gate_ids.add(gate_id)
+            decisions.append(
+                {
+                    "gate_id": gate_id,
+                    "decision": decision,
+                    "approver": str(item.get("approver") or "—"),
+                    "linkage": "gate_id",
+                    "source": "gate_decision_history",
+                }
+            )
+
+    for gate in gates:
+        if gate["decision"] is None or gate["id"] in seen_gate_ids:
+            continue
+        decisions.append(
+            {
+                "gate_id": gate["id"],
+                "decision": gate["decision"],
+                "approver": "—",
+                "linkage": "gate_id",
+                "source": "gate_state",
+            }
+        )
+
+    stages = [
+        {"key": "requirements", "label": "Requirements", "count": len(requirements)},
+        {"key": "tasks", "label": "Tasks", "count": len(tasks)},
+        {"key": "agent_work", "label": "Agent work", "count": len(agent_work)},
+        {"key": "proposals", "label": "Proposals", "count": len(proposal_trace)},
+        {"key": "tests", "label": "Tests", "count": len(test_tasks)},
+        {"key": "gates", "label": "Gates", "count": len(gate_trace)},
+        {"key": "decisions", "label": "Human decisions", "count": len(decisions)},
+    ]
+
+    return {
+        "workflow_id": str(execution.get("workflow_id") or "—"),
+        "current_state": str(
+            execution.get("current_state") or execution.get("state_name") or "unknown"
+        ),
+        "stages": stages,
+        "requirements": requirements,
+        "tasks": tasks,
+        "agent_work": agent_work,
+        "proposals": proposal_trace,
+        "tests": tests,
+        "gates": gate_trace,
+        "decisions": decisions,
+        "linkage": {
+            "requirement_to_task": "workflow_scope",
+            "task_to_agent_work": "task_id",
+            "agent_work_to_proposal": "workflow_scope",
+            "proposal_to_tests": "workflow_scope",
+            "tests_to_gate": "workflow_scope",
+            "gate_to_decision": "gate_id",
+        },
+        "gaps": [
+            "Execution API exposes no direct requirement_id -> task_id edge.",
+            "Execution API exposes no agent identity/result record per pipeline task.",
+            "Implementation proposals are workflow-scoped, not task-scoped.",
+        ],
+    }
