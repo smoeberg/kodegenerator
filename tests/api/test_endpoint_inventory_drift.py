@@ -68,4 +68,4 @@ def test_bot_evidence_contract_contains_nine_routes() -> None:
         "/api/v1/bot-evidence/candidate-selections/{selection_id}",
         "/api/v1/bot-evidence/integration-plans/{plan_id}",
         "/api/v1/bot-evidence/integration-receipts/{plan_fingerprint}",
-    }
+    ]
