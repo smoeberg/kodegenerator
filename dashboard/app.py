@@ -1,10 +1,4 @@
-"""DOR Control Plane GUI.
-
-Three business logics, one live FastAPI source of truth:
-1. Project initiation / requirements
-2. Development / execution control
-3. System administration / governance
-"""
+"""DOR Control Plane GUI: three business logics over the canonical FastAPI API."""
 from __future__ import annotations
 
 import streamlit as st
@@ -22,22 +16,21 @@ def api() -> DORAPIClient:
 
 def login() -> None:
     st.title("⚡ DOR Control Plane")
-    st.caption("Live Streamlit-klient til FastAPI på DOR_API_URL / http://api:8000")
+    st.caption("Live klient til FastAPI på DOR_API_URL (default: http://api:8000)")
     with st.form("login"):
         username = st.text_input("Brugernavn")
         password = st.text_input("Adgangskode", type="password")
         submit = st.form_submit_button("Log ind", type="primary")
     if submit:
         try:
-            token = DORAPIClient().login(username, password)
-            st.session_state["access_token"] = token
+            st.session_state["access_token"] = DORAPIClient().login(username, password)
             st.session_state["username"] = username
             st.rerun()
         except DORAPIError as exc:
             st.error(f"Login fejlede ({exc.status_code}): {exc}")
 
 
-def global_header(client: DORAPIClient) -> None:
+def header(client: DORAPIClient) -> None:
     cols = st.columns(5)
     try:
         client.health()
@@ -54,24 +47,31 @@ def global_header(client: DORAPIClient) -> None:
 
 def project_page(client: DORAPIClient) -> None:
     st.header("🏗️ Projekt & Krav")
-    st.write("**Hvad bygger vi?** Definér projektets immutable intent før udvikling.")
+    st.write("**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane og behandles som immutable.")
     with st.form("project_create"):
+        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "")
+        name = st.text_input("System-/projektnavn")
         goal = st.text_area("Mål", height=100)
         description = st.text_area("Beskrivelse", height=100)
         priority = st.selectbox("Prioritet", ["low", "medium", "high", "critical"], index=1)
         constraints = st.text_area("Begrænsninger", help="Én pr. linje")
         capabilities = st.text_area("Påkrævede capabilities", help="Én pr. linje")
-        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "")
-        create = st.form_submit_button("Opret immutable projekt", type="primary")
+        command_id = st.text_input("Command ID", help="Idempotency/audit correlation; generér et unikt ID pr. command.")
+        create = st.form_submit_button("Opret projekt", type="primary")
     if create:
-        if not goal.strip() or not organization_id.strip():
-            st.warning("Mål og organisation ID er påkrævet.")
+        if not organization_id.strip() or not name.strip() or not goal.strip() or not command_id.strip():
+            st.warning("Organisation ID, navn, mål og Command ID er påkrævet.")
             return
-        payload = {"organization_id": organization_id.strip(), "goal": goal.strip(), "description": description.strip(), "priority": priority, "constraints": [x.strip() for x in constraints.splitlines() if x.strip()], "required_capabilities": [x.strip() for x in capabilities.splitlines() if x.strip()]}
+        payload = {
+            "organization_id": organization_id.strip(), "name": name.strip(), "command_id": command_id.strip(),
+            "intent": {"goal": goal.strip(), "description": description.strip(), "priority": priority,
+                       "constraints": [x.strip() for x in constraints.splitlines() if x.strip()],
+                       "required_capabilities": [x.strip() for x in capabilities.splitlines() if x.strip()]},
+        }
         try:
             result = client.post("/api/v1/control-plane/projects", json=payload)
             st.session_state["organization_id"] = organization_id.strip()
-            st.session_state["selected_project_id"] = result.get("id") or result.get("project_id")
+            st.session_state["selected_project_id"] = result.get("project_id") or result.get("id")
             st.success("Projekt oprettet.")
             st.json(result)
         except DORAPIError as exc:
@@ -81,21 +81,26 @@ def project_page(client: DORAPIClient) -> None:
     if project_id:
         st.session_state["selected_project_id"] = project_id
         try:
-            st.subheader("Projekt")
-            st.json(client.get(f"/api/v1/control-plane/projects/{project_id}"))
+            project = client.get(f"/api/v1/control-plane/projects/{project_id}")
+            st.subheader("Projektstatus")
+            st.json(project)
+            st.subheader("Launch")
+            confirm = st.checkbox("Jeg bekræfter launch-operationen", key=f"confirm_launch_{project_id}")
+            launch_command_id = st.text_input("Launch Command ID", key=f"launch_command_{project_id}")
             if st.button("🚀 Request launch", type="primary"):
-                confirm = st.checkbox("Jeg bekræfter launch-operationen", key="confirm_launch")
-                if confirm:
-                    st.json(client.post(f"/api/v1/control-plane/projects/{project_id}/launch", json={}))
+                if not confirm or not launch_command_id.strip():
+                    st.warning("Bekræft operationen og angiv Launch Command ID.")
                 else:
-                    st.warning("Bekræft launch først.")
+                    st.json(client.post(f"/api/v1/control-plane/projects/{project_id}/launch", json={"command_id": launch_command_id.strip()}))
+            if st.button("↻ Hent project events"):
+                st.json(client.get(f"/api/v1/control-plane/projects/{project_id}/events"))
         except DORAPIError as exc:
             st.warning(f"Projekt kunne ikke hentes ({exc.status_code}): {exc}")
 
 
 def development_page(client: DORAPIClient) -> None:
     st.header("⚙️ Udvikling & Eksekvering")
-    st.write("**Hvordan bygger vi?** Workflow → pipeline → gates → beslutninger → execution.")
+    st.write("**Hvordan bygger vi?** Workflow → pipeline → gates → decisions → implementation.")
     project_id = st.text_input("Projekt ID", value=st.session_state.get("selected_project_id") or "")
     if project_id:
         st.session_state["selected_project_id"] = project_id
@@ -108,54 +113,43 @@ def development_page(client: DORAPIClient) -> None:
     if workflow_id:
         col1, col2 = st.columns(2)
         with col1:
-            try:
-                st.subheader("Workflow")
-                st.json(client.get(f"/workflows/{workflow_id}"))
-            except DORAPIError as exc:
-                st.warning(f"Workflow: {exc}")
+            try: st.json(client.get(f"/workflows/{workflow_id}"))
+            except DORAPIError as exc: st.warning(f"Workflow: {exc}")
         with col2:
-            try:
-                st.subheader("Pipeline")
-                st.json(client.get(f"/pipeline/{workflow_id}"))
-            except DORAPIError as exc:
-                st.warning(f"Pipeline: {exc}")
-    st.caption("Worker claim/heartbeat/complete er backend worker-protokol og eksponeres ikke som menneskeknapper.")
+            try: st.json(client.get(f"/pipeline/{workflow_id}"))
+            except DORAPIError as exc: st.warning(f"Pipeline: {exc}")
+    st.caption("Worker claim/heartbeat/complete er backend worker-protokol og vises ikke som menneskeknapper.")
 
 
 def administration_page(client: DORAPIClient) -> None:
     st.header("🛡️ Systemadministration")
-    st.write("**Hvordan styres DOR?** Governance af profiles, roles, templates, connections, deployments og allocations.")
-    st.info("Append-only: GUI'en viser ingen DELETE-operationer. Hvor API'et understøtter det, bruges disable.")
+    st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog og council-konfiguration.")
+    organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
+    st.info("Append-only: ingen DELETE. Disable vises kun som eksplicit backend-kommando, når relevant.")
+    if not organization_id.strip():
+        st.warning("Angiv organisation ID for at læse governance-data.")
+        return
+    st.session_state["organization_id"] = organization_id.strip()
     paths = {"Profiles": "/api/v1/bot-governance/profiles", "Roles": "/api/v1/bot-governance/roles", "Templates": "/api/v1/bot-governance/templates", "Connections": "/api/v1/bot-governance/connections", "Deployments": "/api/v1/bot-governance/deployments", "Allocations": "/api/v1/bot-governance/allocations"}
     for label, path in paths.items():
         with st.expander(label):
-            try:
-                st.json(client.get(path))
-            except DORAPIError as exc:
-                st.caption(f"Ikke tilgængelig: {exc}")
+            try: st.json(client.get(path, params={"organization_id": organization_id.strip()}))
+            except DORAPIError as exc: st.caption(f"Ikke tilgængelig: {exc}")
 
 
 def main() -> None:
     if not authenticated():
-        login()
-        return
-    client = api()
-    global_header(client)
+        login(); return
+    client = api(); header(client)
     page = st.sidebar.radio("Kontrolplan", ["🏗️ Projekt & Krav", "⚙️ Udvikling & Eksekvering", "🛡️ Systemadministration"])
     try:
-        if page.startswith("🏗️"):
-            project_page(client)
-        elif page.startswith("⚙️"):
-            development_page(client)
-        else:
-            administration_page(client)
+        if page.startswith("🏗️"): project_page(client)
+        elif page.startswith("⚙️"): development_page(client)
+        else: administration_page(client)
     except DORAPIError as exc:
         if exc.status_code == 401:
-            clear_auth()
-            st.warning("API-session udløbet. Log ind igen.")
-            st.rerun()
+            clear_auth(); st.warning("API-session udløbet. Log ind igen."); st.rerun()
         raise
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
