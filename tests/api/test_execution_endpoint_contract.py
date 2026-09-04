@@ -11,20 +11,20 @@ from api.endpoints.execution import (
 
 
 def test_execution_router_exposes_canonical_http_and_realtime_contract() -> None:
-    routes = {(route.path, getattr(route, "methods", None)) for route in router.routes}
+    routes = {(route.path, frozenset(getattr(route, "methods", ()) or ())) for route in router.routes}
 
-    assert ("/api/v1/execution/{workflow_id}", {"GET"}) in routes
-    assert ("/api/v1/execution/start", {"POST"}) in routes
-    assert ("/api/v1/execution/{workflow_id}/advance", {"POST"}) in routes
-    assert ("/api/v1/execution/{workflow_id}/gates", {"GET"}) in routes
-    assert ("/api/v1/execution/{workflow_id}/gates/decide", {"POST"}) in routes
-    assert ("/api/v1/execution/{workflow_id}/proposals", {"GET"}) in routes
-    assert ("/api/v1/execution/{workflow_id}/proposals", {"POST"}) in routes
+    assert ("/api/v1/execution/{workflow_id}", frozenset({"GET"})) in routes
+    assert ("/api/v1/execution/start", frozenset({"POST"})) in routes
+    assert ("/api/v1/execution/{workflow_id}/advance", frozenset({"POST"})) in routes
+    assert ("/api/v1/execution/{workflow_id}/gates", frozenset({"GET"})) in routes
+    assert ("/api/v1/execution/{workflow_id}/gates/decide", frozenset({"POST"})) in routes
+    assert ("/api/v1/execution/{workflow_id}/proposals", frozenset({"GET"})) in routes
+    assert ("/api/v1/execution/{workflow_id}/proposals", frozenset({"POST"})) in routes
     assert any(
         route.path == "/api/v1/execution/ws/{workflow_id}"
         for route in router.routes
     )
-    assert ("/api/v1/execution/events/{workflow_id}", {"GET"}) in routes
+    assert ("/api/v1/execution/events/{workflow_id}", frozenset({"GET"})) in routes
 
 
 def test_execution_request_models_are_fail_closed_on_extra_fields() -> None:
