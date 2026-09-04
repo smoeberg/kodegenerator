@@ -1,6 +1,7 @@
 import pytest
 
 from dashboard.cockpit_view_model import (
+    build_evidence_trace,
     build_execution_summary,
     gate_decision_payload,
     interpret_advance_error,
@@ -168,3 +169,133 @@ def test_normalize_proposals_prefers_patch_or_diff_for_inspection():
     assert proposals[0]["files"][0]["diff"] == "@@ -1 +1 @@"
     assert proposals[0]["files"][1]["display_name"] == "tests/test_example.py"
     assert proposals[0]["files"][1]["diff"] == "+assert True"
+
+
+def test_evidence_trace_uses_canonical_payloads_without_inventing_direct_links():
+    trace = build_evidence_trace(
+        {
+            "workflow_id": "wf-trace-1",
+            "current_state": "TESTS_PASSED",
+            "tasks": [
+                {
+                    "id": "task-code",
+                    "task_type": "generate_code",
+                    "status": "SUCCEEDED",
+                },
+                {
+                    "id": "task-tests",
+                    "task_type": "run_tests",
+                    "status": "SUCCEEDED",
+                },
+            ],
+            "context": {
+                "requirements": {
+                    "requirements": [
+                        {
+                            "id": "REQ-1",
+                            "description": "Expose governed endpoint",
+                            "acceptance_criteria": ["Returns 200", "Tenant scoped"],
+                        }
+                    ]
+                },
+                "tests_generated": True,
+                "tests_passed": True,
+                "gate_decision_history": [
+                    {
+                        "gate_id": "gate_requirements_approval",
+                        "approver": "alice",
+                        "decision": "approved",
+                    }
+                ],
+            },
+        },
+        [
+            {
+                "id": "gate_requirements_approval",
+                "name": "Requirements Approval",
+                "description": "Human approves requirements",
+                "resolved": True,
+                "decision": "approved",
+                "blocking": False,
+            }
+        ],
+        [
+            {
+                "id": "proposal-1",
+                "title": "Implement endpoint",
+                "summary": "Adds endpoint",
+                "status": "proposed",
+                "created_by": "agent",
+                "created_at": "2026-09-04T10:00:00Z",
+                "files": [{"path": "api/example.py", "diff": "+route"}],
+            }
+        ],
+    )
+
+    assert trace["workflow_id"] == "wf-trace-1"
+    assert trace["requirements"] == [
+        {
+            "id": "REQ-1",
+            "description": "Expose governed endpoint",
+            "acceptance_criteria": ["Returns 200", "Tenant scoped"],
+            "linkage": "workflow_scope",
+        }
+    ]
+    assert trace["tasks"][0]["linkage"] == "workflow_scope"
+    assert trace["agent_work"][0]["task_id"] == "task-code"
+    assert trace["agent_work"][0]["evidence_level"] == "task_execution_only"
+    assert trace["proposals"][0]["file_count"] == 1
+    assert trace["tests"]["tests_generated"] is True
+    assert trace["tests"]["tests_passed"] is True
+    assert trace["tests"]["tasks"][0]["id"] == "task-tests"
+    assert trace["decisions"] == [
+        {
+            "gate_id": "gate_requirements_approval",
+            "decision": "approved",
+            "approver": "alice",
+            "linkage": "gate_id",
+            "source": "gate_decision_history",
+        }
+    ]
+    assert trace["linkage"]["requirement_to_task"] == "workflow_scope"
+    assert trace["linkage"]["gate_to_decision"] == "gate_id"
+    assert "requirement_id -> task_id" in trace["gaps"][0]
+
+
+def test_evidence_trace_falls_back_to_gate_state_for_legacy_decision():
+    trace = build_evidence_trace(
+        {"workflow_id": "wf-legacy", "context": {}, "tasks": []},
+        [
+            {
+                "id": "gate-release",
+                "name": "Release",
+                "resolved": True,
+                "decision": "rejected",
+                "blocking": True,
+            }
+        ],
+        [],
+    )
+
+    assert trace["decisions"] == [
+        {
+            "gate_id": "gate-release",
+            "decision": "rejected",
+            "approver": "—",
+            "linkage": "gate_id",
+            "source": "gate_state",
+        }
+    ]
+    assert trace["gates"][0]["blocking"] is True
+
+
+def test_evidence_trace_is_stable_for_missing_or_malformed_payloads():
+    trace = build_evidence_trace(None, {"not": "a list"}, "bad proposals")
+
+    assert trace["workflow_id"] == "—"
+    assert trace["requirements"] == []
+    assert trace["tasks"] == []
+    assert trace["proposals"] == []
+    assert trace["gates"] == []
+    assert trace["decisions"] == []
+    assert all(stage["count"] == 0 for stage in trace["stages"])

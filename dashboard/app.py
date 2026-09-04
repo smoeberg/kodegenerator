@@ -14,6 +14,7 @@ from dashboard.cockpit_view_model import (
     normalize_gates,
     normalize_proposals,
 )
+from dashboard.evidence_trace import render_evidence_trace
 from dashboard.realtime import WorkflowRealtime
 from dashboard.state import authenticated, clear_auth, init_state
 
@@ -374,6 +375,8 @@ def development_page(client: DORAPIClient) -> None:
                     st.json(proposal["raw"])
     except DORAPIError as exc:
         st.caption(f"Kodeforslag ikke tilgængelige: {exc}")
+
+    render_evidence_trace(client, workflow_id)
 
 
 def administration_page(client: DORAPIClient) -> None:
