@@ -1,5 +1,5 @@
 {
-  "count": 72,
+  "count": 73,
   "endpoints": [
     {
       "method": "GET",
@@ -402,6 +402,15 @@
       "path": "/api/v1/execution/{workflow_id}/proposals",
       "tags": [
         "execution"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.integrations",
+      "name": "redmine_health",
+      "path": "/api/v1/integrations/redmine/health",
+      "tags": [
+        "integrations"
       ]
     },
     {
