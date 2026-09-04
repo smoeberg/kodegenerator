@@ -4,27 +4,54 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 
-from dashboard.catalog import STANDARD_CAPABILITIES, STANDARD_ROLES
-from dashboard.security import (
-    DashboardConfigurationError,
-    DashboardSecretError,
-    admin_password,
-    decrypt_secret,
-    encrypt_secret,
-)
+from dashboard.governance_catalog import CREATE_EXAMPLES, RESOURCE_PATHS, resource_path
 from monitoring import tracer as tracer_module
 from runtime.model_registry import Model, ModelProvider, ModelRegistry
+from services.runtime_configuration import (
+    RuntimeConfigurationError,
+    validate_runtime_configuration,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _dashboard_environment() -> dict[str, str]:
+    """Canonical hardened wiring for the dashboard runtime role."""
+    database = "postgresql+psycopg://dor:secret@postgres:5432/dor"
+    return {
+        "ARTIFACT_BUCKET": "dor-artifacts",
+        "ARTIFACT_STORE_URL": "http://minio:9000",
+        "AWS_ACCESS_KEY_ID": "minio-user",
+        "AWS_SECRET_ACCESS_KEY": "s" * 32,
+        "DATABASE_URL": database,
+        "DOR_ADMIN_ORGANIZATION_ID": "org-1",
+        "DOR_ADMIN_PASSWORD": "a" * 32,
+        "DOR_ADMIN_USERNAME": "admin",
+        "DOR_API_BASE": "http://api:8000",
+        "DOR_AUTHORITY_SIGNING_KEY": "h" * 32,
+        "DOR_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+        "DOR_ENV": "demo",
+        "DOR_IDENTITY_DATABASE_URL": database,
+        "DOR_JWT_ACTIVE_KEY_ID": "key-1",
+        "DOR_JWT_SIGNING_KEYS": json.dumps({"key-1": "j" * 32}),
+        "DOR_PIPELINE_DATABASE_URL": database,
+        "DOR_PIPELINE_STATE_ORGANIZATION_ID": "org-1",
+        "DOR_QUEUE_BACKEND": "database",
+        "DOR_RUNTIME_ROLE": "dashboard",
+        "DOR_WORKER_CAPABILITIES": "pipeline.code,pipeline.tests",
+        "DOR_WORKER_CREDENTIAL": "w" * 32,
+        "DOR_WORKER_ORGANIZATION_ID": "org-1",
+        "DOR_WORKER_SERVICE_ID": "factory-worker",
+    }
 
 
 def test_root_entrypoint_reexports_canonical_api(
@@ -54,44 +81,42 @@ def test_compose_binds_fail_closed_runtime_configuration() -> None:
     assert "OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317" in compose
 
 
-def test_dashboard_configuration_requires_explicit_secrets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("DOR_ADMIN_PASSWORD", raising=False)
-    monkeypatch.delenv("DOR_ENCRYPTION_KEY", raising=False)
+def test_dashboard_configuration_requires_explicit_secrets() -> None:
+    environment = _dashboard_environment()
+    del environment["DOR_ADMIN_PASSWORD"]
 
-    with pytest.raises(DashboardConfigurationError, match="DOR_ADMIN_PASSWORD"):
-        admin_password()
-    with pytest.raises(DashboardConfigurationError, match="DOR_ENCRYPTION_KEY"):
-        encrypt_secret("provider-secret")
+    with pytest.raises(RuntimeConfigurationError, match="DOR_ADMIN_PASSWORD"):
+        validate_runtime_configuration(environment)
 
+    environment = _dashboard_environment()
+    del environment["DOR_ENCRYPTION_KEY"]
 
-def test_dashboard_secret_encryption_fails_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DOR_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-
-    encrypted = encrypt_secret("provider-secret")
-    assert encrypted != "provider-secret"
-    assert decrypt_secret(encrypted) == "provider-secret"
-
-    with pytest.raises(DashboardSecretError, match="integrity"):
-        decrypt_secret(encrypted[:-2] + "aa")
+    with pytest.raises(RuntimeConfigurationError, match="DOR_ENCRYPTION_KEY"):
+        validate_runtime_configuration(environment)
 
 
-def test_dashboard_role_catalog_is_internally_complete() -> None:
-    capability_ids = {capability.id for capability in STANDARD_CAPABILITIES.values()}
+def test_dashboard_secret_key_validation_fails_closed() -> None:
+    environment = _dashboard_environment()
+    environment["DOR_ENCRYPTION_KEY"] = "not-fernet"
 
-    assert STANDARD_ROLES
-    assert capability_ids
-    assert all(
-        set(role.capabilities) <= capability_ids for role in STANDARD_ROLES.values()
-    )
-    mapping_proxy_type = type(MappingProxyType({}))
-    assert all(
-        isinstance(role.authority, mapping_proxy_type)
-        for role in STANDARD_ROLES.values()
-    )
+    with pytest.raises(RuntimeConfigurationError, match="valid Fernet key"):
+        validate_runtime_configuration(environment)
+
+
+def test_legacy_dashboard_surfaces_are_not_restored() -> None:
+    assert importlib.util.find_spec("dashboard.catalog") is None
+    assert importlib.util.find_spec("dashboard.security") is None
+
+
+def test_dashboard_governance_catalog_is_internally_complete() -> None:
+    assert RESOURCE_PATHS
+    assert set(RESOURCE_PATHS) == set(CREATE_EXAMPLES)
+    for resource, path in RESOURCE_PATHS.items():
+        assert path.startswith("/api/v1/bot-governance/")
+        assert resource_path(resource) == path
+
+    with pytest.raises(ValueError, match="Unsupported"):
+        resource_path("imaginary")
 
 
 def test_model_registry_is_importable_and_keeps_credentials_out_of_metadata() -> None:

@@ -1,87 +1,132 @@
-# 🎛️ DOR Controller GUI — Decision Cockpit
+# DOR Control Plane GUI
 
-Interaktiv Control Plane GUI (Streamlit) der gør det menneskelige team til **Controllers**.
+`dashboard/app.py` er den kanoniske Streamlit-GUI for Digital Organization Runtime.
+GUI'en er en tynd, authenticated klient til `api/main.py`: domæneregler,
+authority, tenant-scope og state transitions ligger i backend.
 
-## Funktioner
+## Én kanonisk surface
 
-| Sektion | Beskrivelse |
-|---------|-------------|
-| **Multi-bot Control Plane** | Live, tenant-scoped administration af provider-forbindelser, deployments, botprofiler, council-roller/templates, allokeringspools og frozen selections |
-| **Evidence Inspector** | Read-only opslag af evaluations, performance-observationer/snapshots, work packages, candidates, selections og integrationsreceipts |
-| **System Generator & Workflow** | End-to-end wizard: Krav → AI-råd → HITL-arkitektur → WBS → Kode/verifikation (`workflow_cockpit.py`) |
-| **Project & Workspace Overview** | Projekter, fremdrift i %, aktive faser og task-grafer |
-| **Decision Cockpit** | Udestående `HUMAN_REQUIRED`-beslutninger med alternativer, risikoscore, AI-rådets stemmer og 1-klik handlinger |
-| **Agent Council Feed** | Gennemsigtig bot-dialog (Arkitekt · Security · PM · Impl) |
-| **Why? Traceability Inspector** | Årsagskæde: Krav → ADR → Task → Patch → Test |
-| **Admin (legacy)** | Opret/se AI-medarbejdere (katalog — ingen runtime-authority) |
+Start GUI'en fra repo-roden:
 
-## Datakilder
-
-- **Mock fixtures** (`dashboard/fixtures.py`) — kun de ældre demo-cockpits
-- **Live API** — Multi-bot Control Plane kræver `DOR_API_BASE`, `DOR_API_TOKEN` og `DOR_ORG_ID` og fejler lukket; mutationer falder aldrig tilbage til mock-data
-
-## Quickstart
-
-1. Installer afhængigheder (fra repo-rod):
-
-   ```bash
-   pip install -r requirements.txt
-   # eller minimum:
-   pip install streamlit pandas cryptography
-   ```
-
-2. Sæt obligatoriske secrets:
-
-   ```bash
-   export DOR_ADMIN_PASSWORD='replace-with-a-strong-password'
-   export DOR_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-   ```
-
-3. (Valgfrit) Live API:
-
-   ```bash
-   export DOR_API_BASE=http://localhost:8000
-   export DOR_API_TOKEN='...'
-   export DOR_ORG_ID=org-eira-demo
-   ```
-
-4. Start dashboardet:
-
-   ```bash
-   streamlit run dashboard/app.py
-   ```
-
-Åbn den viste URL (typisk http://localhost:8501), log ind med `DOR_ADMIN_PASSWORD`, og brug sidebaren til at skifte mellem sektioner og datakilde (Mock / Live).
-
-## Decision Cockpit — handlinger
-
-For hver `HUMAN_REQUIRED`-beslutning:
-
-| Knap | Effekt (session) |
-|------|------------------|
-| **Godkend anbefaling (A)** | Registrerer `APPROVE_RECOMMENDATION` |
-| **Vælg alternativ (B/C)** | Registrerer `CHOOSE_ALTERNATIVE` |
-| **Kræv mere undersøgelse** | Registrerer `REQUEST_MORE_INVESTIGATION` |
-| **Eget valg** | Registrerer `CUSTOM_CHOICE` med fri tekst |
-
-I denne fase lagres beslutninger i `st.session_state` (demo). Production binder dem til Control Plane command API under authority + audit.
-
-## Filer
-
+```bash
+streamlit run dashboard/app.py
 ```
+
+GUI'en bruger kun `dashboard.api_client.DORAPIClient` som HTTP-transport. Login
+henter et bearer-token fra backend, og samme token/base URL bruges på tværs af
+projekt-, execution-, governance- og integrationsviews.
+
+Der er ingen mock fallback og ingen separat dashboard-tokenkonfiguration.
+Hvis backend ikke kan verificere en handling eller integration, viser GUI'en
+ikke en lokal successtatus.
+
+## De tre top-level logikker
+
+### 1. Projekt & Krav
+
+- opret tenant-scoped projekter/intents gennem Control Plane API
+- hent eksisterende projektstatus
+- request launch med eksplicit command ID og expected fingerprint
+- læs projekt-events
+
+### 2. Udvikling & Decision Cockpit
+
+- live execution-status og realtime events
+- task/fase-overblik
+- fail-closed manual advance
+- Quality Gates med `approved` / `rejected` beslutninger gennem Execution API
+- implementation proposals og diffs
+- read-only Why / Evidence Trace
+
+Backend er eneste authority for workflow-progression og gate-state. En rejected
+gate forbliver blocking, indtil backend tilbyder en eksplicit rework/retry-
+transition.
+
+### 3. Administration & Governance
+
+Bot Governance-fanen er den integrerede Multi-bot Control Plane og bruger samme
+authenticated `DORAPIClient` som resten af GUI'en. Den understøtter:
+
+- provider-forbindelser
+- deployments
+- botprofiler
+- roller
+- council templates
+- allokeringspools
+- frozen bot selections
+- read-only durable bot-evidence
+
+Alle kald scopes med den valgte `organization_id`. Governance er append-only;
+deaktivering sker kun gennem eksplicitte backend-commands.
+
+Administration indeholder også:
+
+- **Redmine Integration** — server-side, fail-closed health verification via
+  `GET /api/v1/integrations/redmine/health`
+- **System Health** — backend readiness/drift
+
+Redmine API-key håndteres kun af API-processen og sendes aldrig til Streamlit-
+klienten.
+
+## Konfiguration
+
+Dashboard-transport:
+
+```bash
+export DOR_API_URL=http://localhost:8000
+```
+
+Default i container-topologien er `http://api:8000`.
+
+Brugercredentials valideres af backend via `/auth/token`; GUI'en gemmer kun det
+returnerede access token i Streamlit session-state.
+
+Redmine konfigureres server-side på API-servicen:
+
+```bash
+export REDMINE_URL=https://redmine.example.com
+export REDMINE_API_KEY=...
+export REDMINE_PROJECT_ID=my-project
+```
+
+## Centrale filer
+
+```text
 dashboard/
-  app.py               # Hoved-GUI (Controller Cockpit)
-  workflow_cockpit.py  # System Generator wizard (5 trin)
-  fixtures.py          # Mock projekter, beslutninger, council, traces
-  catalog.py           # Præsentationskatalog (roller/capabilities — ingen authority)
-  security.py          # Fail-closed admin password + Fernet secrets
-  README.md
+  app.py                       # eneste top-level Streamlit entrypoint
+  api_client.py                # eneste dashboard HTTP-transport
+  state.py                     # authenticated session-state
+  realtime.py                  # workflow realtime transport
+  cockpit_view_model.py        # execution/gate/evidence normalization
+  evidence_trace.py            # read-only Why / Evidence Trace
+  multi_bot_control_plane.py   # live tenant-scoped bot governance UI
+  governance_catalog.py        # API paths + schema-validerede eksempelpayloads
+  integration_view_model.py    # integrationsstatus normalization
+  redmine_integration.py       # fail-closed Redmine status UI
 ```
 
-## Sikkerhed
+## Retired demo/legacy surfaces
 
-- Dashboard kræver `DOR_ADMIN_PASSWORD` (fail-closed).
-- API-nøgler i legacy-admin krypteres med `DOR_ENCRYPTION_KEY` (Fernet).
-- Mock-data giver **ingen** runtime-authority; live-kald kræver gyldig token og org-scope.
-- Multi-bot-siden sender aldrig provider-secrets. Forbindelser oprettes med en `secret_reference`, som serveren resolver gennem den godkendte secret-backend.
-- Roller vælges af Controlleren og bindes til pools af versionerede botprofiler. Systemet vælger kun inden for disse pools; der findes ingen hardcoded brand→rolle-binding.
+Følgende gamle dashboard-paths er bevidst fjernet og må ikke genindføres som
+parallelle production-surfaces:
+
+- `dashboard/decision_cockpit.py` — hardcodede beslutninger/lokale success states
+- `dashboard/swarm_monitor.py` — random session-state mock fleet
+- `dashboard/workflow_cockpit.py` — mock wizard/council/WBS/test evidence
+- `dashboard/fixtures.py` — demo-data
+- `dashboard/index.html` — statiske ONLINE/READY/ENFORCING badges
+- `dashboard/control_plane_api.py` — parallel HTTP-klient/token-flow
+- `dashboard/catalog.py` — legacy presentation-only role catalog
+- `dashboard/security.py` — legacy lokal password/secret-store
+
+`tests/dashboard/test_dashboard_surface.py` låser denne boundary.
+
+## Sikkerheds- og authority-principper
+
+- GUI'en opfinder aldrig backend-success.
+- Secrets lagres ikke i browser/Streamlit-inputs.
+- Tenant-scope sendes eksplicit til governance-kald.
+- Gate-decisions og workflow-advance afgøres af backend.
+- Evidence views er read-only og må ikke fabricere direkte provenance-links,
+  som backend ikke eksponerer.
+- Der findes én production GUI entrypoint og én dashboard HTTP-klient.

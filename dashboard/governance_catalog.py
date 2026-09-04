@@ -1,77 +1,12 @@
-"""Small, strict HTTP client for the governed multi-bot control plane."""
+"""Presentation-side governance paths and example payloads.
+
+This module contains no HTTP transport and grants no runtime authority. The
+canonical dashboard transport is :class:`dashboard.api_client.DORAPIClient`.
+"""
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-
-
-class ControlPlaneAPIError(RuntimeError):
-    """Raised when the control plane cannot satisfy a dashboard request."""
-
-
-@dataclass(frozen=True)
-class ControlPlaneAPI:
-    base_url: str
-    token: str
-    organization_id: str
-    timeout_seconds: float = 10.0
-
-    def __post_init__(self) -> None:
-        if not self.base_url.startswith(("http://", "https://")):
-            raise ValueError("DOR API base URL must use HTTP or HTTPS")
-        if not self.token.strip():
-            raise ValueError("A bearer token is required for the governed dashboard")
-        if not self.organization_id.strip():
-            raise ValueError("An organization ID is required")
-
-    def get(self, path: str) -> Any:
-        return self._request("GET", path)
-
-    def post(self, path: str, payload: dict[str, Any]) -> Any:
-        return self._request("POST", path, payload)
-
-    def _request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any:
-        separator = "&" if "?" in path else "?"
-        url = (
-            f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
-            f"{separator}{urlencode({'organization_id': self.organization_id})}"
-        )
-        body = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = Request(
-            url,
-            data=body,
-            method=method,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self.token}",
-                **({"Content-Type": "application/json"} if body else {}),
-            },
-        )
-        try:
-            # The constructor rejects every scheme except HTTP(S) before this call.
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310
-                raw = response.read()
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise ControlPlaneAPIError(
-                f"Control Plane returned HTTP {exc.code}: {detail}"
-            ) from exc
-        except (URLError, TimeoutError) as exc:
-            raise ControlPlaneAPIError(f"Control Plane is unavailable: {exc}") from exc
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ControlPlaneAPIError("Control Plane returned invalid JSON") from exc
-
 
 RESOURCE_PATHS = {
     "connections": "/api/v1/bot-governance/connections",
