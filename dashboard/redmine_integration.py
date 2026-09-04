@@ -38,9 +38,6 @@ def render_redmine_integration(client: DORAPIClient) -> None:
     else:
         st.error(status["message"])
 
-    st.caption(
-        f"Base URL: `{status['base_url']}` · Projekt: `{status['project_id']}` · "
-        f"Kontrolleret: `{status['checked_at']}`"
-    )
+    st.caption(f"Kontrolleret af backend: `{status['checked_at']}`")
     if status["error"]:
         st.caption(f"Backend-status: `{status['error']}`")
