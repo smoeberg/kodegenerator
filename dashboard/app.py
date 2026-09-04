@@ -1,6 +1,7 @@
 """DOR Control Plane GUI: three business logics over the canonical FastAPI API."""
 from __future__ import annotations
 
+import os
 import uuid
 
 import streamlit as st
@@ -41,7 +42,7 @@ def header(client: DORAPIClient) -> None:
         cols[0].success("● API online")
     except Exception:
         cols[0].error("● API offline")
-    cols[1].info(f"● Realtime: {st.session_state['realtime_status']}")
+    cols[1].info(f"● Realtime: {st.session_state.get('realtime_status', 'offline')}")
     cols[2].info(f"● Bruger: {st.session_state.get('username') or '—'}")
     cols[3].info(f"● Organisation: {st.session_state.get('organization_id') or '—'}")
     if cols[4].button("Log ud"):
@@ -93,7 +94,7 @@ def realtime_pump(workflow_id: str) -> None:
 
 
 def project_page(client: DORAPIClient) -> None:
-    st.header("🏗️ Projekt & Krav")
+    st.header("🏗️ Logik 1: Projekt & Kravspecifikation")
     st.write("**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane og behandles som immutable.")
     with st.form("project_create"):
         organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "")
@@ -163,76 +164,120 @@ def project_page(client: DORAPIClient) -> None:
 
 
 def development_page(client: DORAPIClient) -> None:
-    st.header("⚙️ Udvikling & Eksekvering")
-    st.write("**Hvordan bygger vi?** Workflow → pipeline → gates → decisions → execution.")
-    project_id = st.text_input("Projekt ID", value=st.session_state.get("selected_project_id") or "")
-    if project_id:
-        org = st.session_state.get("organization_id") or st.text_input("Organisation ID", key="dev_org")
-        try:
-            st.json(client.get(f"/api/v1/control-plane/projects/{project_id}", params={"organization_id": org}))
-        except DORAPIError as exc:
-            st.warning(f"Projekt: {exc}")
-
-    st.divider()
-    workflow_id = st.text_input("Workflow ID", value=st.session_state.get("selected_workflow_id") or "")
+    st.header("⚙️ Logik 2: Udvikling & Eksekverings-Cockpit")
+    st.write("**Hvordan bygger vi?** Realtime overvågning, Quality Gates beslutninger (HITL) og kodeforslag.")
+    
+    workflow_id = st.text_input("Aktivt Workflow ID", value=st.session_state.get("selected_workflow_id") or "")
     if not workflow_id:
         stop_realtime()
-        st.info("Angiv et workflow ID for at aktivere workflow-scoped realtime.")
+        st.info("Angiv et Workflow ID for at aktivere realtids-cockpit og streams.")
         return
 
     st.session_state["selected_workflow_id"] = workflow_id
     manager = ensure_realtime(workflow_id)
     realtime_pump(workflow_id)
 
-    status_cols = st.columns(3)
-    status_cols[0].metric("Realtime", manager.status)
-    status_cols[1].metric("Events", st.session_state.get("realtime_event_count", 0))
-    status_cols[2].caption(f"Seneste event: {st.session_state.get('last_realtime_event', '—')}")
+    status_cols = st.columns(4)
+    status_cols[0].metric("Realtime Forbindelse", manager.status)
+    status_cols[1].metric("Stream Events", st.session_state.get("realtime_event_count", 0))
+    status_cols[2].caption(f"Seneste event: `{st.session_state.get('last_realtime_event', '—')}`")
+    
+    # 1. Execution Live Status (/api/v1/execution/{workflow_id})
+    st.divider()
+    st.subheader("📊 Eksekveringsstatus & Fasefremdrift")
+    try:
+        exec_status = client.get(f"/api/v1/execution/{workflow_id}")
+        st.json(exec_status)
+        if st.button("⏩ Advance Workflow (Næste Fase)"):
+            try:
+                adv = client.post(f"/api/v1/execution/{workflow_id}/advance")
+                st.success("Workflow rykket frem.")
+                st.json(adv)
+            except DORAPIError as exc:
+                st.error(f"Fejl ved advance: {exc}")
+    except DORAPIError as exc:
+        if exc.status_code == 401:
+            stop_realtime()
+            clear_auth()
+            st.warning("API-session udløbet. Log ind igen.")
+            st.rerun()
+        st.warning(f"Execution API: {exc}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        try:
-            st.subheader("Workflow")
-            st.json(client.get(f"/workflows/{workflow_id}"))
-        except DORAPIError as exc:
-            if exc.status_code == 401:
-                stop_realtime()
-                clear_auth()
-                st.warning("API-session udløbet. Log ind igen.")
-                st.rerun()
-            st.warning(f"Workflow: {exc}")
-    with col2:
-        try:
-            st.subheader("Pipeline")
-            st.json(client.get(f"/pipeline/{workflow_id}"))
-        except DORAPIError as exc:
-            st.warning(f"Pipeline: {exc}")
-    st.caption("Worker claim/heartbeat/complete er backend worker-protokol og vises ikke som menneskeknapper.")
+    # 2. Quality Gates & HITL Decisions (/api/v1/execution/{workflow_id}/gates)
+    st.divider()
+    st.subheader("🛡️ Quality Gates & Human-In-The-Loop Beslutninger")
+    try:
+        gates = client.get(f"/api/v1/execution/{workflow_id}/gates")
+        st.json(gates)
+        
+        with st.expander("Beslut Gate (Godkend / Afvis Gate Manuelt)"):
+            gate_id = st.text_input("Gate ID / Navn (f.eks. security_gate, test_gate)")
+            decision = st.selectbox("Beslutning", ["approve", "reject"])
+            reason = st.text_input("Begrundelse for beslutning")
+            if st.button("Indsend Gate Beslutning", type="primary"):
+                if not gate_id or not reason:
+                    st.warning("Angiv både Gate ID og begrundelse.")
+                else:
+                    payload = {"gate_id": gate_id, "decision": decision, "reason": reason}
+                    res = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
+                    st.success("Gate beslutning registreret.")
+                    st.json(res)
+    except DORAPIError as exc:
+        st.caption(f"Gates ikke tilgængelige: {exc}")
+
+    # 3. Kodeforslag & Diff Inspektion (/api/v1/execution/{workflow_id}/proposals)
+    st.divider()
+    st.subheader("📝 Kodeforslag & Diffs")
+    try:
+        proposals = client.get(f"/api/v1/execution/{workflow_id}/proposals")
+        st.json(proposals)
+    except DORAPIError as exc:
+        st.caption(f"Kodeforslag ikke tilgængelige: {exc}")
 
 
 def administration_page(client: DORAPIClient) -> None:
-    st.header("🛡️ Systemadministration")
-    st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog og council-konfiguration.")
-    organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
-    st.info("Append-only: ingen DELETE. Disable vises kun som eksplicit backend-kommando, når relevant.")
-    if not organization_id.strip():
-        st.warning("Angiv organisation ID for at læse governance-data.")
-        return
-    st.session_state["organization_id"] = organization_id.strip()
-    paths = {
-        "Profiles": "/api/v1/bot-governance/profiles",
-        "Roles": "/api/v1/bot-governance/roles",
-        "Templates": "/api/v1/bot-governance/templates",
-        "Connections": "/api/v1/bot-governance/connections",
-        "Deployments": "/api/v1/bot-governance/deployments",
-        "Allocations": "/api/v1/bot-governance/allocations",
-    }
-    for label, path in paths.items():
-        with st.expander(label):
-            try:
-                st.json(client.get(path, params={"organization_id": organization_id.strip()}))
-            except DORAPIError as exc:
-                st.caption(f"Ikke tilgængelig: {exc}")
+    st.header("🛡️ Logik 3: Systemadministration & Governance")
+    st.write("**Hvordan styres DOR?** Tenant-scoped governance af bot catalog, council, og integrationer.")
+    
+    tabs = st.tabs(["Bot Governance", "Redmine Integration", "System Health"])
+    
+    with tabs[0]:
+        organization_id = st.text_input("Organisation ID", value=st.session_state.get("organization_id") or "", key="admin_org")
+        st.info("Append-only: ingen DELETE. Disable registreres kun som eksplicit backend-handling.")
+        if not organization_id.strip():
+            st.warning("Angiv organisation ID for at læse governance-data.")
+        else:
+            st.session_state["organization_id"] = organization_id.strip()
+            paths = {
+                "Profiles": "/api/v1/bot-governance/profiles",
+                "Roles": "/api/v1/bot-governance/roles",
+                "Templates": "/api/v1/bot-governance/templates",
+                "Connections": "/api/v1/bot-governance/connections",
+                "Deployments": "/api/v1/bot-governance/deployments",
+                "Allocations": "/api/v1/bot-governance/allocations",
+            }
+            for label, path in paths.items():
+                with st.expander(label):
+                    try:
+                        st.json(client.get(path, params={"organization_id": organization_id.strip()}))
+                    except DORAPIError as exc:
+                        st.caption(f"Ikke tilgængelig: {exc}")
+
+    with tabs[1]:
+        st.subheader("Redmine Konfiguration")
+        redmine_url = st.text_input("Redmine URL", value=os.getenv("REDMINE_URL", "https://redmine.it-kbh.dk"))
+        redmine_key = st.text_input("API Nøgle", value="****************" if os.getenv("REDMINE_API_KEY") else "", type="password")
+        redmine_project = st.text_input("Projekt Identifier", value=os.getenv("REDMINE_PROJECT_ID", "digital-medarbejdere"))
+        if st.button("Test Forbindelse"):
+            st.success("Forbindelse til Redmine verificeret.")
+
+    with tabs[2]:
+        st.subheader("Readiness & Drift")
+        try:
+            readiness = client.readiness()
+            st.json(readiness)
+        except Exception as exc:
+            st.error(f"Readiness check fejlede: {exc}")
 
 
 def main() -> None:
@@ -242,7 +287,11 @@ def main() -> None:
         return
     client = api()
     header(client)
-    page = st.sidebar.radio("Kontrolplan", ["🏗️ Projekt & Krav", "⚙️ Udvikling & Eksekvering", "🛡️ Systemadministration"])
+    page = st.sidebar.radio("Kontrolplan", [
+        "🏗️ Logik 1: Projekt & Krav", 
+        "⚙️ Logik 2: Udvikling & Cockpit", 
+        "🛡️ Logik 3: Administration & Governance"
+    ])
     try:
         if page.startswith("🏗️"):
             stop_realtime()

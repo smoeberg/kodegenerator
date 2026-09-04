@@ -62,6 +62,8 @@ from api.endpoints import (  # noqa: E402
     bot_selection,
     control_plane,
     decisions,
+    execution,
+    execution_realtime,
     implementation_agent,
     pipeline,
     pipeline_gates,
@@ -131,6 +133,7 @@ if HAS_AUTH:
         bot_evidence.router,
         bot_governance.router,
         bot_selection.router,
+        execution.router,
     )
     validate_canonical_modules(
         (
@@ -145,10 +148,14 @@ if HAS_AUTH:
             bot_evidence.__name__,
             bot_governance.__name__,
             bot_selection.__name__,
+            execution.__name__,
         )
     )
 
     app.include_router(auth.router)
+    # Mount browser-compatible realtime before the canonical execution router
+    # so its transport paths take precedence over the legacy header-only stream.
+    app.include_router(execution_realtime.router)
     for canonical_router in CANONICAL_AUTHENTICATED_ROUTERS:
         app.include_router(
             canonical_router,
