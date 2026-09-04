@@ -75,6 +75,7 @@ def test_redmine_health_verifies_authenticated_project_response() -> None:
         "digital%20medarbejdere.json"
     )
     assert kwargs["headers"]["X-Redmine-API-Key"] == "super-secret-key"
+    assert kwargs["allow_redirects"] is False
 
 
 def test_redmine_health_marks_auth_failure_reachable_but_unverified() -> None:
@@ -137,6 +138,7 @@ def test_redmine_health_rejects_credentialed_or_non_http_urls() -> None:
         "ftp://redmine.example.test",
         "https://user:pass@redmine.example.test",
         "not-a-url",
+        "https://[",
     ):
         result = check_redmine_health(
             base_url=value,
