@@ -3,6 +3,7 @@ import pytest
 from dashboard.cockpit_view_model import (
     build_execution_summary,
     gate_decision_payload,
+    interpret_advance_error,
     normalize_gates,
     normalize_proposals,
 )
@@ -44,7 +45,7 @@ def test_execution_summary_prioritizes_error_guidance():
     assert "execution-fejlen" in summary["next_action"]
 
 
-def test_normalize_gates_marks_only_unresolved_gates_as_human_required():
+def test_normalize_gates_preserves_pending_approved_and_rejected_states():
     gates = normalize_gates(
         [
             {
@@ -52,18 +53,57 @@ def test_normalize_gates_marks_only_unresolved_gates_as_human_required():
                 "name": "Security",
                 "description": "Review security evidence",
                 "resolved": False,
+                "decision": None,
+                "blocking": True,
             },
             {
-                "id": "test_gate",
-                "name": "Tests",
-                "description": "Review tests",
+                "id": "approved_gate",
+                "name": "Approved",
+                "description": "Approved evidence",
                 "resolved": True,
+                "decision": "approved",
+                "blocking": False,
+            },
+            {
+                "id": "rejected_gate",
+                "name": "Rejected",
+                "description": "Rejected evidence",
+                "resolved": True,
+                "decision": "rejected",
+                "blocking": True,
             },
         ]
     )
 
     assert gates[0]["status"] == "human_required"
-    assert gates[1]["status"] == "resolved"
+    assert gates[0]["can_decide"] is True
+    assert gates[0]["blocking"] is True
+
+    assert gates[1]["status"] == "approved"
+    assert gates[1]["decision"] == "approved"
+    assert gates[1]["can_decide"] is False
+
+    assert gates[2]["status"] == "rejected"
+    assert gates[2]["decision"] == "rejected"
+    assert gates[2]["blocking"] is True
+    assert gates[2]["can_decide"] is False
+
+
+def test_normalize_gates_keeps_legacy_resolved_gate_locked():
+    gate = normalize_gates(
+        [
+            {
+                "id": "legacy_gate",
+                "name": "Legacy",
+                "description": "No decision field",
+                "resolved": True,
+            }
+        ]
+    )[0]
+
+    assert gate["status"] == "resolved"
+    assert gate["decision"] is None
+    assert gate["can_decide"] is False
 
 
 def test_gate_decision_payload_matches_fastapi_contract():
@@ -81,6 +121,29 @@ def test_gate_decision_payload_matches_fastapi_contract():
 def test_gate_decision_payload_rejects_non_contract_values(decision):
     with pytest.raises(ValueError):
         gate_decision_payload("security_gate", decision)
+
+
+def test_interpret_advance_error_treats_blocking_gate_as_governance_state():
+    error = interpret_advance_error(
+        409,
+        "workflow_blocked_by_gate:gate_architecture_approval:rejected",
+    )
+
+    assert error["kind"] == "gate_blocked"
+    assert error["gate_id"] == "gate_architecture_approval"
+    assert error["decision"] == "rejected"
+    assert "blokeret" in error["message"]
+
+
+def test_interpret_advance_error_keeps_generic_api_errors_generic():
+    error = interpret_advance_error(500, "backend unavailable")
+
+    assert error == {
+        "kind": "api_error",
+        "gate_id": None,
+        "decision": None,
+        "message": "backend unavailable",
+    }
 
 
 def test_normalize_proposals_prefers_patch_or_diff_for_inspection():
