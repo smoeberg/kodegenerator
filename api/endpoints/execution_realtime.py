@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -123,7 +124,7 @@ def create_stream_session(
         max_age=STREAM_SESSION_TTL_SECONDS,
         expires=expires_at,
         httponly=True,
-        secure=True,
+        secure=os.getenv("DOR_ENV", "development").lower() == "production",
         samesite="lax",
         path="/api/v1/execution",
     )
@@ -164,9 +165,9 @@ async def browser_execution_websocket(websocket: WebSocket, workflow_id: str) ->
         await websocket.close(code=1008, reason="authentication required")
         return
     try:
-        from api.dependencies import get_dor_runtime
+        from api.dependencies import get_dor
 
-        dor = get_dor_runtime()
+        dor = get_dor()
         workflow, project_id = _authorize_workflow(dor, workflow_id, user)
     except HTTPException:
         await websocket.close(code=1008, reason="execution access denied")
@@ -177,7 +178,7 @@ async def browser_execution_websocket(websocket: WebSocket, workflow_id: str) ->
     topic, sub_id = _subscribe_stream(workflow, queue)
     stop = asyncio.Event()
     await websocket.send_json(
-        {"event_type": "WS_CONNECTED", "workflow_id": workflow_id, "topic": topic}
+        {"event_type": "WS_CONNECTED", "workflow_id": workflow_id, "topic": topic, "project_id": project_id}
     )
 
     async def forward() -> None:
