@@ -8,7 +8,12 @@ from infrastructure.persistence.models import Base
 
 config = context.config
 database_url = os.getenv("DATABASE_URL")
-if database_url:
+if database_url and getattr(config, "cmd_opts", None) is not None:
+    # DATABASE_URL is the deployment/CLI override. Programmatic callers such
+    # as DORRuntime and migration tests may pin sqlalchemy.url to an isolated
+    # database; an ambient environment variable must not redirect migrations
+    # away from that explicitly configured database.
+    #
     # ConfigParser reserves percent signs for interpolation. Escaping here
     # preserves URL-encoded passwords when Alembic reads the value back.
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
