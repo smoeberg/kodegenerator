@@ -3,13 +3,16 @@
 The dashboard is deliberately a thin client: domain rules, authorization and
 state transitions stay in FastAPI. This module owns transport concerns only.
 """
-
 from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import requests
+
+
+STREAM_SESSION_COOKIE = "eiraos_execution_stream"
 
 
 class DORAPIError(RuntimeError):
@@ -85,8 +88,30 @@ class DORAPIClient:
         self.token = token
         return token
 
+    def create_stream_session(self, workflow_id: str) -> dict[str, Any]:
+        """Create the workflow-scoped HttpOnly cookie used by browser transports."""
+        return self.request("POST", f"/api/v1/execution/stream-session/{workflow_id}")
+
+    def delete_stream_session(self, workflow_id: str) -> None:
+        try:
+            self.request("DELETE", f"/api/v1/execution/stream-session/{workflow_id}")
+        except DORAPIError as exc:
+            if exc.status_code != 404:
+                raise
+
+    def stream_url(self, workflow_id: str, *, websocket: bool) -> str:
+        path = f"/api/v1/execution/{'ws' if websocket else 'events'}/{workflow_id}"
+        parsed = urlparse(f"{self.base_url}{path}")
+        if websocket:
+            scheme = "wss" if parsed.scheme == "https" else "ws"
+            parsed = parsed._replace(scheme=scheme)
+        return urlunparse(parsed)
+
     def get(self, path: str, **kwargs: Any) -> Any:
         return self.request("GET", path, **kwargs)
 
     def post(self, path: str, **kwargs: Any) -> Any:
         return self.request("POST", path, **kwargs)
+
+    def delete(self, path: str, **kwargs: Any) -> Any:
+        return self.request("DELETE", path, **kwargs)
