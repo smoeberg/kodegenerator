@@ -62,6 +62,7 @@ from api.endpoints import (  # noqa: E402
     bot_selection,
     control_plane,
     decisions,
+    execution,
     implementation_agent,
     pipeline,
     pipeline_gates,
@@ -131,6 +132,7 @@ if HAS_AUTH:
         bot_evidence.router,
         bot_governance.router,
         bot_selection.router,
+        execution.router,
     )
     validate_canonical_modules(
         (
@@ -145,6 +147,7 @@ if HAS_AUTH:
             bot_evidence.__name__,
             bot_governance.__name__,
             bot_selection.__name__,
+            execution.__name__,
         )
     )
 
