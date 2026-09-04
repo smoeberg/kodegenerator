@@ -8,6 +8,7 @@ notes. Importing this module alone has no application side effects.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import argparse
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,39 +29,11 @@ class EndpointRecord:
     tags: tuple[str, ...]
 
 
-def _route_record(route: BaseRoute) -> EndpointRecord | None:
-    if isinstance(route, APIRoute):
-        methods = sorted(method.upper() for method in route.methods)
-        # APIRoute normally contains one or more methods. Emit one record per
-        # method so path+method is the unique operation key.
-        return EndpointRecord(
-            path=route.path,
-            method=methods[0] if len(methods) == 1 else ",".join(methods),
-            name=route.name,
-            module=getattr(route.endpoint, "__module__", ""),
-            tags=tuple(sorted(route.tags or ())),
-        )
-    if isinstance(route, WebSocketRoute):
-        return EndpointRecord(
-            path=route.path,
-            method="WEBSOCKET",
-            name=route.name,
-            module=getattr(route.endpoint, "__module__", ""),
-            tags=tuple(sorted(route.tags or ())),
-        )
-    return None
-
-
 def build_inventory(routes: Iterable[BaseRoute]) -> list[EndpointRecord]:
     """Build a deterministic inventory from the application's mounted routes."""
     records: list[EndpointRecord] = []
     for route in routes:
-        record = _route_record(route)
-        if record is None:
-            continue
-        # APIRoute can expose multiple methods. Expand those into individual
-        # path+method records instead of relying on the route's method set.
-        if isinstance(route, APIRoute) and len(route.methods) > 1:
+        if isinstance(route, APIRoute):
             for method in sorted(route.methods):
                 records.append(
                     EndpointRecord(
@@ -71,8 +44,16 @@ def build_inventory(routes: Iterable[BaseRoute]) -> list[EndpointRecord]:
                         tags=tuple(sorted(route.tags or ())),
                     )
                 )
-        else:
-            records.append(record)
+        elif isinstance(route, WebSocketRoute):
+            records.append(
+                EndpointRecord(
+                    path=route.path,
+                    method="WEBSOCKET",
+                    name=route.name,
+                    module=getattr(route.endpoint, "__module__", ""),
+                    tags=tuple(sorted(route.tags or ())),
+                )
+            )
     return sorted(records)
 
 
@@ -100,3 +81,18 @@ def write_inventory(app: Any, destination: str | Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", default="docs/api-endpoint-inventory.json")
+    args = parser.parse_args()
+
+    # Import the application only when generation is explicitly requested.
+    from api.main import app
+
+    write_inventory(app, args.output)
+
+
+if __name__ == "__main__":
+    main()
