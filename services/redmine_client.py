@@ -1,8 +1,8 @@
 """Server-side Redmine connectivity verification.
 
-Secrets stay inside the API process.  The public health result deliberately
-contains only bounded status categories and sanitized configuration metadata;
-upstream response bodies and API keys are never returned.
+Secrets stay inside the API process. The public health result deliberately
+contains only bounded status categories; upstream response bodies, endpoint
+metadata and API keys are never returned.
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def check_redmine_health(
     """Verify configured Redmine credentials against the configured project.
 
     Optional arguments exist for deterministic tests; production callers use
-    environment configuration.  A result is verified only after a successful
+    environment configuration. A result is verified only after a successful
     authenticated project response with a valid Redmine project object.
     """
     raw_url = base_url if base_url is not None else os.getenv("REDMINE_URL", "")
@@ -81,8 +81,6 @@ def check_redmine_health(
         "configured": not missing and sanitized_url is not None,
         "reachable": False,
         "verified": False,
-        "base_url": sanitized_url,
-        "project_id": project or None,
         "checked_at": _utc_now(),
         "error": None,
         "missing_configuration": missing,
