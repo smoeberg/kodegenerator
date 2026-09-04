@@ -17,6 +17,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.bot_governance",
     "api.endpoints.bot_selection",
     "api.endpoints.execution",
+    "api.endpoints.integrations",
 )
 
 CANONICAL_REALTIME_MODULES = (
