@@ -94,7 +94,10 @@ def test_api_main_mounts_only_canonical_router_whitelist(monkeypatch):
     assert "/actors/digital-employee" not in paths
     assert "/organizations/" not in paths
     assert "/api/v1/bot-selections" in paths
-    assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == 12
+    assert len(api.main.CANONICAL_AUTHENTICATED_ROUTERS) == len(
+        CANONICAL_AUTHENTICATED_MODULES
+    )
+    assert "/api/v1/integrations/redmine/health" in paths
     assert "/api/v1/bot-governance/connections" in paths
     assert "/api/v1/bot-evidence/evaluations/{evaluation_id}" in paths
     assert "/api/v1/bot-evidence/integration-receipts/{plan_fingerprint}" in paths
