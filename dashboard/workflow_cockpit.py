@@ -90,52 +90,132 @@ def _can_advance(step: int) -> bool:
 
 def _mock_council(vision: dict[str, Any]) -> list[dict[str, str]]:
     name = vision.get("system_name") or "Systemet"
-    return [
-        {
-            "agent": "Architect",
-            "icon": "🏗️",
-            "text": (
-                f"For **{name}** anbefaler jeg hexagonal arkitektur med klare "
-                "ports/adapters. Domain forbliver framework-uafhængigt; "
-                "FastAPI kun i interface-laget."
-            ),
-        },
-        {
-            "agent": "Security",
-            "icon": "🛡️",
-            "text": (
-                "Auth skal være OAuth2 Authorization Code + PKCE. Secrets via "
-                "referencer, aldrig i klartekst i artefakter. PCI/PII-scope "
-                "skal afgrænses tidligt hvis betalingsdata indgår."
-            ),
-        },
-        {
-            "agent": "PM",
-            "icon": "📋",
-            "text": (
-                "Scope ser realistisk ud til ét governed single-run. "
-                "Jeg foreslår MVP med kerneflows først, og udskyder "
-                "nice-to-have integrationer til fase 2."
-            ),
-        },
-        {
-            "agent": "Impl Agent",
-            "icon": "⚙️",
-            "text": (
-                "Allowlisted adapters dækker Postgres, Redis og test-runners. "
-                "Patches holdes inden for godkendt context packet — ingen "
-                "fri shell."
-            ),
-        },
-        {
-            "agent": "Architect",
-            "icon": "🏗️",
-            "text": (
-                "Enighed om hexagonal + OAuth2/PKCE. Rejser HITL-beslutning "
-                "på data-store (Postgres vs. hybrid) til Controller."
-            ),
-        },
-    ]
+    tech = (vision.get("tech_wishes") or "").lower()
+    goal = (vision.get("goal") or "").lower()
+    features = (vision.get("features") or "").lower()
+    constraints = (vision.get("constraints") or "").lower()
+    context = f"{tech} {goal} {features} {constraints}"
+
+    is_wordpress = "wordpress" in context or "wp" in context or "plugin" in context or "php" in context
+    is_frontend = "react" in context or "vue" in context or "next" in context or "typescript" in context
+
+    if is_wordpress:
+        return [
+            {
+                "agent": "Architect",
+                "icon": "🏗️",
+                "text": (
+                    f"For **{name}** identificerer jeg en WordPress/PHP løsning. "
+                    "Jeg anbefaler en modulær plugin-arkitektur (Hooks/Filters & Shortcodes), "
+                    "hvor visning og tidsberegningslogik er adskilt. REST API bruges til dynamiske opdateringer."
+                ),
+            },
+            {
+                "agent": "Security",
+                "icon": "🛡️",
+                "text": (
+                    "Sikkerhed i WordPress: Alle AJAX/REST-kald skal valideres med nonces og capability checks "
+                    "(`current_user_can`). Frontend-output skal altid sanitizes/escapes med `esc_html()` og `esc_attr()`."
+                ),
+            },
+            {
+                "agent": "PM",
+                "icon": "📋",
+                "text": (
+                    f"Målet for MVP er klart: Vis de 4 tidszoner, beregn åben/lukket status i realtid, "
+                    "og lever en shortcode `[timezone_support_clock]`. Pakkes som installationsklar zip-fil."
+                ),
+            },
+            {
+                "agent": "Impl Agent",
+                "icon": "⚙️",
+                "text": (
+                    "PHP 8.x med native `DateTimeZone` support. Ingen ekstern database påkrævet (eller standard `wp_options` "
+                    "til admin-konfiguration). Koden struktureres i henhold til WordPress Coding Standards."
+                ),
+            },
+            {
+                "agent": "QA",
+                "icon": "🧪",
+                "text": (
+                    "Validering af tidszone-offsets for sommertid (DST). Automatiseret linting med `php -l` og "
+                    "enhedstests for at sikre korrekte tidsberegninger på tværs af zonerne."
+                ),
+            },
+        ]
+    elif is_frontend:
+        return [
+            {
+                "agent": "Architect",
+                "icon": "🏗️",
+                "text": (
+                    f"For **{name}** anbefaler jeg en TypeScript/Next.js frontend med modulære komponenter "
+                    "og type-sikre API-klienter."
+                ),
+            },
+            {
+                "agent": "Security",
+                "icon": "🛡️",
+                "text": "CSRF-beskyttelse, secure cookie session tokens og CSP headers skal håndteres i edge middleware.",
+            },
+            {
+                "agent": "PM",
+                "icon": "📋",
+                "text": "Fokus på responsivt design og hurtig indlæsningstid (SSR/SSG hybrid).",
+            },
+            {
+                "agent": "Impl Agent",
+                "icon": "⚙️",
+                "text": "TailwindCSS og React Server Components med fuld TypeScript kontraktvalidering.",
+            },
+        ]
+    else:
+        return [
+            {
+                "agent": "Architect",
+                "icon": "🏗️",
+                "text": (
+                    f"For **{name}** anbefaler jeg hexagonal arkitektur med klare "
+                    "ports/adapters. Domain forbliver framework-uafhængigt; "
+                    "FastAPI kun i interface-laget."
+                ),
+            },
+            {
+                "agent": "Security",
+                "icon": "🛡️",
+                "text": (
+                    "Auth skal være OAuth2 Authorization Code + PKCE. Secrets via "
+                    "referencer, aldrig i klartekst i artefakter. PCI/PII-scope "
+                    "skal afgrænses tidligt hvis betalingsdata indgår."
+                ),
+            },
+            {
+                "agent": "PM",
+                "icon": "📋",
+                "text": (
+                    "Scope ser realistisk ud til ét governed single-run. "
+                    "Jeg foreslår MVP med kerneflows først, og udskyder "
+                    "nice-to-have integrationer til fase 2."
+                ),
+            },
+            {
+                "agent": "Impl Agent",
+                "icon": "⚙️",
+                "text": (
+                    "Allowlisted adapters dækker Postgres, Redis og test-runners. "
+                    "Patches holdes inden for godkendt context packet — ingen "
+                    "fri shell."
+                ),
+            },
+            {
+                "agent": "Architect",
+                "icon": "🏗️",
+                "text": (
+                    "Enighed om hexagonal + OAuth2/PKCE. Rejser HITL-beslutning "
+                    "på data-store (Postgres vs. hybrid) til Controller."
+                ),
+            },
+        ]
 
 
 def _mock_wbs(vision: dict[str, Any]) -> list[dict[str, str]]:
@@ -231,28 +311,50 @@ def _step_architecture() -> None:
     st.markdown("Godkend eller tilpas arkitekturvalg. Kun Controller kan lukke dette trin — AI kan anbefale, ikke selv godkende.")
     w = _wiz()
     arch = w["architecture"]
+    vision = w.get("vision", {})
+    context = f"{vision.get('tech_wishes', '')} {vision.get('goal', '')} {vision.get('features', '')}".lower()
+    is_wordpress = "wordpress" in context or "wp" in context or "plugin" in context or "php" in context
+
+    # Pre-select intelligent defaults based on the project's vision
+    default_style = "plugin" if is_wordpress else (arch.get("style") or "hexagonal")
+    default_store = "none_or_inmemory" if is_wordpress else (arch.get("data_store") or "postgresql")
+    default_auth = "wordpress_nonce" if is_wordpress else (arch.get("auth") or "oauth2_pkce")
+
+    style_options = ["hexagonal", "layered", "modular_monolith", "event_driven", "plugin", "microservice"]
+    store_options = ["postgresql", "postgresql+redis", "mysql_mariadb", "sqlite_dev_only", "none_or_inmemory"]
+    auth_options = ["oauth2_pkce", "session_cookie", "wordpress_nonce", "api_key", "mtls_service"]
+
     c1, c2, c3 = st.columns(3)
     with c1:
         arch["style"] = st.selectbox(
             "Arkitekturstil",
-            ["hexagonal", "layered", "modular_monolith", "event_driven"],
-            index=["hexagonal", "layered", "modular_monolith", "event_driven"].index(arch.get("style") or "hexagonal"),
+            style_options,
+            index=style_options.index(default_style) if default_style in style_options else 0,
         )
     with c2:
         arch["data_store"] = st.selectbox(
             "Primær data store",
-            ["postgresql", "postgresql+redis", "sqlite_dev_only"],
-            index=["postgresql", "postgresql+redis", "sqlite_dev_only"].index(arch.get("data_store") or "postgresql"),
+            store_options,
+            index=store_options.index(default_store) if default_store in store_options else 0,
         )
     with c3:
         arch["auth"] = st.selectbox(
             "Auth-model",
-            ["oauth2_pkce", "session_cookie", "mtls_service"],
-            index=["oauth2_pkce", "session_cookie", "mtls_service"].index(arch.get("auth") or "oauth2_pkce"),
+            auth_options,
+            index=auth_options.index(default_auth) if default_auth in auth_options else 0,
         )
     arch["notes"] = st.text_area("Controller-noter / ADR-kommentar", value=arch.get("notes") or "", height=80)
+
     st.markdown("#### AI-rådets anbefaling")
-    st.write("- **Stil:** hexagonal (domain uafhængig af framework)\n- **Store:** postgresql (+ Redis kun hvis session/cache kræves)\n- **Auth:** oauth2_pkce")
+    if is_wordpress:
+        st.write(
+            "- **Stil:** `plugin` (WordPress Plugin med isolerede include-klasser og templates)\n"
+            "- **Store:** `none_or_inmemory` (eller standard WordPress `wp_options`)\n"
+            "- **Auth:** `wordpress_nonce` (eller offentligt REST API med permission_callback)"
+        )
+    else:
+        st.write("- **Stil:** hexagonal (domain uafhængig af framework)\n- **Store:** postgresql (+ Redis kun hvis session/cache kræves)\n- **Auth:** oauth2_pkce")
+
     b1, b2, b3 = st.columns(3)
     with b1:
         if st.button("✅ Godkend anbefaling", type="primary", use_container_width=True):
@@ -303,27 +405,68 @@ def _step_wbs() -> None:
 
 def _step_code_verify() -> None:
     st.subheader("Trin 5 · Kode & Verifikation")
-    st.markdown("Genererede patches, AST-validering og test-resultater. Endelig PASS/FAIL ligger hos P3-20 — ikke hos Impl eller Test Agent.")
+    st.markdown("Genererede filer, arkitekturkontrakt og download af det færdige projekt.")
     w = _wiz()
-    st.markdown("#### Patches")
-    for p in _mock_patches():
-        icon = "✅" if p["ast_ok"] else "❌"
-        with st.expander(f"{icon} `{p['path']}` · {p['id']}"):
-            st.write(p["summary"])
-            st.caption(f"Diff: {p['lines']} · AST: {'OK' if p['ast_ok'] else 'FAIL'} · Fingerprint: `{p['fingerprint']}`")
-    st.markdown("#### Test & architecture checks")
-    st.dataframe(pd.DataFrame(_mock_test_results()), use_container_width=True, hide_index=True)
+    vision = w.get("vision", {})
+    arch = w.get("architecture", {})
+    name = (vision.get("system_name") or "wp-timezone-support").strip().replace(" ", "-").lower()
+
+    # Generer et rigtigt projekt on-the-fly via systemets ScaffoldEngine
+    st.markdown("#### 🛠️ Genererer projektartefakter...")
+    try:
+        from generation.project_spec import ProjectDefinition, ArchitectureKind
+        from generation.scaffold_engine import ScaffoldEngine
+        import io
+        import zipfile
+
+        arch_style = ArchitectureKind.PLUGIN if arch.get("style") == "plugin" else ArchitectureKind.HEXAGONAL
+        lang = "php" if arch.get("style") == "plugin" or "wp" in name or "wordpress" in name else "python"
+        api = "wordpress" if lang == "php" else "fastapi"
+
+        proj_def = ProjectDefinition(
+            name=name,
+            architecture=arch_style,
+            language=lang,
+            api=api,
+            database="none" if lang == "php" else "postgresql"
+        )
+        engine = ScaffoldEngine()
+        plan = engine.generate(proj_def)
+
+        st.success(f"✅ Projekt scaffolded succesfuldt! Fingerprint: `{plan.fingerprint[:16]}...`")
+
+        # Lav en ZIP fil i memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for s_file in plan.files:
+                zip_file.writestr(f"{name}/{s_file.path}", s_file.content)
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label=f"📦 Download færdig pakke ({name}.zip)",
+            data=zip_buffer,
+            file_name=f"{name}.zip",
+            mime="application/zip",
+            type="primary",
+        )
+
+        st.markdown("#### 📁 Genererede filer i pakken")
+        for f in plan.files:
+            with st.expander(f"📄 `{f.path}`"):
+                st.code(f.content, language="php" if f.path.endswith(".php") else "text")
+
+    except Exception as e:
+        st.error(f"Fejl under kodescaffolding: {e}")
+
     ver = w["verification"]
-    ver["patches_reviewed"] = st.checkbox("Patches gennemgået", value=bool(ver.get("patches_reviewed")))
-    ver["tests_reviewed"] = st.checkbox("Test- og AST-resultater gennemgået", value=bool(ver.get("tests_reviewed")))
+    ver["patches_reviewed"] = st.checkbox("Filer gennemgået", value=bool(ver.get("patches_reviewed")))
+    ver["tests_reviewed"] = st.checkbox("Arkitekturkontrakt valideret", value=bool(ver.get("tests_reviewed")))
     if ver["patches_reviewed"] and ver["tests_reviewed"]:
-        st.success("Controller har gennemgået evidence. I production sendes næste command via Control Plane under authority grant.")
+        st.success("Controller har godkendt koden.")
         st.balloons()
         if st.button("🏁 Afslut wizard / start forfra"):
             del st.session_state[_WIZ]
             st.rerun()
-    else:
-        st.info("Markér begge gennemgange for at lukke pipeline-demoen.")
 
 
 def _fmt(ts: str | None) -> str:

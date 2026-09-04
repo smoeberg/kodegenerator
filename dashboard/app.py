@@ -64,12 +64,29 @@ if not st.session_state.authenticated:
 st.title("⚡ Digital Organization Runtime (DOR) Dashboard")
 
 DB_PATH = os.getenv("DOR_DB_PATH", "dor_runtime.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
 def get_connection():
-    if not os.path.exists(DB_PATH):
-        return None
-    return sqlite3.connect(DB_PATH)
+    # 1. Prøv PostgreSQL hvis DATABASE_URL er konfigureret (Docker / Produktion)
+    if DATABASE_URL and ("postgresql" in DATABASE_URL or "postgres" in DATABASE_URL):
+        try:
+            from sqlalchemy import create_engine
+            # Fjern +psycopg hvis ren sqlalchemy / pandas bruges
+            clean_url = DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
+            engine = create_engine(clean_url)
+            return engine
+        except Exception as e:
+            pass
+
+    # 2. Prøv SQLite fil hvis den findes
+    if os.path.exists(DB_PATH):
+        try:
+            return sqlite3.connect(DB_PATH)
+        except Exception:
+            pass
+
+    return None
 
 
 # --- Sidebar Navigation ---
@@ -222,7 +239,27 @@ elif menu == "Opret Ny Agent (Wizard)":
 
         submitted = st.form_submit_button("Opret Agent")
         if submitted:
-            st.success(f"Agent '{name}' oprettet med rollen '{selected_role}'!")
+            if not name.strip():
+                st.error("Navn må ikke være tomt.")
+            else:
+                try:
+                    import uuid
+                    new_id = f"agent-{uuid.uuid4().hex[:8]}"
+                    insert_query = """
+                    INSERT INTO agents (agent_id, name, role, status, is_active, created_at)
+                    VALUES (:id, :name, :role, :status, 1, CURRENT_TIMESTAMP)
+                    """
+                    with conn.connect() if hasattr(conn, "connect") else conn as cur:
+                        if hasattr(cur, "execute"):
+                            from sqlalchemy import text
+                            cur.execute(text(insert_query), {"id": new_id, "name": name, "role": selected_role, "status": status})
+                            if hasattr(cur, "commit"):
+                                cur.commit()
+                        else:
+                            cur.execute("INSERT INTO agents (agent_id, name, role, status, is_active) VALUES (?, ?, ?, ?, 1)", (new_id, name, selected_role, status))
+                    st.success(f"Agent '{name}' oprettet i databasen med ID `{new_id}`!")
+                except Exception as ex:
+                    st.error(f"Fejl ved oprettelse i databasen: {ex}")
 
 # --- Sektion: Afdelinger & Teams ---
 elif menu == "Afdelinger & Teams":
