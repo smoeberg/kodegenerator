@@ -1,24 +1,20 @@
 """Workflow-scoped realtime transport for the Streamlit DOR cockpit.
 
-WebSocket is the primary transport. SSE is used only when WebSocket cannot be
-established. A short-lived HttpOnly stream-session cookie is obtained through
-the authenticated API client, so credentials are never placed in a stream URL.
+WebSocket is the primary transport. SSE is the automatic fallback when the
+WebSocket cannot be established. A short-lived workflow-scoped stream session
+is created through the authenticated API; no token is ever put in a stream URL.
 
-The transport runs outside Streamlit's script thread and publishes immutable
-event envelopes to a bounded queue. The UI drains that queue during a
-Streamlit fragment rerun; those reruns do not poll the API.
+The transport runs in a daemon thread and publishes immutable event envelopes
+to a bounded queue. Streamlit only drains that queue during a UI fragment
+rerun; those reruns do not poll the API.
 """
 from __future__ import annotations
 
 import json
 import queue
 import threading
-import time
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse, urlunparse
-
-import requests
 
 
 @dataclass(frozen=True)
@@ -45,7 +41,7 @@ class WorkflowRealtime:
         self.max_reconnects = max_reconnects
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._session_ready = False
+        self._transport_client: Any | None = None
         self._status = "offline"
         self._status_lock = threading.Lock()
 
@@ -63,19 +59,26 @@ class WorkflowRealtime:
             return
         self._stop.clear()
         self._set_status("connecting")
-        self._thread = threading.Thread(target=self._run, name=f"dor-realtime-{self.workflow_id}", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"dor-realtime-{self.workflow_id}",
+            daemon=True,
+        )
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        try:
-            self.api_client.delete_stream_session(self.workflow_id)
-        except Exception:
-            pass
+        client = self._transport_client
+        if client is not None:
+            try:
+                client.delete_stream_session(self.workflow_id)
+            except Exception:
+                pass
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=2.0)
         self._thread = None
+        self._transport_client = None
         self._set_status("offline")
 
     def drain(self, limit: int = 50) -> list[RealtimeEvent]:
@@ -106,10 +109,23 @@ class WorkflowRealtime:
             except Exception:
                 pass
 
+    def _new_transport_client(self) -> Any:
+        from dashboard.api_client import DORAPIClient
+
+        return DORAPIClient(
+            base_url=self.api_client.base_url,
+            token=self.api_client.token,
+            timeout=self.api_client.timeout,
+        )
+
+    def _ensure_session(self) -> None:
+        if self._transport_client is None:
+            self._transport_client = self._new_transport_client()
+        self._transport_client.create_stream_session(self.workflow_id)
+
     def _run(self) -> None:
         try:
-            self.api_client.create_stream_session(self.workflow_id)
-            self._session_ready = True
+            self._ensure_session()
         except Exception:
             self._set_status("unauthorized")
             return
@@ -117,41 +133,39 @@ class WorkflowRealtime:
         delay = 0.5
         reconnects = 0
         while not self._stop.is_set():
+            # WebSocket is always attempted first.
             try:
-                self._set_status("connecting")
                 self._run_websocket()
                 reconnects = 0
                 delay = 0.5
             except Exception:
                 if self._stop.is_set():
                     break
-                reconnects += 1
-                if reconnects > self.max_reconnects:
-                    self._set_status("offline")
-                    return
-                self._set_status("reconnecting")
-                self._stop.wait(delay)
-                delay = min(delay * 2, 8.0)
-                continue
+
+                # Automatic SSE fallback for this connection attempt.
+                try:
+                    self._run_sse()
+                    reconnects = 0
+                    delay = 0.5
+                except Exception:
+                    if self._stop.is_set():
+                        break
+                    reconnects += 1
+                    if reconnects > self.max_reconnects:
+                        self._set_status("offline")
+                        return
+                    self._set_status("reconnecting")
+                    self._stop.wait(delay)
+                    delay = min(delay * 2, 8.0)
+                    try:
+                        self._ensure_session()
+                    except Exception:
+                        continue
 
             if self._stop.is_set():
                 break
-            # A clean WebSocket close is still a transport failure for the
-            # client: immediately try the documented SSE fallback.
-            try:
-                self._run_sse()
-                reconnects = 0
-                delay = 0.5
-            except Exception:
-                if self._stop.is_set():
-                    break
-                reconnects += 1
-                if reconnects > self.max_reconnects:
-                    self._set_status("offline")
-                    return
-                self._set_status("reconnecting")
-                self._stop.wait(delay)
-                delay = min(delay * 2, 8.0)
+            # A transport closed cleanly; reconnect with WebSocket first.
+            self._set_status("reconnecting")
 
     def _run_websocket(self) -> None:
         try:
@@ -159,8 +173,11 @@ class WorkflowRealtime:
         except ImportError as exc:
             raise RuntimeError("websocket-client is required for DOR realtime") from exc
 
-        url = self.api_client.stream_url(self.workflow_id, websocket=True)
-        cookie = self.api_client.session.cookies.get("eiraos_execution_stream")
+        client = self._transport_client
+        if client is None:
+            raise RuntimeError("realtime client is not initialized")
+        url = client.stream_url(self.workflow_id, websocket=True)
+        cookie = client.session.cookies.get("eiraos_execution_stream")
         if not cookie:
             raise RuntimeError("stream session cookie was not created")
 
@@ -184,8 +201,8 @@ class WorkflowRealtime:
                 if raw is None:
                     raise RuntimeError("WebSocket closed")
                 message = json.loads(raw)
-                event_type = str(message.get("event_type", "message"))
-                self._publish(event_type, message)
+                if isinstance(message, dict):
+                    self._publish(str(message.get("event_type", "message")), message)
         finally:
             try:
                 ws.close()
@@ -193,11 +210,14 @@ class WorkflowRealtime:
                 pass
 
     def _run_sse(self) -> None:
-        url = self.api_client.stream_url(self.workflow_id, websocket=False)
+        client = self._transport_client
+        if client is None:
+            raise RuntimeError("realtime client is not initialized")
+        url = client.stream_url(self.workflow_id, websocket=False)
         self._set_status("sse")
-        with self.api_client.session.get(
+        with client.session.get(
             url,
-            headers=self.api_client._headers(),
+            headers=client._headers(),
             stream=True,
             timeout=(15, 30),
         ) as response:
@@ -215,14 +235,8 @@ class WorkflowRealtime:
                 elif line.startswith("data:"):
                     data_lines.append(line[5:].lstrip())
                 elif line == "" and data_lines:
-                    raw_data = "\n".join(data_lines)
-                    payload = json.loads(raw_data)
-                    self._publish(event_type, payload)
+                    payload = json.loads("\n".join(data_lines))
+                    if isinstance(payload, dict):
+                        self._publish(event_type, payload)
                     event_type = "message"
                     data_lines = []
-
-
-def websocket_url(http_url: str) -> str:
-    parsed = urlparse(http_url)
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunparse((scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
