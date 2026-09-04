@@ -57,5 +57,5 @@ def test_redmine_health_view_fails_closed_on_malformed_payload() -> None:
 
     assert status["status"] == "not_configured"
     assert status["level"] == "warning"
-    assert status["verified"] is True
+    assert status["verified"] is False
     assert "verificeret" not in status["message"].lower()
