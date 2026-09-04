@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "source": "FastAPI app.routes",
+  "generated_by": "api.endpoint_inventory.write_inventory",
+  "endpoints": []
+}
