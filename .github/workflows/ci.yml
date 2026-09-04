@@ -68,6 +68,8 @@ jobs:
           test "$(printf '%s\n' "$heads" | grep -Ec '\(head\)$')" -eq 1
 
       - name: Verify clean database migration
+        env:
+          DATABASE_URL: sqlite:///./dor_runtime.db
         run: |
           set -euo pipefail
           rm -f dor_runtime.db
@@ -76,6 +78,7 @@ jobs:
 
       - name: Run complete test suite with coverage
         env:
+          DATABASE_URL: sqlite:///./dor_runtime.db
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ADMIN_USERNAME: admin
@@ -100,6 +103,7 @@ jobs:
 
       - name: API startup and health smoke test
         env:
+          DATABASE_URL: sqlite:///./dor_runtime.db
           DOR_JWT_SECRET_KEY: ci-only-test-secret-change-me
           DOR_ADMIN_PASSWORD: ci-admin-password
           DOR_ADMIN_USERNAME: admin

@@ -1,6 +1,7 @@
 """Database engine/session management for DOR Foundation v0.1."""
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -12,7 +13,9 @@ from sqlalchemy.orm import Session, sessionmaker
 class Database:
     """Owns the SQLAlchemy engine and session factory."""
 
-    def __init__(self, url: str = "sqlite:///./dor_runtime.db") -> None:
+    def __init__(self, url: str | None = None) -> None:
+        if url is None:
+            url = os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db")
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         self.engine: Engine = create_engine(url, future=True, connect_args=connect_args)
         if url.startswith("sqlite"):
