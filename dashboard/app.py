@@ -280,19 +280,16 @@ def development_page(client: DORAPIClient) -> None:
                     except DORAPIError as exc:
                         st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
 
-                if decision_cols[1].button(
+                decision_cols[1].button(
                     "❌ Afvis gate",
+                    disabled=True,
                     key=f"reject_gate_{workflow_id}_{gate['id']}",
-                ):
-                    try:
-                        payload = gate_decision_payload(gate["id"], "rejected")
-                        result = client.post(f"/api/v1/execution/{workflow_id}/gates/decide", json=payload)
-                        st.warning("Gate blev afvist af Execution API.")
-                        with st.expander("Backend-resultat"):
-                            st.json(result)
-                        st.rerun()
-                    except DORAPIError as exc:
-                        st.error(f"Gate-beslutning afvist ({exc.status_code}): {exc}")
+                    help="Deaktiveret fail-closed: backend behandler aktuelt rejected som resolved og fortsætter pipeline.",
+                )
+                st.caption(
+                    "Afvisning er midlertidigt deaktiveret i GUI'en, fordi den nuværende backend "
+                    "ikke har en sikker reject-transition."
+                )
 
         with st.expander("Tekniske gate-data"):
             st.json(gates_payload)
