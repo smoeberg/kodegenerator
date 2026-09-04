@@ -16,15 +16,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.websockets import WebSocketState
 
 from api.auth import User, authenticate_access_token, get_current_active_user
 from api.dependencies import get_dor
+from api.endpoints.swarm import project_access_allowed, require_project_access
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
 from runtime.pipeline_registry import get_pipeline_registry
 from services.event_bus import default_event_bus, project_topic
 
 router = APIRouter(prefix="/api/v1/execution", tags=["execution"])
+WEBSOCKET_AUTH_REVALIDATION_SECONDS = 15.0
 
 
 class StartExecutionRequest(BaseModel):
@@ -84,6 +87,14 @@ def _emit(workflow: Any, event_type: str, payload: dict[str, Any] | None = None)
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _websocket_token(websocket: WebSocket) -> str | None:
+    authorization = websocket.headers.get("authorization", "")
+    scheme, _, header_token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and header_token:
+        return header_token
+    return None
 
 
 @router.get("/{workflow_id}")
@@ -243,71 +254,20 @@ def create_implementation_proposal(
 
 @router.websocket("/ws/{workflow_id}")
 async def execution_websocket(websocket: WebSocket, workflow_id: str) -> None:
-    """WebSocket-first execution stream; client may only send ping frames."""
-    token = websocket.headers.get("authorization", "").partition(" ")[2]
+    """WebSocket-first execution stream with auth revalidation and heartbeats."""
+    token = _websocket_token(websocket) or ""
     try:
-        authenticate_access_token(token)
+        current_user = authenticate_access_token(token)
     except HTTPException:
         await websocket.close(code=1008, reason="authentication required")
         return
 
-    orch = None
-    try:
-        await websocket.accept()
-        topic = project_topic(workflow_id)
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
+    # The workflow id doubles as the project topic in the execution stream.
+    if not project_access_allowed(workflow_id, current_user):
+        await websocket.close(code=1008, reason="project access denied")
+        return
 
-        def on_event(_event_type: str, envelope: dict[str, Any]) -> None:
-            if envelope.get("payload", {}).get("workflow_id") != workflow_id:
-                return
-            try:
-                queue.put_nowait(dict(envelope))
-            except asyncio.QueueFull:
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                try:
-                    queue.put_nowait(dict(envelope))
-                except asyncio.QueueFull:
-                    pass
-
-        sub_id = default_event_bus.subscribe(topic, on_event)
-        await websocket.send_json({"event_type": "WS_CONNECTED", "workflow_id": workflow_id})
-
-        async def forward() -> None:
-            while True:
-                event = await queue.get()
-                await websocket.send_json(event)
-
-        forward_task = asyncio.create_task(forward())
-        try:
-            while True:
-                message = await websocket.receive_json()
-                if str(message.get("type", "")).lower() == "ping":
-                    await websocket.send_json({"event_type": "PONG", "timestamp": _utc_now()})
-                else:
-                    await websocket.send_json({"event_type": "ERROR", "message": "unsupported_client_message"})
-        except WebSocketDisconnect:
-            pass
-        finally:
-            forward_task.cancel()
-            try:
-                await forward_task
-            except asyncio.CancelledError:
-                pass
-            default_event_bus.unsubscribe(topic, sub_id)
-    except Exception:
-        if websocket.client_state.value == 1:
-            await websocket.close(code=1011, reason="realtime failure")
-
-
-@router.get("/events/{workflow_id}")
-async def execution_sse(
-    workflow_id: str,
-    _: User = Depends(get_current_active_user),
-) -> StreamingResponse:
-    """SSE fallback for clients that cannot establish a WebSocket."""
+    await websocket.accept()
     topic = project_topic(workflow_id)
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
 
@@ -321,6 +281,116 @@ async def execution_sse(
                 queue.get_nowait()
             except asyncio.QueueEmpty:
                 pass
+            try:
+                queue.put_nowait(dict(envelope))
+            except asyncio.QueueFull:
+                pass
+
+    sub_id = default_event_bus.subscribe(topic, on_event)
+    stop = asyncio.Event()
+    await websocket.send_json(
+        {
+            "event_type": "WS_CONNECTED",
+            "workflow_id": workflow_id,
+            "topic": topic,
+            "timestamp": _utc_now(),
+        }
+    )
+
+    async def forward() -> None:
+        while not stop.is_set():
+            try:
+                envelope = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            if websocket.client_state != WebSocketState.CONNECTED:
+                return
+            try:
+                await websocket.send_json(envelope)
+            except Exception:
+                return
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=WEBSOCKET_AUTH_REVALIDATION_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    return
+                try:
+                    refreshed_user = authenticate_access_token(token)
+                    if (
+                        refreshed_user.username != current_user.username
+                        or not project_access_allowed(workflow_id, refreshed_user)
+                    ):
+                        await websocket.close(code=1008, reason="authorization expired")
+                        stop.set()
+                        return
+                    await websocket.send_json(
+                        {"event_type": "HEARTBEAT", "workflow_id": workflow_id, "timestamp": _utc_now()}
+                    )
+                except HTTPException:
+                    await websocket.close(code=1008, reason="authentication expired")
+                    stop.set()
+                    return
+                except Exception:
+                    return
+
+    forward_task = asyncio.create_task(forward())
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if str(message.get("type", "")).lower() == "ping":
+                await websocket.send_json({"event_type": "PONG", "timestamp": _utc_now()})
+            else:
+                await websocket.send_json({"event_type": "ERROR", "message": "unsupported_client_message"})
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+    except Exception:
+        pass
+    finally:
+        stop.set()
+        for task in (forward_task, heartbeat_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        default_event_bus.unsubscribe(topic, sub_id)
+        if websocket.client_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+
+@router.get("/events/{workflow_id}")
+async def execution_sse(
+    workflow_id: str,
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    """SSE fallback for clients that cannot establish a WebSocket."""
+    require_project_access(workflow_id, current_user)
+
+    topic = project_topic(workflow_id)
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
+
+    def on_event(_event_type: str, envelope: dict[str, Any]) -> None:
+        if envelope.get("payload", {}).get("workflow_id") != workflow_id:
+            return
+        try:
+            queue.put_nowait(dict(envelope))
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(dict(envelope))
+            except asyncio.QueueFull:
+                pass
 
     sub_id = default_event_bus.subscribe(topic, on_event)
 
@@ -328,11 +398,14 @@ async def execution_sse(
         try:
             yield ": connected\n\n"
             yield f"event: SSE_CONNECTED\ndata: {json.dumps({'workflow_id': workflow_id})}\n\n"
-            while True:
+            idle_rounds = 0
+            while idle_rounds < 3:
                 try:
-                    envelope = await asyncio.wait_for(queue.get(), timeout=15)
+                    envelope = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    idle_rounds = 0
                     yield f"event: {envelope.get('event_type', 'message')}\ndata: {json.dumps(envelope)}\n\n"
                 except asyncio.TimeoutError:
+                    idle_rounds += 1
                     yield f": heartbeat {_utc_now()}\n\n"
         finally:
             default_event_bus.unsubscribe(topic, sub_id)
