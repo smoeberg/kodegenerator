@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import asdict
+from pathlib import Path
 
 # Development mode intentionally bypasses hardened runtime configuration so
 # importing api.main in CI cannot require production secrets or PostgreSQL.
@@ -12,6 +15,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from api.api_surface import CANONICAL_AUTHENTICATED_MODULES, CANONICAL_REALTIME_MODULES  # noqa: E402
 from api.endpoint_inventory import build_inventory  # noqa: E402
 from api.main import app  # noqa: E402
+
+
+INVENTORY_PATH = Path(__file__).resolve().parents[2] / "docs" / "api-endpoint-inventory.json"
 
 
 def test_inventory_is_machine_derived_and_unique() -> None:
@@ -27,6 +33,12 @@ def test_inventory_is_machine_derived_and_unique() -> None:
     assert any(record.path == "/api/v1/swarm/ws/{project_id}" for record in records)
     assert any(record.path == "/api/v1/execution/ws/{workflow_id}" for record in records)
     assert any(record.path == "/api/v1/execution/events/{workflow_id}" for record in records)
+
+
+def test_committed_inventory_matches_mounted_routes() -> None:
+    actual = [asdict(record) for record in build_inventory(app.routes)]
+    committed = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))["endpoints"]
+    assert committed == actual
 
 
 def test_path_and_method_are_distinct_operations() -> None:
