@@ -68,7 +68,7 @@ def status_badge(value: object, *, blocking: bool = False) -> str:
         readable = normalized.replace("_", " ").upper() or "UNKNOWN"
         label = f"⚪ {readable}"
     if blocking and "BLOCKING" not in label:
-        label = f"{label} · 🛑 BLOCKING"
+        label = f"{label} · BLOCKING"
     return label
 
 
