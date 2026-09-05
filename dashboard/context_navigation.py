@@ -9,6 +9,7 @@ import streamlit as st
 from dashboard.api_client import DORAPIClient, DORAPIError
 
 _ALL_PROJECTS = "__all_projects__"
+_CATALOG_STATE_KEY = "project_context_catalog"
 
 
 def normalize_project_catalog(payload: Any) -> dict[str, Any]:
@@ -46,6 +47,16 @@ def normalize_project_catalog(payload: Any) -> dict[str, Any]:
     return {"organization_id": organization_id, "projects": projects}
 
 
+def sync_organization_context(client: DORAPIClient) -> dict[str, Any]:
+    """Refresh the authenticated tenant/project catalog once per app rerun."""
+    catalog = normalize_project_catalog(client.get("/api/v1/control-plane/projects"))
+    st.session_state[_CATALOG_STATE_KEY] = catalog
+    organization_id = catalog["organization_id"]
+    if organization_id:
+        st.session_state["organization_id"] = organization_id
+    return catalog
+
+
 def _clear_execution_context() -> None:
     st.session_state["selected_workflow_id"] = None
     st.session_state.pop("workflow_input", None)
@@ -57,36 +68,37 @@ def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
     """Render Organization -> Project -> Execution context from backend state."""
     st.subheader("🧭 Arbejdskontekst")
 
-    try:
-        catalog = normalize_project_catalog(
-            client.get("/api/v1/control-plane/projects")
-        )
-    except DORAPIError as exc:
-        if exc.status_code == 401:
-            raise
-        st.warning(
-            f"Projektkatalog ikke tilgængeligt ({exc.status_code}): {exc}. "
-            "Manuel cockpit-fallback er fortsat tilgængelig."
-        )
-        catalog = {
-            "organization_id": st.session_state.get("organization_id"),
-            "projects": [],
-        }
-    except Exception as exc:
-        st.warning(
-            f"Projektkatalog ikke tilgængeligt: {exc}. "
-            "Manuel cockpit-fallback er fortsat tilgængelig."
-        )
-        catalog = {
-            "organization_id": st.session_state.get("organization_id"),
-            "projects": [],
-        }
+    catalog = st.session_state.get(_CATALOG_STATE_KEY)
+    if not isinstance(catalog, Mapping):
+        try:
+            catalog = sync_organization_context(client)
+        except DORAPIError as exc:
+            if exc.status_code == 401:
+                raise
+            st.warning(
+                f"Projektkatalog ikke tilgængeligt ({exc.status_code}): {exc}. "
+                "Manuel cockpit-fallback er fortsat tilgængelig."
+            )
+            catalog = {
+                "organization_id": st.session_state.get("organization_id"),
+                "projects": [],
+            }
+        except Exception as exc:
+            st.warning(
+                f"Projektkatalog ikke tilgængeligt: {exc}. "
+                "Manuel cockpit-fallback er fortsat tilgængelig."
+            )
+            catalog = {
+                "organization_id": st.session_state.get("organization_id"),
+                "projects": [],
+            }
 
-    organization_id = catalog["organization_id"]
+    organization_id = catalog.get("organization_id")
     if organization_id:
         st.session_state["organization_id"] = organization_id
 
-    projects = catalog["projects"]
+    projects_value = catalog.get("projects")
+    projects = projects_value if isinstance(projects_value, list) else []
     by_id = {item["project_id"]: item for item in projects}
     current_project_id = st.session_state.get("selected_project_id")
 
