@@ -94,6 +94,7 @@ def test_project_audit_derives_resource_objectives_and_provenance_from_intent(
 
 def test_project_audit_rejects_repository_and_objective_override(tmp_path) -> None:
     intent = _intent(OnboardingPurpose.EXTEND)
+    _init_repository(tmp_path, _dor_files())
     runtime = ProjectAuditRuntime(tmp_path)
     provider = DORBaselineProjectAuditProvider()
 
