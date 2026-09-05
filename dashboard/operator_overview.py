@@ -77,7 +77,10 @@ def normalize_execution_overview(payload: Any) -> list[dict[str, Any]]:
         )
 
     # Stable two-pass ordering: newest first within each operator-attention bucket.
-    normalized.sort(key=lambda item: (item["updated_at"], item["workflow_id"]), reverse=True)
+    normalized.sort(
+        key=lambda item: (item["updated_at"], item["workflow_id"]),
+        reverse=True,
+    )
     normalized.sort(key=lambda item: _ACTION_PRIORITY[item["action_required"]])
     return normalized
 
@@ -93,6 +96,10 @@ def overview_metrics(executions: list[dict[str, Any]]) -> dict[str, int]:
         "blocking": sum(item["blocking_gate"] is not None for item in active),
         "rework": sum(item["action_required"] == "rework_active" for item in active),
     }
+
+
+def _manual_fallback() -> None:
+    st.info("Angiv et Workflow ID manuelt nedenfor for at fortsætte i cockpittet.")
 
 
 def _render_action_state(item: dict[str, Any]) -> None:
@@ -121,11 +128,13 @@ def render_operator_overview(client: DORAPIClient) -> None:
         if exc.status_code == 401:
             raise
         st.warning(f"Execution-overblik ikke tilgængeligt ({exc.status_code}): {exc}")
+        _manual_fallback()
         return
     except Exception as exc:
         # The overview is read-only and must degrade without hiding the manual
         # cockpit path if its summary projection is temporarily unavailable.
         st.warning(f"Execution-overblik ikke tilgængeligt: {exc}")
+        _manual_fallback()
         return
 
     metrics = overview_metrics(executions)
