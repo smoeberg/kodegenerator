@@ -6,9 +6,12 @@ from datetime import datetime
 from typing import Any
 
 from domain.requirements import Approval, RequirementsSpecification, approval_for
-from phase4.onboarding import OnboardingIntent, objectives_for
+from phase4.onboarding import (
+    ONBOARDING_INTENT_CONTEXT_KEY,
+    OnboardingIntent,
+    objectives_for,
+)
 from phase4.project_audit.models import ProjectAuditReport
-from phase4.project_audit.runtime import ONBOARDING_INTENT_CONTEXT_KEY
 from services.requirements_validator import ValidationResult, validate_requirements
 
 
