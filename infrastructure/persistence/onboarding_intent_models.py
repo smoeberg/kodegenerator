@@ -4,7 +4,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKeyConstraint, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -47,5 +55,13 @@ class OnboardingIntentModel(Base):
             ["organization_id", "supersedes_intent_id"],
             ["onboarding_intents.organization_id", "onboarding_intents.intent_id"],
             name="fk_onboarding_intent_supersedes_org",
+        ),
+        Index(
+            "uq_onboarding_intent_root_repository",
+            "organization_id",
+            "source_repository",
+            unique=True,
+            postgresql_where=text("supersedes_intent_id IS NULL"),
+            sqlite_where=text("supersedes_intent_id IS NULL"),
         ),
     )
