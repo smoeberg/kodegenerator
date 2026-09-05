@@ -2,12 +2,14 @@
 
 Commands
 --------
+- ``kodegen onboarding <repository> --purpose ...`` — governed onboarding intent via Core API
 - ``kodegen run "<requirement>"`` — TaskRouter + WBS + local worker pool
 - ``kodegen worker --concurrency 4`` — dedicated worker daemon pool
 - ``kodegen status --project-id <id>`` — completion, DLQ, CostOptimizer spend
 
 Usage::
 
+    python -m cli.main onboarding repository:external/example --purpose audit_only --rationale "Assess current state"
     python -m cli.main run "Build a secure order API"
     python -m cli.main status --project-id proj-abc123
     python -m cli.main worker --concurrency 4 --max-idle-cycles 3
@@ -17,8 +19,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
+from cli.commands import onboarding as onboarding_cmd
 from cli.commands import run as run_cmd
 from cli.commands import status as status_cmd
 from cli.commands import worker as worker_cmd
@@ -40,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Logging level (default: WARNING)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    onboarding_cmd.register_parser(sub)
     run_cmd.register_parser(sub)
     worker_cmd.register_parser(sub)
     status_cmd.register_parser(sub)
@@ -57,6 +61,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     handler = getattr(args, "handler", None)
+    if handler == "onboarding":
+        return onboarding_cmd.execute(args)
     if handler == "run":
         return run_cmd.execute(args)
     if handler == "worker":
