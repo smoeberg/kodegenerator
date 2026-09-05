@@ -36,6 +36,8 @@ REPOSITORY = "repository:smoeberg/kodegenerator"
 
 def _intent(
     purpose: OnboardingPurpose = OnboardingPurpose.EXTEND,
+    *,
+    rationale: str = "Human-declared purpose for the governed integration test.",
 ) -> OnboardingIntent:
     target_stack = None
     if purpose is OnboardingPurpose.MODERNIZE_REWRITE:
@@ -49,7 +51,7 @@ def _intent(
     draft = OnboardingIntentDraft(
         source_repository=REPOSITORY,
         purpose=purpose,
-        rationale="Human-declared purpose for the governed integration test.",
+        rationale=rationale,
         target_stack=target_stack,
     )
     return OnboardingIntent.from_draft(
@@ -106,6 +108,17 @@ def test_project_audit_rejects_repository_and_objective_override(tmp_path) -> No
             intent=intent,
             objectives=("reinterpret the human purpose",),
             provider=provider,
+        )
+
+
+def test_project_audit_fails_closed_if_ai2_cannot_preserve_full_intent(tmp_path) -> None:
+    _init_repository(tmp_path, _dor_files())
+    oversized = _intent(rationale="x" * (70 * 1024))
+
+    with pytest.raises(ProjectAuditRuntimeError, match="preserve"):
+        ProjectAuditRuntime(tmp_path).run(
+            intent=oversized,
+            provider=DORBaselineProjectAuditProvider(),
         )
 
 
