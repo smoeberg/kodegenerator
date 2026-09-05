@@ -269,7 +269,7 @@ def test_execution_401_clears_auth_and_returns_to_login(fake_api: FakeAPI) -> No
         (
             "❌ Afvis gate",
             "rejected",
-            "Gate er afvist. Workflowet forbliver fail-closed",
+            "Gate er afvist og workflowet forbliver fail-closed. "
         ),
     ],
 )
