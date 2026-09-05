@@ -16,7 +16,11 @@ from phase4.authority import (
 from phase4.authority.grants import VerifiedAuthorityGrant
 from phase4.context_packet import ContextItem, ContextPacketEngine, ContextRequest
 from phase4.execution import ExecutionEngine, ExecutionResult, ExecutionStatus
-from phase4.onboarding import OnboardingIntent, objectives_for
+from phase4.onboarding import (
+    ONBOARDING_INTENT_CONTEXT_KEY,
+    OnboardingIntent,
+    objectives_for,
+)
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
@@ -36,7 +40,6 @@ DEFAULT_AUDIT_OBJECTIVES = (
     "separate contract completeness from production readiness",
     "recommend the next development priority from repository evidence",
 )
-ONBOARDING_INTENT_CONTEXT_KEY = "onboarding-intent"
 
 
 class ProjectAuditRuntimeError(RuntimeError):
@@ -278,7 +281,9 @@ def _resolve_onboarding_inputs(
 
     if intent is None:
         if not isinstance(repository, str) or not repository.strip():
-            raise ValueError("repository is required when no onboarding intent is supplied")
+            raise ValueError(
+                "repository is required when no onboarding intent is supplied"
+            )
         return repository, objectives or DEFAULT_AUDIT_OBJECTIVES
 
     if repository is not None and repository != intent.source_repository:
