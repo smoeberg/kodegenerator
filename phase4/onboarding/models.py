@@ -55,14 +55,23 @@ class OnboardingIntentDraft:
     def __post_init__(self) -> None:
         _canonical_text(self.source_repository, "source_repository")
         _canonical_text(self.rationale, "rationale")
-        if any(character in self.source_repository for character in _AUTHORITY_GLOB_CHARS):
+        if any(
+            character in self.source_repository
+            for character in _AUTHORITY_GLOB_CHARS
+        ):
             raise OnboardingContractError(
                 "source_repository must be an exact identity without authority glob characters"
             )
         if not isinstance(self.purpose, OnboardingPurpose):
-            raise OnboardingContractError("purpose must be a declared OnboardingPurpose")
-        if self.target_stack is not None and not isinstance(self.target_stack, ProjectDefinition):
-            raise OnboardingContractError("target_stack must be a ProjectDefinition when supplied")
+            raise OnboardingContractError(
+                "purpose must be a declared OnboardingPurpose"
+            )
+        if self.target_stack is not None and not isinstance(
+            self.target_stack, ProjectDefinition
+        ):
+            raise OnboardingContractError(
+                "target_stack must be a ProjectDefinition when supplied"
+            )
 
         has_target = self.target_stack is not None
         if self.purpose is OnboardingPurpose.MODERNIZE_REWRITE and not has_target:
@@ -83,14 +92,18 @@ class OnboardingIntentDraft:
         return _fingerprint(self.semantic_payload())
 
     def semantic_payload(self) -> dict[str, Any]:
-        """Return stable JSON-ready content used by audit/downstream binding."""
+        """Return stable semantic content used by audit/downstream binding.
+
+        Supersession is provenance about how a record relates to history, not a
+        change to the meaning of the declared purpose. It is therefore excluded
+        from this payload and bound separately into the recorded ``intent_id``.
+        """
 
         return {
             "source_repository": self.source_repository,
             "purpose": self.purpose.value,
             "rationale": self.rationale,
             "target_stack": _target_stack_payload(self.target_stack),
-            "supersedes_intent_id": self.supersedes_intent_id,
         }
 
 
@@ -111,7 +124,9 @@ class OnboardingIntent:
     organization_id: str
     target_stack: ProjectDefinition | None = None
     supersedes_intent_id: str | None = None
-    declared_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    declared_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     intent_id: str = field(init=False)
     content_fingerprint: str = field(init=False)
 
@@ -133,11 +148,14 @@ class OnboardingIntent:
             **draft.semantic_payload(),
             "declared_by": self.declared_by,
             "organization_id": self.organization_id,
+            "supersedes_intent_id": self.supersedes_intent_id,
         }
         object.__setattr__(self, "intent_id", _fingerprint(identity_payload))
 
         if self.supersedes_intent_id == self.intent_id:
-            raise OnboardingContractError("an onboarding intent cannot supersede itself")
+            raise OnboardingContractError(
+                "an onboarding intent cannot supersede itself"
+            )
 
     @classmethod
     def from_draft(
@@ -180,7 +198,9 @@ class OnboardingIntent:
         }
 
 
-def _target_stack_payload(target_stack: ProjectDefinition | None) -> dict[str, Any] | None:
+def _target_stack_payload(
+    target_stack: ProjectDefinition | None,
+) -> dict[str, Any] | None:
     if target_stack is None:
         return None
     return target_stack.model_dump(mode="json")
@@ -198,16 +218,22 @@ def _fingerprint(payload: object) -> str:
 
 def _canonical_text(value: object, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise OnboardingContractError(f"{field_name} must be a non-empty string")
+        raise OnboardingContractError(
+            f"{field_name} must be a non-empty string"
+        )
     if value != value.strip():
-        raise OnboardingContractError(f"{field_name} must not contain outer whitespace")
+        raise OnboardingContractError(
+            f"{field_name} must not contain outer whitespace"
+        )
     return value
 
 
 def _fingerprint_id(value: object, field_name: str) -> str:
     canonical = _canonical_text(value, field_name)
     if not _FINGERPRINT_RE.fullmatch(canonical):
-        raise OnboardingContractError(f"{field_name} must be a lowercase SHA-256 fingerprint")
+        raise OnboardingContractError(
+            f"{field_name} must be a lowercase SHA-256 fingerprint"
+        )
     return canonical
 
 
@@ -215,5 +241,7 @@ def _utc_datetime(value: object, field_name: str) -> datetime:
     if not isinstance(value, datetime):
         raise OnboardingContractError(f"{field_name} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
-        raise OnboardingContractError(f"{field_name} must be timezone-aware")
+        raise OnboardingContractError(
+            f"{field_name} must be timezone-aware"
+        )
     return value.astimezone(timezone.utc)
