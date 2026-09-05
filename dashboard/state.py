@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.build_identity import current_build_identity
 
 
@@ -27,6 +28,22 @@ def init_state() -> None:
     st.sidebar.caption(
         f"DOR build `{identity.short_fingerprint}` · revision `{revision}`"
     )
+
+    token = st.session_state.get("access_token")
+    if token:
+        # Bootstrap the tenant/project context from the authenticated API rather
+        # than decoding JWT claims or requiring a manual organization input.
+        from dashboard.context_navigation import sync_organization_context
+
+        try:
+            sync_organization_context(DORAPIClient(token=token))
+        except DORAPIError as exc:
+            if exc.status_code == 401:
+                clear_auth()
+        except Exception:
+            # Context navigation is a read-only convenience surface. Transport
+            # failure must not suppress the existing manual API/cockpit paths.
+            pass
 
 
 def clear_auth() -> None:
