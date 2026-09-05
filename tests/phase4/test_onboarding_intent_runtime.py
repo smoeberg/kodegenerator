@@ -11,6 +11,8 @@ from domain.authority import RoleAssignment, RoleDefinition
 from domain.event import EventType
 from domain.organization import Organization
 from domain.principal import Principal
+from generation.project_spec import ProjectDefinition
+from infrastructure.persistence.command_repository import CommandRepository
 from infrastructure.persistence.models import CommandExecutionModel, EventModel
 from infrastructure.persistence.onboarding_intent_models import OnboardingIntentModel
 from infrastructure.persistence.uow import UnitOfWork
@@ -131,7 +133,7 @@ def test_declaration_fails_closed_without_external_capability_and_self_grants_no
     assert _counts(runtime, command.command_id) == (0, 0, 1)
     with runtime.database.session("org-a") as session:
         denial = session.query(EventModel).filter_by(correlation_id=command.command_id).one()
-    assert denial.event_type == EventType.AUTHORIZATION_DENIED.value
+    assert denial.event_type == EventType.AUTHORIZATION_DENIED.name
 
 
 def test_external_role_grant_records_trusted_actor_org_and_atomic_evidence(
@@ -158,8 +160,8 @@ def test_external_role_grant_records_trusted_actor_org_and_atomic_evidence(
             .one()
         )
     assert {row.event_type for row in rows} == {
-        EventType.AUTHORIZATION_GRANTED.value,
-        EventType.INTENT_CREATED.value,
+        EventType.AUTHORIZATION_GRANTED.name,
+        EventType.INTENT_CREATED.name,
     }
     assert receipt.aggregate_id == result.intent.intent_id
     assert receipt.actor_id == "actor-a"
@@ -189,6 +191,38 @@ def test_exact_command_replay_survives_restart_without_new_events(tmp_path: Path
     assert after_restart.replayed is True
     assert after_restart.intent.intent_id == first.intent.intent_id
     assert _counts(restarted, command.command_id) == (1, 1, 2)
+
+
+def test_rewrite_target_stack_roundtrips_through_durable_persistence(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    _grant(runtime)
+    target = ProjectDefinition(
+        name="modernized-app",
+        architecture="hexagonal",
+        language="rust",
+        api="axum",
+        database="postgresql",
+    )
+    command = _command(
+        "rewrite",
+        draft=OnboardingIntentDraft(
+            source_repository=REPOSITORY,
+            purpose=OnboardingPurpose.MODERNIZE_REWRITE,
+            rationale="Preserve behavior while moving to the explicit target stack.",
+            target_stack=target,
+        ),
+    )
+
+    first = OnboardingRuntime(runtime).declare_intent(_context(runtime), command)
+    restarted = DORRuntime(runtime.database_url)
+    restarted.boot()
+    replay = OnboardingRuntime(restarted).declare_intent(_context(restarted), command)
+
+    assert replay.replayed is True
+    assert replay.intent.intent_id == first.intent.intent_id
+    assert replay.intent.target_stack == target
 
 
 def test_command_id_cannot_be_rebound_to_changed_semantics_or_tenant(
@@ -367,3 +401,21 @@ def test_equivalent_intent_under_new_command_is_not_duplicated(tmp_path: Path) -
     with runtime.database.session("org-a") as session:
         assert session.query(OnboardingIntentModel).count() == 1
         assert session.query(CommandExecutionModel).count() == 1
+
+
+def test_receipt_failure_rolls_back_intent_and_granted_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    _grant(runtime)
+    command = _command("receipt-failure")
+
+    def fail_receipt(*args, **kwargs):
+        raise RuntimeError("simulated command receipt failure")
+
+    monkeypatch.setattr(CommandRepository, "add", fail_receipt)
+    with pytest.raises(RuntimeError, match="receipt failure"):
+        OnboardingRuntime(runtime).declare_intent(_context(runtime), command)
+
+    assert _counts(runtime, command.command_id) == (0, 0, 0)
