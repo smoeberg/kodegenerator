@@ -37,6 +37,7 @@ def clear_auth() -> None:
     st.session_state["selected_project_fingerprint"] = None
     st.session_state["selected_workflow_id"] = None
     st.session_state.pop("workflow_input", None)
+    st.session_state.pop("project_context_catalog", None)
 
 
 def authenticated() -> bool:
