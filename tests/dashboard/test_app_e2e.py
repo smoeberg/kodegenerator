@@ -80,6 +80,8 @@ class FakeAPI:
                 "resolved": False,
                 "decision": None,
                 "blocking": True,
+                "round": 1,
+                "retry_allowed": False,
             }
         ]
         self.proposals = [
@@ -142,20 +144,37 @@ class FakeAPI:
         if path == "/api/v1/execution/wf-1/gates/decide":
             payload = kwargs["json"]
             decision = payload["decision"]
+            current_round = int(self.gates[0].get("round", 1))
             self.gates[0]["resolved"] = True
             self.gates[0]["decision"] = decision
             self.gates[0]["blocking"] = decision == "rejected"
-            self.execution["context"]["gate_decision_history"] = [
+            self.gates[0]["retry_allowed"] = decision == "rejected"
+            self.execution["context"]["gate_decision_history"].append(
                 {
                     "gate_id": payload["gate_id"],
                     "decision": decision,
                     "approver": "controller",
+                    "round": current_round,
                 }
-            ]
+            )
             return {
                 "gate_id": payload["gate_id"],
                 "decision": decision,
                 "workflow_advanced": decision == "approved",
+            }
+        if path == "/api/v1/execution/wf-1/gates/retry":
+            payload = kwargs["json"]
+            self.gates[0]["resolved"] = False
+            self.gates[0]["decision"] = None
+            self.gates[0]["blocking"] = True
+            self.gates[0]["round"] = int(self.gates[0].get("round", 1)) + 1
+            self.gates[0]["retry_allowed"] = False
+            return {
+                "gate_id": payload["gate_id"],
+                "round": self.gates[0]["round"],
+                "decision": None,
+                "blocking": True,
+                "workflow_advanced": False,
             }
         return {"ok": True}
 
@@ -250,7 +269,7 @@ def test_execution_401_clears_auth_and_returns_to_login(fake_api: FakeAPI) -> No
         (
             "❌ Afvis gate",
             "rejected",
-            "Gate er afvist. Workflowet forbliver fail-closed",
+            "Gate er afvist og workflowet forbliver fail-closed. "
         ),
     ],
 )
@@ -275,6 +294,52 @@ def test_gate_decision_posts_exact_payload_and_rerenders_backend_state(
 
     visible_messages = _values(at.success) + _values(at.warning)
     assert any(expected_message in message for message in visible_messages)
+    assert not at.exception
+
+
+def test_rejected_gate_retry_opens_round_two_without_advancing(
+    fake_api: FakeAPI,
+) -> None:
+    at = _open_workflow(_run_app())
+    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=5)
+
+    assert fake_api.gates[0]["decision"] == "rejected"
+    assert fake_api.gates[0]["retry_allowed"] is True
+    assert _by_label(at.button, "↻ Åbn gate igen")
+
+    _by_label(at.text_area, "Begrundelse for genåbning").set_value(
+        "Korrigeret evidens er klar til en ny human vurdering."
+    )
+    at = _by_label(at.button, "↻ Åbn gate igen").click().run(timeout=5)
+
+    assert (
+        "POST",
+        "/api/v1/execution/wf-1/gates/retry",
+        {
+            "json": {
+                "gate_id": "gate-1",
+                "reason": "Korrigeret evidens er klar til en ny human vurdering.",
+            }
+        },
+    ) in fake_api.calls
+    assert fake_api.gates[0] == {
+        "id": "gate-1",
+        "name": "Architecture approval",
+        "description": "Human decision required.",
+        "resolved": False,
+        "decision": None,
+        "blocking": True,
+        "round": 2,
+        "retry_allowed": False,
+    }
+    assert _by_label(at.button, "✅ Godkend gate")
+    assert _by_label(at.button, "❌ Afvis gate")
+    assert not any(
+        path == "/api/v1/execution/wf-1/advance"
+        for method, path, _kwargs in fake_api.calls
+        if method == "POST"
+    )
+    assert any("Round: `2`" in value for value in _values(at.caption))
     assert not at.exception
 
 

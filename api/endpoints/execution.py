@@ -50,6 +50,13 @@ class GateDecisionRequest(BaseModel):
     decision: str = Field(default="approved", pattern="^(approved|rejected)$")
 
 
+class GateRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gate_id: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class ImplementationProposalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -216,17 +223,23 @@ def list_execution_gates(
     orch = _orchestrator(dor)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     blocker = orch.get_blocking_gate(workflow_id)
-    return [
-        {
-            "id": gate.id,
-            "name": gate.name,
-            "description": gate.description,
-            "resolved": gate.decision_id is not None,
-            "decision": orch.get_gate_decision(workflow_id, gate.id),
-            "blocking": blocker is not None and blocker["gate_id"] == gate.id,
-        }
-        for gate in workflow.gates
-    ]
+    result: list[dict[str, Any]] = []
+    for gate in workflow.gates:
+        decision = orch.get_gate_decision(workflow_id, gate.id)
+        blocking = blocker is not None and blocker["gate_id"] == gate.id
+        result.append(
+            {
+                "id": gate.id,
+                "name": gate.name,
+                "description": gate.description,
+                "resolved": decision is not None,
+                "decision": decision,
+                "blocking": blocking,
+                "round": orch.get_gate_round(workflow_id, gate.id),
+                "retry_allowed": blocking and decision == "rejected",
+            }
+        )
+    return result
 
 
 @router.post("/{workflow_id}/gates/decide")
@@ -262,6 +275,41 @@ def decide_execution_gate(
             "decision": result["decision"],
             "approved": result["approved"],
             "workflow_advanced": result["workflow_advanced"],
+            "status": workflow.current_state.value,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{workflow_id}/gates/retry")
+def retry_execution_gate(
+    workflow_id: str,
+    request: GateRetryRequest,
+    dor: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """Open a new decision round for the current rejected blocking gate."""
+    orch = _orchestrator(dor)
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
+    try:
+        result = orch.retry_gate(
+            workflow_id,
+            request.gate_id,
+            actor=current_user.username,
+            reason=request.reason,
+        )
+        _emit(
+            workflow,
+            "GATE_RETRY_OPENED",
+            {
+                "gate_id": request.gate_id,
+                "round": result["round"],
+                "actor": current_user.username,
+            },
+        )
+        return {
+            "workflow_id": workflow_id,
+            **result,
             "status": workflow.current_state.value,
         }
     except ValueError as exc:

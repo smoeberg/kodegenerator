@@ -4,6 +4,7 @@ from dashboard.cockpit_view_model import (
     build_evidence_trace,
     build_execution_summary,
     gate_decision_payload,
+    gate_retry_payload,
     interpret_advance_error,
     normalize_gates,
     normalize_proposals,
@@ -56,6 +57,8 @@ def test_normalize_gates_preserves_pending_approved_and_rejected_states():
                 "resolved": False,
                 "decision": None,
                 "blocking": True,
+                "round": 2,
+                "retry_allowed": False,
             },
             {
                 "id": "approved_gate",
@@ -64,6 +67,8 @@ def test_normalize_gates_preserves_pending_approved_and_rejected_states():
                 "resolved": True,
                 "decision": "approved",
                 "blocking": False,
+                "round": 1,
+                "retry_allowed": False,
             },
             {
                 "id": "rejected_gate",
@@ -72,6 +77,8 @@ def test_normalize_gates_preserves_pending_approved_and_rejected_states():
                 "resolved": True,
                 "decision": "rejected",
                 "blocking": True,
+                "round": 1,
+                "retry_allowed": True,
             },
         ]
     )
@@ -79,15 +86,53 @@ def test_normalize_gates_preserves_pending_approved_and_rejected_states():
     assert gates[0]["status"] == "human_required"
     assert gates[0]["can_decide"] is True
     assert gates[0]["blocking"] is True
+    assert gates[0]["round"] == 2
+    assert gates[0]["can_retry"] is False
 
     assert gates[1]["status"] == "approved"
     assert gates[1]["decision"] == "approved"
     assert gates[1]["can_decide"] is False
+    assert gates[1]["can_retry"] is False
 
     assert gates[2]["status"] == "rejected"
     assert gates[2]["decision"] == "rejected"
     assert gates[2]["blocking"] is True
     assert gates[2]["can_decide"] is False
+    assert gates[2]["can_retry"] is True
+
+
+def test_normalize_gates_retry_authority_fails_closed_without_backend_flag():
+    gate = normalize_gates(
+        [
+            {
+                "id": "rejected_gate",
+                "resolved": True,
+                "decision": "rejected",
+                "blocking": True,
+            }
+        ]
+    )[0]
+
+    assert gate["status"] == "rejected"
+    assert gate["round"] == 1
+    assert gate["can_retry"] is False
+
+
+def test_normalize_gates_does_not_trust_retry_flag_for_wrong_state():
+    gate = normalize_gates(
+        [
+            {
+                "id": "pending_gate",
+                "resolved": False,
+                "decision": None,
+                "blocking": True,
+                "retry_allowed": True,
+            }
+        ]
+    )[0]
+
+    assert gate["status"] == "human_required"
+    assert gate["can_retry"] is False
 
 
 def test_normalize_gates_keeps_legacy_resolved_gate_locked():
@@ -105,6 +150,7 @@ def test_normalize_gates_keeps_legacy_resolved_gate_locked():
     assert gate["status"] == "resolved"
     assert gate["decision"] is None
     assert gate["can_decide"] is False
+    assert gate["can_retry"] is False
 
 
 def test_gate_decision_payload_matches_fastapi_contract():
@@ -122,6 +168,24 @@ def test_gate_decision_payload_matches_fastapi_contract():
 def test_gate_decision_payload_rejects_non_contract_values(decision):
     with pytest.raises(ValueError):
         gate_decision_payload("security_gate", decision)
+
+
+def test_gate_retry_payload_matches_fastapi_contract():
+    assert gate_retry_payload(" security_gate ", " corrected evidence ") == {
+        "gate_id": "security_gate",
+        "reason": "corrected evidence",
+    }
+
+
+@pytest.mark.parametrize("gate_id,reason", [("", "reason"), ("security_gate", "   ")])
+def test_gate_retry_payload_requires_gate_and_reason(gate_id, reason):
+    with pytest.raises(ValueError):
+        gate_retry_payload(gate_id, reason)
+
+
+def test_gate_retry_payload_enforces_backend_reason_limit():
+    with pytest.raises(ValueError, match="at most 2000"):
+        gate_retry_payload("security_gate", "x" * 2001)
 
 
 def test_interpret_advance_error_treats_blocking_gate_as_governance_state():

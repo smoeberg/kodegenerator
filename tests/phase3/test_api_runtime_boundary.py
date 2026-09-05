@@ -107,6 +107,7 @@ def test_api_main_mounts_only_canonical_router_whitelist(monkeypatch):
     assert "/api/v1/pipeline-gates/approve" in paths
     # Development/execution cockpit is a canonical authenticated router as well.
     assert "/api/v1/execution/{workflow_id}" in paths
+    assert "/api/v1/execution/{workflow_id}/gates/retry" in paths
 
 
 def test_retired_legacy_router_modules_do_not_exist() -> None:

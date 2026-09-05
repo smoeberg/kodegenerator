@@ -66,6 +66,10 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
         raw_decision = str(item.get("decision") or "").strip().lower()
         decision = raw_decision if raw_decision in {"approved", "rejected"} else None
         blocking = bool(item.get("blocking"))
+        try:
+            gate_round = max(1, int(item.get("round", 1)))
+        except (TypeError, ValueError):
+            gate_round = 1
 
         if decision == "rejected":
             status = "rejected"
@@ -76,6 +80,10 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
         else:
             status = "human_required"
 
+        # Retry authority is deliberately backend-owned. A malformed or missing
+        # retry_allowed field fails closed even if the local presentation state
+        # happens to look rejected/blocking.
+        backend_retry_allowed = item.get("retry_allowed") is True
         normalized.append(
             {
                 "id": gate_id,
@@ -84,7 +92,13 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
                 "resolved": resolved,
                 "decision": decision,
                 "blocking": blocking,
+                "round": gate_round,
                 "can_decide": not resolved,
+                "can_retry": (
+                    backend_retry_allowed
+                    and status == "rejected"
+                    and blocking
+                ),
                 "status": status,
             }
         )
@@ -100,6 +114,19 @@ def gate_decision_payload(gate_id: str, decision: str) -> dict[str, str]:
     if decision not in {"approved", "rejected"}:
         raise ValueError("decision must be 'approved' or 'rejected'")
     return {"gate_id": gate_id, "decision": decision}
+
+
+def gate_retry_payload(gate_id: str, reason: str) -> dict[str, str]:
+    """Build the exact GateRetryRequest payload accepted by FastAPI."""
+    gate_id = gate_id.strip()
+    reason = reason.strip()
+    if not gate_id:
+        raise ValueError("gate_id is required")
+    if not reason:
+        raise ValueError("reason is required")
+    if len(reason) > 2000:
+        raise ValueError("reason must be at most 2000 characters")
+    return {"gate_id": gate_id, "reason": reason}
 
 
 def interpret_advance_error(status_code: int, message: str) -> dict[str, Any]:
