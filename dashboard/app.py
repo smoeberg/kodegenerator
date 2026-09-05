@@ -9,6 +9,7 @@ from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_view_model import (
     build_execution_summary,
     gate_decision_payload,
+    gate_rework_payload,
     gate_retry_payload,
     interpret_advance_error,
     normalize_gates,
@@ -381,8 +382,60 @@ def development_page(client: DORAPIClient) -> None:
                     if gate["status"] == "rejected":
                         st.warning(
                             "Gate er afvist og workflowet forbliver fail-closed. "
-                            "En ny beslutningsrunde kræver en eksplicit backend-godkendt retry."
+                            "En ny beslutningsrunde kræver eksplicit backend-godkendt "
+                            "retry eller en succesfuld governed rework, hvor det understøttes."
                         )
+
+                        if gate["rework_active"]:
+                            task_id = gate["rework_task_id"] or "ukendt task"
+                            task_type = gate["rework_task_type"] or "ukendt type"
+                            st.info(
+                                f"Rework-task `{task_id}` (`{task_type}`) er aktiv. "
+                                "Gaten forbliver rejected/blocking, indtil tasken lykkes."
+                            )
+
+                        if gate["can_rework"]:
+                            rework_reason = st.text_area(
+                                "Begrundelse for rework",
+                                key=f"rework_reason_{workflow_id}_{gate['id']}",
+                                max_chars=2000,
+                                help=(
+                                    "Backend auditerer begrundelsen og køer den canonical "
+                                    "upstream generation-task. Rework åbner ikke gaten før "
+                                    "tasken er gennemført med succes."
+                                ),
+                            )
+                            task_type = gate["rework_task_type"] or "upstream task"
+                            if st.button(
+                                "🛠️ Genkør upstream arbejde",
+                                key=f"rework_gate_{workflow_id}_{gate['id']}",
+                                help=f"Backend har valgt `{task_type}` som rework-task.",
+                            ):
+                                try:
+                                    payload = gate_rework_payload(
+                                        gate["id"], rework_reason
+                                    )
+                                except ValueError as exc:
+                                    st.warning(str(exc))
+                                else:
+                                    try:
+                                        result = client.post(
+                                            f"/api/v1/execution/{workflow_id}/gates/rework",
+                                            json=payload,
+                                        )
+                                        st.success(
+                                            "Rework-task blev køet. Gaten forbliver "
+                                            "rejected/blocking, indtil tasken lykkes; "
+                                            "derefter åbner backend næste beslutningsrunde."
+                                        )
+                                        with st.expander("Backend-resultat"):
+                                            st.json(result)
+                                        st.rerun()
+                                    except DORAPIError as exc:
+                                        st.error(
+                                            f"Gate-rework afvist ({exc.status_code}): {exc}"
+                                        )
+
                         if gate["can_retry"]:
                             retry_reason = st.text_area(
                                 "Begrundelse for genåbning",
@@ -420,7 +473,7 @@ def development_page(client: DORAPIClient) -> None:
                                         st.error(
                                             f"Gate-retry afvist ({exc.status_code}): {exc}"
                                         )
-                        else:
+                        elif not gate["rework_active"]:
                             st.caption(
                                 "Backend tillader ikke retry for denne gate i dens aktuelle state."
                             )
@@ -497,7 +550,6 @@ def development_page(client: DORAPIClient) -> None:
                 )
                 if proposal["summary"]:
                     st.write(proposal["summary"])
-
                 if not proposal["files"]:
                     st.caption("Forslaget indeholder ingen filer.")
                 for file_item in proposal["files"]:
