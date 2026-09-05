@@ -11,6 +11,8 @@ RUN python -m pip install --no-cache-dir --prefix=/install \
 
 FROM python:3.12-slim AS runtime
 
+ARG DOR_BUILD_REVISION=unknown
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/home/kodegen/.local/bin:$PATH
@@ -24,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python-is-pytho
 WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY --chown=kodegen:kodegen . /app
-RUN chmod 0555 /app/scripts/entrypoint.sh
+RUN python -m dashboard.build_identity \
+        --write-build-metadata /app \
+        --revision "${DOR_BUILD_REVISION}" \
+    && chmod 0555 /app/scripts/entrypoint.sh
 
 USER kodegen
 EXPOSE 8000
