@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from scripts.operator_readiness import (
@@ -8,6 +9,7 @@ from scripts.operator_readiness import (
     build_report,
     check_api,
     check_build_context,
+    check_compose,
     check_dashboard,
     evaluate_compose_records,
     parse_compose_ps,
@@ -90,13 +92,41 @@ def test_parse_compose_ps_supports_array_and_json_lines() -> None:
     assert parse_compose_ps(json_lines) == records
 
 
+def test_compose_probe_is_read_only_and_includes_stopped_one_shot_services() -> None:
+    observed: list[list[str]] = []
+
+    def runner(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(_healthy_compose_records()),
+            stderr="",
+        )
+
+    results = check_compose(Path("compose.yml"), runner=runner)
+
+    assert observed == [
+        [
+            "docker",
+            "compose",
+            "-f",
+            "compose.yml",
+            "ps",
+            "--all",
+            "--format",
+            "json",
+        ]
+    ]
+    assert all(result.status == "PASS" for result in results)
+
+
 def test_compose_evaluation_requires_all_runtime_services_healthy() -> None:
     results = evaluate_compose_records(_healthy_compose_records())
 
     assert all(result.status == "PASS" for result in results)
-    assert next(result for result in results if result.name == "compose:worker").detail.startswith(
-        "2 instance(s)"
-    )
+    worker = next(result for result in results if result.name == "compose:worker")
+    assert worker.detail.startswith("2 instance(s)")
 
     broken = _healthy_compose_records()
     broken[2] = {
@@ -106,7 +136,8 @@ def test_compose_evaluation_requires_all_runtime_services_healthy() -> None:
         "ExitCode": 0,
     }
     results = evaluate_compose_records(broken)
-    assert next(result for result in results if result.name == "compose:api").status == "FAIL"
+    api = next(result for result in results if result.name == "compose:api")
+    assert api.status == "FAIL"
 
 
 def test_compose_evaluation_requires_successful_migration() -> None:
@@ -120,7 +151,8 @@ def test_compose_evaluation_requires_successful_migration() -> None:
 
     results = evaluate_compose_records(broken)
 
-    assert next(result for result in results if result.name == "compose:migrate").status == "FAIL"
+    migrate = next(result for result in results if result.name == "compose:migrate")
+    assert migrate.status == "FAIL"
 
 
 def test_api_readiness_requires_canonical_alembic_head(tmp_path: Path) -> None:
