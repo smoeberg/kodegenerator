@@ -67,6 +67,7 @@ from api.endpoints import (  # noqa: E402
     execution_realtime,
     implementation_agent,
     integrations,
+    onboarding,
     pipeline,
     pipeline_gates,
     swarm,
@@ -125,6 +126,7 @@ if HAS_AUTH:
     # until they derive identity and tenant scope from the verified principal.
     CANONICAL_AUTHENTICATED_ROUTERS = (
         control_plane.router,
+        onboarding.router,
         swarm.router,
         swarm_operations.router,
         workflows.router,
@@ -142,6 +144,7 @@ if HAS_AUTH:
     validate_canonical_modules(
         (
             control_plane.__name__,
+            onboarding.__name__,
             swarm.__name__,
             swarm_operations.__name__,
             workflows.__name__,
