@@ -325,7 +325,7 @@ class PipelineOrchestrator:
         self.advance_pipeline(workflow.id)
 
     def get_gate_decision(self, workflow_id: str, gate_id: str) -> str | None:
-        """Return the recorded gate decision, preserving legacy approvals."""
+        """Return the active-round gate decision, preserving legacy round-one data."""
         workflow = self._get_workflow(workflow_id)
         if workflow is None:
             raise ValueError(f"Pipeline {workflow_id} not found")
@@ -333,6 +333,15 @@ class PipelineOrchestrator:
         if gate is None:
             raise ValueError(f"Gate {gate_id} not found")
         return self._gate_decision(workflow, gate)
+
+    def get_gate_round(self, workflow_id: str, gate_id: str) -> int:
+        """Return the active decision round for a gate."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        if not any(g.id == gate_id for g in workflow.gates):
+            raise ValueError(f"Gate {gate_id} not found")
+        return self._gate_round(workflow, gate_id)
 
     def get_blocking_gate(self, workflow_id: str) -> dict[str, str] | None:
         """Return the current gate that blocks progression, if any."""
@@ -355,8 +364,9 @@ class PipelineOrchestrator:
         """Record a human gate decision and only advance on approval.
 
         A rejection is a completed human decision but remains fail-closed for
-        progression. A later rework/retry operation must explicitly clear or
-        replace that decision; simply calling ``advance_pipeline`` cannot bypass it.
+        progression. ``retry_gate`` opens a new decision round while retaining
+        prior decisions in the audit history; simply calling ``advance_pipeline``
+        cannot bypass a rejected or reopened gate.
         """
         normalized_decision = str(decision).strip().lower()
         if normalized_decision not in _SUPPORTED_GATE_DECISIONS:
@@ -373,15 +383,15 @@ class PipelineOrchestrator:
             raise ValueError(f"Gate {gate_id} not found")
         if gate.decision_id:
             existing = self._gate_decision(workflow, gate) or "unknown"
-            raise ValueError(
-                f"Gate {gate_id} already decided ({existing})"
-            )
+            raise ValueError(f"Gate {gate_id} already decided ({existing})")
 
-        gate.decision_id = f"decision-{workflow_id[:8]}-{gate_id}"
+        current_round = self._gate_round(workflow, gate_id)
+        gate.decision_id = f"decision-{workflow_id[:8]}-{gate_id}-r{current_round}"
         record = {
             "gate_id": gate_id,
             "approver": approver,
             "decision": normalized_decision,
+            "round": current_round,
         }
         workflow.context["gate_decision_history"] = list(
             workflow.context.get("gate_decision_history", []) or []
@@ -402,6 +412,66 @@ class PipelineOrchestrator:
             "workflow_advanced": workflow.current_state != state_before,
         }
 
+    def retry_gate(
+        self,
+        workflow_id: str,
+        gate_id: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Open a new decision round for the current rejected blocking gate.
+
+        Retry is deliberately narrower than work re-execution: it does not move the
+        workflow state or rerun an earlier task. The rejected decision remains in
+        ``gate_decision_history`` and a separate retry audit record explains who
+        reopened the gate and why.
+        """
+        normalized_reason = str(reason).strip()
+        if not normalized_reason:
+            raise ValueError("retry reason is required")
+
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        if gate is None:
+            raise ValueError(f"Gate {gate_id} not found")
+
+        blocker = self._blocking_gate(workflow)
+        if blocker is None or blocker[0].id != gate_id:
+            raise ValueError(f"Gate {gate_id} is not the current blocking gate")
+        active_decision = blocker[1]
+        if active_decision != "rejected":
+            raise ValueError(
+                f"Gate {gate_id} cannot be retried from decision "
+                f"{active_decision or 'pending'}"
+            )
+
+        current_round = self._gate_round(workflow, gate_id)
+        next_round = current_round + 1
+        workflow.context["gate_retry_history"] = list(
+            workflow.context.get("gate_retry_history", []) or []
+        ) + [
+            {
+                "gate_id": gate_id,
+                "actor": actor,
+                "reason": normalized_reason,
+                "from_round": current_round,
+                "to_round": next_round,
+            }
+        ]
+        self._set_gate_round(workflow, gate_id, next_round)
+        gate.decision_id = None
+        self._persist()
+
+        return {
+            "gate_id": gate_id,
+            "round": next_round,
+            "decision": None,
+            "blocking": True,
+            "workflow_advanced": False,
+        }
+
     def approve_gate(
         self, workflow_id: str, gate_id: str, approver: str, decision: str = "approved"
     ) -> bool:
@@ -420,31 +490,73 @@ class PipelineOrchestrator:
     # Internals
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _gate_decision(workflow: Workflow, gate: Any) -> str | None:
-        """Resolve decision semantics from audit context with legacy fallback."""
+    def _gate_round(workflow: Workflow, gate_id: str) -> int:
+        rounds = workflow.context.get("gate_rounds", {}) or {}
+        if not isinstance(rounds, dict):
+            return 1
+        try:
+            value = int(rounds.get(gate_id, 1))
+        except (TypeError, ValueError):
+            return 1
+        return max(1, value)
+
+    @staticmethod
+    def _set_gate_round(workflow: Workflow, gate_id: str, round_number: int) -> None:
+        rounds = workflow.context.get("gate_rounds", {}) or {}
+        normalized = dict(rounds) if isinstance(rounds, dict) else {}
+        normalized[gate_id] = max(1, int(round_number))
+        workflow.context["gate_rounds"] = normalized
+
+    @classmethod
+    def _record_matches_gate_round(
+        cls,
+        workflow: Workflow,
+        gate_id: str,
+        record: dict[str, Any],
+    ) -> bool:
+        if record.get("gate_id") != gate_id:
+            return False
+        active_round = cls._gate_round(workflow, gate_id)
+        if "round" not in record:
+            return active_round == 1
+        try:
+            return int(record["round"]) == active_round
+        except (TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _gate_decision(cls, workflow: Workflow, gate: Any) -> str | None:
+        """Resolve the active-round decision with legacy round-one fallback."""
         history = workflow.context.get("gate_decision_history", []) or []
         if isinstance(history, list):
             for record in reversed(history):
-                if not isinstance(record, dict) or record.get("gate_id") != gate.id:
+                if not isinstance(record, dict):
+                    continue
+                if not cls._record_matches_gate_round(workflow, gate.id, record):
                     continue
                 decision = str(record.get("decision") or "").strip().lower()
                 if decision in _SUPPORTED_GATE_DECISIONS:
                     return decision
 
         # Historical versions stored all gate calls under gate_approvals,
-        # including rejected values. Preserve those decisions during rollout.
+        # including rejected values. They remain valid only for round one.
         legacy = workflow.context.get("gate_approvals", []) or []
         if isinstance(legacy, list):
             for record in reversed(legacy):
-                if not isinstance(record, dict) or record.get("gate_id") != gate.id:
+                if not isinstance(record, dict):
+                    continue
+                if not cls._record_matches_gate_round(workflow, gate.id, record):
                     continue
                 decision = str(record.get("decision") or "").strip().lower()
                 if decision in _SUPPORTED_GATE_DECISIONS:
                     return decision
 
         # A pre-fix persisted decision_id with no audit record was necessarily
-        # treated as approval by the old progression logic. Keep it compatible.
-        if getattr(gate, "decision_id", None):
+        # treated as approval by the old progression logic. Keep that fallback
+        # only for round one; a retry must never inherit an old implicit approval.
+        if cls._gate_round(workflow, gate.id) == 1 and getattr(
+            gate, "decision_id", None
+        ):
             return "approved"
         return None
 
