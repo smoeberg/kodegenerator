@@ -322,12 +322,12 @@ class PipelineOrchestrator:
         if workflow is None:
             return
 
-        if getattr(task, "result", None):
-            workflow.context.update(task.result)
-
         if (task.metadata or {}).get("rework_gate_id"):
             self._handle_rework_task_completion(workflow, task)
             return
+
+        if getattr(task, "result", None):
+            workflow.context.update(task.result)
 
         # A completed task clears its pending gate (if any).
         task.status = TaskStatus.SUCCEEDED
@@ -740,6 +740,9 @@ class PipelineOrchestrator:
                 active_decision,
             )
             return
+
+        if getattr(task, "result", None):
+            workflow.context.update(task.result)
 
         next_round = current_round + 1
         self._replace_rework_history_record(
