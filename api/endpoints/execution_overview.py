@@ -29,6 +29,14 @@ def _workflow_organization_id(workflow: Any) -> str | None:
     return str(value) if value else None
 
 
+def _workflow_project_id(workflow: Any) -> str | None:
+    """Return only an explicit backend-owned Project -> Execution edge."""
+    context = dict(getattr(workflow, "context", {}) or {})
+    metadata = dict(getattr(workflow, "metadata", {}) or {})
+    value = context.get("project_id") or metadata.get("project_id")
+    return str(value) if value else None
+
+
 def _execution_summary(
     orchestrator: PipelineOrchestrator,
     workflow: Any,
@@ -70,6 +78,8 @@ def _execution_summary(
 
     return {
         "workflow_id": str(snapshot.get("workflow_id") or workflow.id),
+        "organization_id": _workflow_organization_id(workflow),
+        "project_id": _workflow_project_id(workflow),
         "project_name": str(snapshot.get("project_name") or "—"),
         "current_state": current_state,
         "created_at": str(snapshot.get("created_at") or ""),
