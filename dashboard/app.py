@@ -9,6 +9,7 @@ from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_view_model import (
     build_execution_summary,
     gate_decision_payload,
+    gate_retry_payload,
     interpret_advance_error,
     normalize_gates,
     normalize_proposals,
@@ -368,8 +369,8 @@ def development_page(client: DORAPIClient) -> None:
                 st.markdown(f"### {icon} {gate['name']}")
                 decision_label = gate["decision"] or "pending"
                 st.caption(
-                    f"Gate ID: `{gate['id']}` · Status: `{status_label}` · "
-                    f"Decision: `{decision_label}`"
+                    f"Gate ID: `{gate['id']}` · Round: `{gate['round']}` · "
+                    f"Status: `{status_label}` · Decision: `{decision_label}`"
                 )
                 st.write(gate["description"])
 
@@ -379,9 +380,50 @@ def development_page(client: DORAPIClient) -> None:
                 if not gate["can_decide"]:
                     if gate["status"] == "rejected":
                         st.warning(
-                            "Gate er afvist. Workflowet forbliver fail-closed, indtil "
-                            "backend tilbyder en eksplicit rework/retry-handling."
+                            "Gate er afvist og workflowet forbliver fail-closed. "
+                            "En ny beslutningsrunde kræver en eksplicit backend-godkendt retry."
                         )
+                        if gate["can_retry"]:
+                            retry_reason = st.text_area(
+                                "Begrundelse for genåbning",
+                                key=f"retry_reason_{workflow_id}_{gate['id']}",
+                                max_chars=2000,
+                                help=(
+                                    "Begrundelsen auditeres af backend. Retry genåbner kun "
+                                    "gate-beslutningen og rerunner ikke tidligere arbejde."
+                                ),
+                            )
+                            if st.button(
+                                "↻ Åbn gate igen",
+                                key=f"retry_gate_{workflow_id}_{gate['id']}",
+                            ):
+                                try:
+                                    payload = gate_retry_payload(
+                                        gate["id"], retry_reason
+                                    )
+                                except ValueError as exc:
+                                    st.warning(str(exc))
+                                else:
+                                    try:
+                                        result = client.post(
+                                            f"/api/v1/execution/{workflow_id}/gates/retry",
+                                            json=payload,
+                                        )
+                                        st.success(
+                                            "Gate blev genåbnet som en ny beslutningsrunde. "
+                                            "Workflowet er fortsat blokeret, indtil gaten afgøres."
+                                        )
+                                        with st.expander("Backend-resultat"):
+                                            st.json(result)
+                                        st.rerun()
+                                    except DORAPIError as exc:
+                                        st.error(
+                                            f"Gate-retry afvist ({exc.status_code}): {exc}"
+                                        )
+                        else:
+                            st.caption(
+                                "Backend tillader ikke retry for denne gate i dens aktuelle state."
+                            )
                     elif gate["status"] == "approved":
                         st.success("Gate er godkendt af backend.")
                     else:
