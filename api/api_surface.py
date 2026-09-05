@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.control_plane",
+    "api.endpoints.onboarding",
     "api.endpoints.swarm",
     "api.endpoints.swarm_operations",
     "api.endpoints.workflows",
