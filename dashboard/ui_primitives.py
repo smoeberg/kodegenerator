@@ -16,11 +16,14 @@ _STATUS_LABELS = {
     "success": "✅ SUCCESS",
     "succeeded": "✅ SUCCEEDED",
     "ready": "✅ READY",
+    "none": "✅ NO ACTION REQUIRED",
+    "terminal": "✅ TERMINAL",
     "rejected": "🛑 REJECTED",
     "failed": "🛑 FAILED",
     "error": "🛑 ERROR",
     "blocking": "🛑 BLOCKING",
     "human_required": "⚠️ HUMAN REQUIRED",
+    "human_decision": "⚠️ HUMAN DECISION",
     "pending": "⏳ PENDING",
     "queued": "⏳ QUEUED",
     "running": "🔄 RUNNING",
@@ -53,7 +56,13 @@ def format_timestamp(value: object) -> str:
 
 def status_badge(value: object, *, blocking: bool = False) -> str:
     """Return a compact, consistent text badge for a backend-owned status."""
-    normalized = str(value or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = (
+        str(value or "unknown")
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
     label = _STATUS_LABELS.get(normalized)
     if label is None:
         readable = normalized.replace("_", " ").upper() or "UNKNOWN"
