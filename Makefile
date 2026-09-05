@@ -1,8 +1,10 @@
-.PHONY: help install dev test test-acceptance 	certify reconcile rollback fire-drill phase7-tests
+.PHONY: help install dev test test-acceptance \
+	certify reconcile rollback fire-drill operator-readiness phase7-tests
 
 help:
 	@echo "Commands: make dev, make test, make test-acceptance,"
-	@echo "          make certify, make reconcile, make rollback, make fire-drill"
+	@echo "          make certify, make reconcile, make rollback, make fire-drill,"
+	@echo "          make operator-readiness"
 
 dev:
 	pip install -r requirements.txt
@@ -38,3 +40,7 @@ rollback:
 
 fire-drill:
 	bash scripts/fire_drill.sh
+
+# --- Post-deploy operator readiness -----------------------------------------
+operator-readiness:
+	PYTHONPATH=. python3 scripts/operator_readiness.py
