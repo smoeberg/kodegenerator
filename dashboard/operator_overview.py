@@ -76,13 +76,9 @@ def normalize_execution_overview(payload: Any) -> list[dict[str, Any]]:
             }
         )
 
-    normalized.sort(
-        key=lambda item: (
-            _ACTION_PRIORITY[item["action_required"]],
-            -int(bool(item["updated_at"])),
-            item["workflow_id"],
-        )
-    )
+    # Stable two-pass ordering: newest first within each operator-attention bucket.
+    normalized.sort(key=lambda item: (item["updated_at"], item["workflow_id"]), reverse=True)
+    normalized.sort(key=lambda item: _ACTION_PRIORITY[item["action_required"]])
     return normalized
 
 
@@ -144,7 +140,9 @@ def render_operator_overview(client: DORAPIClient) -> None:
     if not active:
         st.info("Ingen aktive executions rapporteret af backend.")
         if terminal_count:
-            st.caption(f"{terminal_count} afsluttede execution(s) er skjult i v1-overblikket.")
+            st.caption(
+                f"{terminal_count} afsluttede execution(s) er skjult i v1-overblikket."
+            )
         return
 
     for item in active:
@@ -173,14 +171,21 @@ def render_operator_overview(client: DORAPIClient) -> None:
                     f"(`{rework.get('task_type') or 'unknown'}`)"
                 )
 
+            button_type = (
+                "primary"
+                if item["action_required"] in {"human_decision", "rejected"}
+                else "secondary"
+            )
             if st.button(
                 "Åbn i Decision Cockpit",
                 key=f"open_execution_{item['workflow_id']}",
-                type="primary" if item["action_required"] in {"human_decision", "rejected"} else "secondary",
+                type=button_type,
             ):
                 st.session_state["selected_workflow_id"] = item["workflow_id"]
                 st.session_state.pop("workflow_input", None)
                 st.rerun()
 
     if terminal_count:
-        st.caption(f"{terminal_count} afsluttede execution(s) er skjult i v1-overblikket.")
+        st.caption(
+            f"{terminal_count} afsluttede execution(s) er skjult i v1-overblikket."
+        )
