@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from runtime.pipeline_orchestrator import PipelineOrchestrator
 
+from domain.task import TaskStatus
 from runtime.core import DORRuntime
 from runtime.pipeline_orchestrator import PipelineOrchestrator
 from runtime.pipeline_state_store import PipelineStateStore
 from services.database_swarm_queue import DatabaseSwarmTaskQueue
 from services.swarm_persistence import SQLiteTaskQueue
-from services.swarm_task_queue import SwarmTaskQueue
+from services.swarm_task_queue import QueuedTaskStatus, SwarmTaskQueue
 
 _lock = threading.RLock()
 _registries: dict[str, "PipelineRegistry"] = {}
@@ -84,8 +85,43 @@ class PipelineAwareQueue:
     ) -> None:
         self._queue.fail_task(task_id, agent_id, error, retry=retry)
         domain_task = self._orchestrator._tasks.get(task_id)
-        if domain_task is not None:
-            domain_task.fail(error, retry=retry)
+        if domain_task is None:
+            return
+
+        # The durable queue is authoritative for whether another worker attempt
+        # remains possible. Align the domain task with that decision rather than
+        # duplicating retry-limit arithmetic with Task.fail().
+        queued_task = self._queue.get_task(task_id)
+        domain_task.retry_count = queued_task.retry_count
+        domain_task.last_error = error
+        domain_task.status = (
+            TaskStatus.RETRYING
+            if queued_task.status == QueuedTaskStatus.PENDING
+            else TaskStatus.FAILED
+        )
+        self._orchestrator._tasks[task_id] = domain_task
+
+        metadata = dict(domain_task.metadata or {})
+        gate_id = str(metadata.get("rework_gate_id") or "")
+        workflow = self._orchestrator._get_workflow(domain_task.workflow_id or "")
+        if gate_id and workflow is not None:
+            history = list(workflow.context.get("gate_rework_history", []) or [])
+            updated: list[Any] = []
+            for record in history:
+                if not isinstance(record, dict) or record.get("task_id") != task_id:
+                    updated.append(record)
+                    continue
+                replacement = dict(record)
+                replacement["status"] = (
+                    "retrying"
+                    if domain_task.status == TaskStatus.RETRYING
+                    else "failed"
+                )
+                replacement["error"] = error
+                updated.append(replacement)
+            workflow.context["gate_rework_history"] = updated
+
+        self._orchestrator._persist()
 
     def pending_count(self) -> int:
         return self._queue.pending_count()

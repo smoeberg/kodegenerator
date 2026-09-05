@@ -1,5 +1,5 @@
 {
-  "count": 74,
+  "count": 75,
   "endpoints": [
     {
       "method": "GET",
@@ -391,6 +391,15 @@
       "module": "api.endpoints.execution",
       "name": "retry_execution_gate",
       "path": "/api/v1/execution/{workflow_id}/gates/retry",
+      "tags": [
+        "execution"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.execution",
+      "name": "rework_execution_gate",
+      "path": "/api/v1/execution/{workflow_id}/gates/rework",
       "tags": [
         "execution"
       ]

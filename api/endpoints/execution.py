@@ -57,6 +57,13 @@ class GateRetryRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class GateReworkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gate_id: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class ImplementationProposalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -227,6 +234,9 @@ def list_execution_gates(
     for gate in workflow.gates:
         decision = orch.get_gate_decision(workflow_id, gate.id)
         blocking = blocker is not None and blocker["gate_id"] == gate.id
+        rework = orch.get_gate_rework_status(workflow_id, gate.id)
+        rework_active = bool(rework["active"])
+        rejected_blocker = blocking and decision == "rejected"
         result.append(
             {
                 "id": gate.id,
@@ -236,7 +246,16 @@ def list_execution_gates(
                 "decision": decision,
                 "blocking": blocking,
                 "round": orch.get_gate_round(workflow_id, gate.id),
-                "retry_allowed": blocking and decision == "rejected",
+                "retry_allowed": rejected_blocker and not rework_active,
+                "rework_supported": bool(rework["supported"]),
+                "rework_allowed": (
+                    rejected_blocker
+                    and bool(rework["supported"])
+                    and not rework_active
+                ),
+                "rework_active": rework_active,
+                "rework_task_id": rework["task_id"],
+                "rework_task_type": rework["task_type"],
             }
         )
     return result
@@ -304,6 +323,43 @@ def retry_execution_gate(
             {
                 "gate_id": request.gate_id,
                 "round": result["round"],
+                "actor": current_user.username,
+            },
+        )
+        return {
+            "workflow_id": workflow_id,
+            **result,
+            "status": workflow.current_state.value,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{workflow_id}/gates/rework", status_code=202)
+def rework_execution_gate(
+    workflow_id: str,
+    request: GateReworkRequest,
+    dor: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """Queue governed upstream work while keeping the rejected gate fail-closed."""
+    orch = _orchestrator(dor)
+    workflow = _get_execution_or_404(orch, workflow_id, current_user)
+    try:
+        result = orch.request_gate_rework(
+            workflow_id,
+            request.gate_id,
+            actor=current_user.username,
+            reason=request.reason,
+        )
+        _emit(
+            workflow,
+            "GATE_REWORK_REQUESTED",
+            {
+                "gate_id": request.gate_id,
+                "round": result["round"],
+                "task_id": result["task_id"],
+                "task_type": result["task_type"],
                 "actor": current_user.username,
             },
         )
