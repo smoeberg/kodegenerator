@@ -39,10 +39,10 @@ def register_parser(subparsers: Any) -> None:
     parser.add_argument(
         "--target-language",
         choices=sorted(SUPPORTED_STACKS),
-        default="python",
+        default=None,
     )
-    parser.add_argument("--target-api", default="fastapi")
-    parser.add_argument("--target-database", default="postgresql")
+    parser.add_argument("--target-api", default=None)
+    parser.add_argument("--target-database", default=None)
     parser.add_argument("--api-url", default=os.getenv("DOR_API_URL", DEFAULT_API_URL))
     parser.add_argument("--token", default=os.getenv("DOR_ACCESS_TOKEN"))
     parser.set_defaults(handler="onboarding")
@@ -52,8 +52,17 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     purpose = OnboardingPurpose(args.purpose)
     target_stack: dict[str, Any] | None = None
     if purpose is OnboardingPurpose.MODERNIZE_REWRITE:
-        if not args.target_name:
-            raise ValueError("--target-name is required for modernize_rewrite")
+        required = {
+            "--target-name": args.target_name,
+            "--target-language": args.target_language,
+            "--target-api": args.target_api,
+            "--target-database": args.target_database,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(
+                "modernize_rewrite requires explicit target stack: " + ", ".join(missing)
+            )
         target_stack = ProjectDefinition(
             name=args.target_name,
             architecture=args.target_architecture,
@@ -61,7 +70,15 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             api=args.target_api,
             database=args.target_database,
         ).model_dump(mode="json")
-    elif args.target_name is not None:
+    elif any(
+        value is not None
+        for value in (
+            args.target_name,
+            args.target_language,
+            args.target_api,
+            args.target_database,
+        )
+    ):
         raise ValueError("target stack options are only valid for modernize_rewrite")
 
     return {
