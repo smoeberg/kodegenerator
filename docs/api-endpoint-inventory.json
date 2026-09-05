@@ -1,5 +1,5 @@
 {
-  "count": 77,
+  "count": 78,
   "endpoints": [
     {
       "method": "GET",
@@ -233,6 +233,15 @@
       "path": "/api/v1/bot-selections/{run_id}",
       "tags": [
         "bot-selections"
+      ]
+    },
+    {
+      "method": "POST",
+      "module": "api.endpoints.onboarding",
+      "name": "declare_onboarding_intent",
+      "path": "/api/v1/control-plane/onboarding-intents",
+      "tags": [
+        "control-plane-onboarding-v1"
       ]
     },
     {
