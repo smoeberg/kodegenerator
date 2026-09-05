@@ -63,6 +63,7 @@ from api.endpoints import (  # noqa: E402
     control_plane,
     decisions,
     execution,
+    execution_overview,
     execution_realtime,
     implementation_agent,
     integrations,
@@ -134,6 +135,7 @@ if HAS_AUTH:
         bot_evidence.router,
         bot_governance.router,
         bot_selection.router,
+        execution_overview.router,
         execution.router,
         integrations.router,
     )
@@ -150,6 +152,7 @@ if HAS_AUTH:
             bot_evidence.__name__,
             bot_governance.__name__,
             bot_selection.__name__,
+            execution_overview.__name__,
             execution.__name__,
             integrations.__name__,
         )
