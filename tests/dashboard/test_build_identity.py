@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from dashboard.build_identity import (
     resolve_build_identity,
     source_fingerprint,
@@ -7,7 +9,9 @@ from dashboard.build_identity import (
 )
 
 
-def test_source_fingerprint_tracks_source_but_ignores_local_metadata(tmp_path: Path) -> None:
+def test_source_fingerprint_tracks_source_but_ignores_local_metadata(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "dashboard" / "app.py"
     source.parent.mkdir()
     source.write_text("print('v1')\n", encoding="utf-8")
@@ -23,7 +27,7 @@ def test_source_fingerprint_tracks_source_but_ignores_local_metadata(tmp_path: P
 
 
 def test_resolve_build_identity_prefers_baked_metadata(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DOR_BUILD_REVISION", "env-revision")
     (tmp_path / ".dor-build-revision").write_text(
@@ -40,7 +44,7 @@ def test_resolve_build_identity_prefers_baked_metadata(
 
 
 def test_resolve_build_identity_uses_environment_revision_without_baked_revision(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DOR_BUILD_REVISION", "abcdef1234567890")
     (tmp_path / "source.py").write_text("VALUE = 1\n", encoding="utf-8")
