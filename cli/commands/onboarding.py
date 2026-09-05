@@ -50,13 +50,6 @@ def register_parser(subparsers: Any) -> None:
 
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     purpose = OnboardingPurpose(args.purpose)
-    target_values = (
-        args.target_name,
-        args.target_architecture,
-        args.target_language,
-        args.target_api,
-        args.target_database,
-    )
     target_stack: dict[str, Any] | None = None
     if purpose is OnboardingPurpose.MODERNIZE_REWRITE:
         if not args.target_name:
