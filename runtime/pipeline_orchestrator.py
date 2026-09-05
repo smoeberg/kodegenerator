@@ -39,6 +39,19 @@ _TERMINAL = frozenset(
     }
 )
 _SUPPORTED_GATE_DECISIONS = frozenset({"approved", "rejected"})
+_REWORK_GATE_TASK_STATES = {
+    "gate_architecture_approval": PipelineState.ARCHITECTURE_GENERATING,
+    "gate_contracts_approval": PipelineState.CONTRACTS_GENERATING,
+}
+_ACTIVE_REWORK_TASK_STATUSES = frozenset(
+    {
+        TaskStatus.PENDING,
+        TaskStatus.READY,
+        TaskStatus.CLAIMED,
+        TaskStatus.RUNNING,
+        TaskStatus.RETRYING,
+    }
+)
 
 
 class PipelineSnapshotStore(Protocol):
@@ -312,6 +325,10 @@ class PipelineOrchestrator:
         if getattr(task, "result", None):
             workflow.context.update(task.result)
 
+        if (task.metadata or {}).get("rework_gate_id"):
+            self._handle_rework_task_completion(workflow, task)
+            return
+
         # A completed task clears its pending gate (if any).
         task.status = TaskStatus.SUCCEEDED
         self._transition(workflow, next_state, {"task_completed": task_type})
@@ -353,6 +370,32 @@ class PipelineOrchestrator:
             return None
         gate, decision = blocker
         return {"gate_id": gate.id, "decision": decision or "pending"}
+
+    def get_gate_rework_status(self, workflow_id: str, gate_id: str) -> dict[str, Any]:
+        """Return backend-owned rework capability and active-task state for a gate."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        if not any(g.id == gate_id for g in workflow.gates):
+            raise ValueError(f"Gate {gate_id} not found")
+
+        task_state = _REWORK_GATE_TASK_STATES.get(gate_id)
+        task_config = (
+            PipelineTaskMapping.get_task_config(task_state) if task_state is not None else None
+        )
+        current_round = self._gate_round(workflow, gate_id)
+        active = self._active_rework_task(workflow.id, gate_id, current_round)
+        return {
+            "supported": task_config is not None,
+            "active": active is not None,
+            "task_id": active.id if active is not None else None,
+            "task_type": (
+                (active.metadata or {}).get("task_type")
+                if active is not None
+                else (task_config or {}).get("task_type")
+            ),
+            "round": current_round,
+        }
 
     def decide_gate(
         self,
@@ -448,6 +491,12 @@ class PipelineOrchestrator:
             )
 
         current_round = self._gate_round(workflow, gate_id)
+        active_rework = self._active_rework_task(workflow_id, gate_id, current_round)
+        if active_rework is not None:
+            raise ValueError(
+                f"Gate {gate_id} has active rework task {active_rework.id}"
+            )
+
         next_round = current_round + 1
         workflow.context["gate_retry_history"] = list(
             workflow.context.get("gate_retry_history", []) or []
@@ -470,6 +519,120 @@ class PipelineOrchestrator:
             "decision": None,
             "blocking": True,
             "workflow_advanced": False,
+        }
+
+    def request_gate_rework(
+        self,
+        workflow_id: str,
+        gate_id: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Queue upstream work for a rejected architecture/contracts gate.
+
+        The current rejection remains authoritative while rework is executing.
+        A successful completion opens the next pending decision round; the request
+        itself never changes workflow state or gate decision state.
+        """
+        normalized_reason = str(reason).strip()
+        if not normalized_reason:
+            raise ValueError("rework reason is required")
+
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        if gate is None:
+            raise ValueError(f"Gate {gate_id} not found")
+
+        blocker = self._blocking_gate(workflow)
+        if blocker is None or blocker[0].id != gate_id:
+            raise ValueError(f"Gate {gate_id} is not the current blocking gate")
+        if blocker[1] != "rejected":
+            raise ValueError(
+                f"Gate {gate_id} cannot be reworked from decision "
+                f"{blocker[1] or 'pending'}"
+            )
+
+        task_state = _REWORK_GATE_TASK_STATES.get(gate_id)
+        task_config = (
+            PipelineTaskMapping.get_task_config(task_state) if task_state is not None else None
+        )
+        if task_config is None:
+            raise ValueError(f"Gate {gate_id} does not support automated rework")
+
+        current_round = self._gate_round(workflow, gate_id)
+        active_rework = self._active_rework_task(workflow_id, gate_id, current_round)
+        if active_rework is not None:
+            raise ValueError(
+                f"Gate {gate_id} has active rework task {active_rework.id}"
+            )
+
+        history = list(workflow.context.get("gate_rework_history", []) or [])
+        attempt = 1 + sum(
+            1
+            for record in history
+            if isinstance(record, dict)
+            and record.get("gate_id") == gate_id
+            and record.get("from_round") == current_round
+        )
+        task_type = task_config["task_type"]
+        task_id = (
+            f"task-{workflow_id[:8]}-{task_type}-rework-"
+            f"r{current_round}-a{attempt}"
+        )
+        task = Task(
+            id=task_id,
+            name=task_type,
+            workflow_id=workflow_id,
+            priority=1,
+            metadata={
+                "task_type": task_type,
+                "component": task_config.get("component", ""),
+                "organization_id": workflow.metadata.get("organization_id"),
+                "actor_id": workflow.metadata.get("created_by"),
+                "rework_gate_id": gate_id,
+                "rework_from_round": current_round,
+                "rework_attempt": attempt,
+                "rework_requested_by": actor,
+                "rework_reason": normalized_reason,
+            },
+            execution_parameters={
+                "workflow_id": workflow_id,
+                "current_state": task_state.value,
+                "context": dict(workflow.context or {}),
+                "rework_gate_id": gate_id,
+                "rework_from_round": current_round,
+            },
+        )
+        task.status = TaskStatus.PENDING
+        self._tasks[task.id] = task
+        history.append(
+            {
+                "gate_id": gate_id,
+                "actor": actor,
+                "reason": normalized_reason,
+                "from_round": current_round,
+                "task_id": task.id,
+                "task_type": task_type,
+                "attempt": attempt,
+                "status": "pending",
+            }
+        )
+        workflow.context["gate_rework_history"] = history
+        self._publish_task(task)
+        self._persist()
+
+        return {
+            "gate_id": gate_id,
+            "round": current_round,
+            "decision": "rejected",
+            "blocking": True,
+            "workflow_advanced": False,
+            "rework_status": "pending",
+            "task_id": task.id,
+            "task_type": task_type,
+            "attempt": attempt,
         }
 
     def approve_gate(
@@ -506,6 +669,94 @@ class PipelineOrchestrator:
         normalized = dict(rounds) if isinstance(rounds, dict) else {}
         normalized[gate_id] = max(1, int(round_number))
         workflow.context["gate_rounds"] = normalized
+
+    def _active_rework_task(
+        self, workflow_id: str, gate_id: str, from_round: int
+    ) -> Task | None:
+        for task in self._tasks.values():
+            metadata = dict(task.metadata or {})
+            if task.workflow_id != workflow_id:
+                continue
+            if metadata.get("rework_gate_id") != gate_id:
+                continue
+            try:
+                task_round = int(metadata.get("rework_from_round"))
+            except (TypeError, ValueError):
+                continue
+            if task_round != from_round:
+                continue
+            if task.status in _ACTIVE_REWORK_TASK_STATUSES:
+                return task
+        return None
+
+    @staticmethod
+    def _replace_rework_history_record(
+        workflow: Workflow,
+        task_id: str,
+        *,
+        status: str,
+        to_round: int | None = None,
+    ) -> None:
+        history = list(workflow.context.get("gate_rework_history", []) or [])
+        updated: list[Any] = []
+        for record in history:
+            if not isinstance(record, dict) or record.get("task_id") != task_id:
+                updated.append(record)
+                continue
+            replacement = dict(record)
+            replacement["status"] = status
+            if to_round is not None:
+                replacement["to_round"] = to_round
+            updated.append(replacement)
+        workflow.context["gate_rework_history"] = updated
+
+    def _handle_rework_task_completion(self, workflow: Workflow, task: Task) -> None:
+        metadata = dict(task.metadata or {})
+        gate_id = str(metadata.get("rework_gate_id") or "")
+        try:
+            from_round = int(metadata.get("rework_from_round"))
+        except (TypeError, ValueError):
+            from_round = -1
+
+        task.status = TaskStatus.SUCCEEDED
+        self._tasks[task.id] = task
+
+        gate = next((g for g in workflow.gates if g.id == gate_id), None)
+        current_round = self._gate_round(workflow, gate_id) if gate is not None else -1
+        active_decision = self._gate_decision(workflow, gate) if gate is not None else None
+        if gate is None or from_round != current_round or active_decision != "rejected":
+            self._replace_rework_history_record(
+                workflow,
+                task.id,
+                status="stale_completion",
+            )
+            self._persist()
+            logger.warning(
+                "Ignoring stale rework completion %s for gate %s (from_round=%s, current_round=%s, decision=%s)",
+                task.id,
+                gate_id,
+                from_round,
+                current_round,
+                active_decision,
+            )
+            return
+
+        next_round = current_round + 1
+        self._replace_rework_history_record(
+            workflow,
+            task.id,
+            status="succeeded",
+            to_round=next_round,
+        )
+        self._set_gate_round(workflow, gate_id, next_round)
+        gate.decision_id = None
+        self._persist()
+        logger.info(
+            "Rework task %s succeeded for gate %s; opened decision round %s",
+            task.id,
+            gate_id,
+            next_round,
+        )
 
     @classmethod
     def _record_matches_gate_round(
