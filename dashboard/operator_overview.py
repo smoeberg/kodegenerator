@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.context_navigation import render_context_navigation
 
 _ACTION_PRIORITY = {
     "human_decision": 0,
@@ -62,6 +63,9 @@ def normalize_execution_overview(payload: Any) -> list[dict[str, Any]]:
         normalized.append(
             {
                 "workflow_id": workflow_id,
+                "organization_id": str(item.get("organization_id") or "").strip()
+                or None,
+                "project_id": str(item.get("project_id") or "").strip() or None,
                 "project_name": str(item.get("project_name") or "—"),
                 "current_state": str(item.get("current_state") or "unknown"),
                 "created_at": str(item.get("created_at") or ""),
@@ -98,6 +102,15 @@ def overview_metrics(executions: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def filter_executions_for_project(
+    executions: list[dict[str, Any]], project_id: str | None
+) -> list[dict[str, Any]]:
+    """Filter only on an explicit backend-owned project_id relation."""
+    if not project_id:
+        return list(executions)
+    return [item for item in executions if item["project_id"] == project_id]
+
+
 def _manual_fallback() -> None:
     st.info("Angiv et Workflow ID manuelt nedenfor for at fortsætte i cockpittet.")
 
@@ -116,14 +129,17 @@ def _render_action_state(item: dict[str, Any]) -> None:
 
 
 def render_operator_overview(client: DORAPIClient) -> None:
-    """Render active executions and let the operator open one in the cockpit."""
-    st.subheader("🧭 Operator Overview")
+    """Render project-aware executions and open one in the canonical cockpit."""
+    context = render_context_navigation(client)
+    selected_project_id = context["selected_project_id"]
+
+    st.subheader("📡 Operator Overview")
     st.caption(
         "Backend-ejet overblik over executions, blocking gates og governed rework."
     )
 
     try:
-        executions = normalize_execution_overview(client.get("/api/v1/execution"))
+        all_executions = normalize_execution_overview(client.get("/api/v1/execution"))
     except DORAPIError as exc:
         if exc.status_code == 401:
             raise
@@ -137,6 +153,21 @@ def render_operator_overview(client: DORAPIClient) -> None:
         _manual_fallback()
         return
 
+    executions = filter_executions_for_project(
+        all_executions, selected_project_id
+    )
+    if selected_project_id:
+        unlinked_count = sum(item["project_id"] is None for item in all_executions)
+        st.caption(
+            "Projektfilter bruger kun eksplicit backend `project_id`; "
+            "workflow-navne bruges aldrig som provenance."
+        )
+        if unlinked_count:
+            st.caption(
+                f"{unlinked_count} legacy/unlinked execution(s) er kun synlige under "
+                "Alle projekter eller via manuel Workflow ID fallback."
+            )
+
     metrics = overview_metrics(executions)
     cols = st.columns(4)
     cols[0].metric("Aktive executions", metrics["active"])
@@ -147,7 +178,10 @@ def render_operator_overview(client: DORAPIClient) -> None:
     active = [item for item in executions if not item["terminal"]]
     terminal_count = len(executions) - len(active)
     if not active:
-        st.info("Ingen aktive executions rapporteret af backend.")
+        if selected_project_id:
+            st.info("Ingen aktive, eksplicit linkede executions for det valgte projekt.")
+        else:
+            st.info("Ingen aktive executions rapporteret af backend.")
         if terminal_count:
             st.caption(
                 f"{terminal_count} afsluttede execution(s) er skjult i v1-overblikket."
@@ -157,8 +191,12 @@ def render_operator_overview(client: DORAPIClient) -> None:
     for item in active:
         with st.container(border=True):
             st.markdown(f"### {item['project_name']}")
+            project_context = (
+                f" · project `{item['project_id']}`" if item["project_id"] else ""
+            )
             st.caption(
-                f"Workflow `{item['workflow_id']}` · fase `{item['current_state']}` · "
+                f"Workflow `{item['workflow_id']}`{project_context} · "
+                f"fase `{item['current_state']}` · "
                 f"åbne tasks {item['task_open']} / {item['task_total']} · "
                 f"opdateret {item['updated_at'] or '—'}"
             )
@@ -190,6 +228,8 @@ def render_operator_overview(client: DORAPIClient) -> None:
                 key=f"open_execution_{item['workflow_id']}",
                 type=button_type,
             ):
+                if item["project_id"]:
+                    st.session_state["selected_project_id"] = item["project_id"]
                 st.session_state["selected_workflow_id"] = item["workflow_id"]
                 st.session_state.pop("workflow_input", None)
                 st.rerun()
