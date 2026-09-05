@@ -17,6 +17,7 @@ from dashboard.cockpit_view_model import (
 )
 from dashboard.evidence_trace import render_evidence_trace
 from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
+from dashboard.operator_overview import render_operator_overview
 from dashboard.realtime import WorkflowRealtime
 from dashboard.redmine_integration import render_redmine_integration
 from dashboard.state import authenticated, clear_auth, init_state
@@ -238,13 +239,20 @@ def development_page(client: DORAPIClient) -> None:
         "og kodeforslag fra den kanoniske Execution API."
     )
 
-    workflow_id = st.text_input(
-        "Aktivt Workflow ID",
-        value=st.session_state.get("selected_workflow_id") or "",
-    )
+    render_operator_overview(client)
+    st.divider()
+
+    if "workflow_input" not in st.session_state:
+        st.session_state["workflow_input"] = (
+            st.session_state.get("selected_workflow_id") or ""
+        )
+    workflow_id = st.text_input("Aktivt Workflow ID", key="workflow_input")
     if not workflow_id:
         stop_realtime()
-        st.info("Angiv et Workflow ID for at aktivere realtids-cockpit og streams.")
+        st.info(
+            "Vælg en execution ovenfor eller angiv et Workflow ID for at aktivere "
+            "realtids-cockpit og streams."
+        )
         return
 
     workflow_id = workflow_id.strip()
