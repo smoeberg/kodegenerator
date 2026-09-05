@@ -15,7 +15,11 @@ from infrastructure.persistence.onboarding_intent_repository import (
     OnboardingIntentPersistenceError,
 )
 from infrastructure.persistence.uow import UnitOfWork
-from phase4.onboarding import OnboardingContractError, OnboardingIntent, OnboardingIntentDraft
+from phase4.onboarding import (
+    OnboardingContractError,
+    OnboardingIntent,
+    OnboardingIntentDraft,
+)
 from runtime.commands import CommandConflictError
 from services.authorization_service import AuthorizationService
 
@@ -145,9 +149,11 @@ class OnboardingRuntime:
         for attempt in range(_COMMAND_RETRY_LIMIT):
             try:
                 return self._declare_intent_once(context, command)
-            except IntegrityError:
+            except IntegrityError as exc:
                 if attempt == _COMMAND_RETRY_LIMIT - 1:
-                    raise
+                    raise CommandConflictError(
+                        "durable onboarding command or intent history conflicts with existing state"
+                    ) from exc
             except OperationalError as exc:
                 if (
                     "database is locked" not in str(exc).lower()
