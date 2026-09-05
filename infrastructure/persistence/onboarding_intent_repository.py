@@ -56,6 +56,20 @@ class OnboardingIntentRepository:
         ).scalar_one_or_none()
         return self._restore(row) if row is not None else None
 
+    def get_root_for_repository(
+        self,
+        source_repository: str,
+        organization_id: str,
+    ) -> OnboardingIntent | None:
+        row = self.session.execute(
+            select(OnboardingIntentModel).where(
+                OnboardingIntentModel.organization_id == organization_id,
+                OnboardingIntentModel.source_repository == source_repository,
+                OnboardingIntentModel.supersedes_intent_id.is_(None),
+            )
+        ).scalar_one_or_none()
+        return self._restore(row) if row is not None else None
+
     def get_successor(
         self,
         intent_id: str,
