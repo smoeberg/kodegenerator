@@ -181,6 +181,22 @@ class ProjectAuditRuntime:
             tuple(context_items),
             actor="project-audit-runtime",
         )
+        if intent is not None:
+            bindings = [
+                item
+                for item in context.items
+                if item.source == "onboarding-intent"
+                and item.key == ONBOARDING_INTENT_CONTEXT_KEY
+            ]
+            if (
+                context.truncated
+                or len(bindings) != 1
+                or bindings[0].canonical()["value"] != intent.canonical()
+            ):
+                raise ProjectAuditRuntimeError(
+                    "AI-2 could not preserve the exact onboarding intent provenance"
+                )
+
         request = ProjectAuditRequest(
             agent_identity=agent_identity,
             agent_role=agent.role.value,
