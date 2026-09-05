@@ -15,7 +15,7 @@ def test_format_timestamp_handles_missing_naive_and_unknown_values() -> None:
 def test_status_badges_are_consistent_and_preserve_unknown_backend_values() -> None:
     assert status_badge("approved") == "✅ APPROVED"
     assert status_badge("human_required") == "⚠️ HUMAN REQUIRED"
-    assert status_badge("rejected", blocking=True) == "🛑 REJECTED · 🛑 BLOCKING"
+    assert status_badge("rejected", blocking=True) == "🛑 REJECTED · BLOCKING"
     assert status_badge("custom_state") == "⚪ CUSTOM STATE"
 
 
