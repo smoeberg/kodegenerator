@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.cockpit_lifecycle import render_cockpit_lifecycle
 from dashboard.context_navigation import render_context_navigation
 
 _ACTION_PRIORITY = {
@@ -132,6 +133,15 @@ def render_operator_overview(client: DORAPIClient) -> None:
     """Render project-aware executions and open one in the canonical cockpit."""
     context = render_context_navigation(client)
     selected_project_id = context["selected_project_id"]
+
+    active_workflow_id = str(
+        st.session_state.get("workflow_input")
+        or st.session_state.get("selected_workflow_id")
+        or ""
+    ).strip()
+    if active_workflow_id:
+        render_cockpit_lifecycle(client, active_workflow_id)
+        st.divider()
 
     st.subheader("📡 Operator Overview")
     st.caption(
