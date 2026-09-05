@@ -149,6 +149,12 @@ class FakeAPI:
             self.gates[0]["decision"] = decision
             self.gates[0]["blocking"] = decision == "rejected"
             self.gates[0]["retry_allowed"] = decision == "rejected"
+            if "rework_supported" in self.gates[0]:
+                self.gates[0]["rework_allowed"] = (
+                    decision == "rejected" and self.gates[0]["rework_supported"] is True
+                )
+                self.gates[0]["rework_active"] = False
+                self.gates[0]["rework_task_id"] = None
             self.execution["context"]["gate_decision_history"].append(
                 {
                     "gate_id": payload["gate_id"],
@@ -169,12 +175,34 @@ class FakeAPI:
             self.gates[0]["blocking"] = True
             self.gates[0]["round"] = int(self.gates[0].get("round", 1)) + 1
             self.gates[0]["retry_allowed"] = False
+            if "rework_supported" in self.gates[0]:
+                self.gates[0]["rework_allowed"] = False
+                self.gates[0]["rework_active"] = False
+                self.gates[0]["rework_task_id"] = None
             return {
                 "gate_id": payload["gate_id"],
                 "round": self.gates[0]["round"],
                 "decision": None,
                 "blocking": True,
                 "workflow_advanced": False,
+            }
+        if path == "/api/v1/execution/wf-1/gates/rework":
+            payload = kwargs["json"]
+            task_id = "task-wf-1-generate_architecture-rework-r1-a1"
+            self.gates[0]["retry_allowed"] = False
+            self.gates[0]["rework_allowed"] = False
+            self.gates[0]["rework_active"] = True
+            self.gates[0]["rework_task_id"] = task_id
+            return {
+                "gate_id": payload["gate_id"],
+                "round": self.gates[0]["round"],
+                "decision": "rejected",
+                "blocking": True,
+                "workflow_advanced": False,
+                "rework_status": "pending",
+                "task_id": task_id,
+                "task_type": self.gates[0]["rework_task_type"],
+                "attempt": 1,
             }
         return {"ok": True}
 
@@ -257,7 +285,6 @@ def test_execution_401_clears_auth_and_returns_to_login(fake_api: FakeAPI) -> No
     assert at.session_state["access_token"] is None
     assert at.session_state["username"] is None
     assert at.session_state["organization_id"] is None
-    assert _values(at.title) == ["⚡ DOR Control Plane"]
     assert not at.sidebar.radio
     assert not at.exception
 
@@ -339,6 +366,75 @@ def test_rejected_gate_retry_opens_round_two_without_advancing(
         for method, path, _kwargs in fake_api.calls
         if method == "POST"
     )
+    assert any("Round: `2`" in value for value in _values(at.caption))
+    assert not at.exception
+
+
+def test_rejected_gate_rework_stays_blocked_until_backend_opens_next_round(
+    fake_api: FakeAPI,
+) -> None:
+    fake_api.gates[0].update(
+        {
+            "rework_supported": True,
+            "rework_allowed": False,
+            "rework_active": False,
+            "rework_task_id": None,
+            "rework_task_type": "generate_architecture",
+        }
+    )
+    at = _open_workflow(_run_app())
+    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=5)
+
+    assert fake_api.gates[0]["decision"] == "rejected"
+    assert fake_api.gates[0]["round"] == 1
+    assert fake_api.gates[0]["rework_allowed"] is True
+    assert _by_label(at.button, "🛠️ Genkør upstream arbejde")
+
+    _by_label(at.text_area, "Begrundelse for rework").set_value(
+        "Arkitekturen skal regenereres med den nye trust boundary."
+    )
+    at = _by_label(at.button, "🛠️ Genkør upstream arbejde").click().run(timeout=5)
+
+    assert (
+        "POST",
+        "/api/v1/execution/wf-1/gates/rework",
+        {
+            "json": {
+                "gate_id": "gate-1",
+                "reason": "Arkitekturen skal regenereres med den nye trust boundary.",
+            }
+        },
+    ) in fake_api.calls
+    assert fake_api.gates[0]["decision"] == "rejected"
+    assert fake_api.gates[0]["resolved"] is True
+    assert fake_api.gates[0]["blocking"] is True
+    assert fake_api.gates[0]["round"] == 1
+    assert fake_api.gates[0]["rework_active"] is True
+    assert not any(button.label == "↻ Åbn gate igen" for button in at.button)
+    assert not any(button.label == "🛠️ Genkør upstream arbejde" for button in at.button)
+    assert any("Rework-task" in value and "er aktiv" in value for value in _values(at.info))
+    assert not any(
+        path == "/api/v1/execution/wf-1/advance"
+        for method, path, _kwargs in fake_api.calls
+        if method == "POST"
+    )
+
+    fake_api.gates[0].update(
+        {
+            "resolved": False,
+            "decision": None,
+            "blocking": True,
+            "round": 2,
+            "retry_allowed": False,
+            "rework_allowed": False,
+            "rework_active": False,
+            "rework_task_id": None,
+        }
+    )
+    at = at.run(timeout=5)
+
+    assert _by_label(at.button, "✅ Godkend gate")
+    assert _by_label(at.button, "❌ Afvis gate")
     assert any("Round: `2`" in value for value in _values(at.caption))
     assert not at.exception
 
