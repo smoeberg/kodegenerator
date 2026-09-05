@@ -213,7 +213,8 @@ def test_login_then_navigate_all_three_canonical_pages(fake_api: FakeAPI) -> Non
     assert fake_api.login_calls == [("anna", "secret")]
     assert at.session_state["access_token"] == "token-from-login"
     assert at.session_state["username"] == "anna"
-    assert PROJECT_PAGE in _values(at.header)
+    assert PROJECT_PAGE in _values(at.sidebar.radio[0])
+    assert "🏗️ Logik 1: Projekt & Kravspecifikation" in _values(at.header)
 
     at = _navigate(at, ADMIN_PAGE)
     assert "🛡️ Logik 3: Systemadministration & Governance" in _values(at.header)
