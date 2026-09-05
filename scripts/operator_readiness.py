@@ -60,16 +60,21 @@ def _dockerignore_patterns(path: Path) -> list[str]:
     return [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
 
 
+def _normalize_ignore_pattern(value: str) -> str:
+    pattern = value
+    while pattern.startswith("./"):
+        pattern = pattern[2:]
+    return pattern[1:] if pattern.startswith("/") else pattern
+
+
 def _is_ignored(name: str, patterns: list[str]) -> bool:
     """Evaluate the subset of Docker ignore semantics needed by secret sentinels."""
     ignored = False
     for raw_pattern in patterns:
         negated = raw_pattern.startswith("!")
         pattern = raw_pattern[1:] if negated else raw_pattern
-        pattern = pattern.lstrip("./")
-        if not pattern:
-            continue
-        if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(f"/{name}", raw_pattern):
+        pattern = _normalize_ignore_pattern(pattern)
+        if pattern and fnmatch.fnmatch(name, pattern):
             ignored = not negated
     return ignored
 
@@ -213,8 +218,11 @@ def check_compose(
 
 
 def _http_get(url: str, timeout: float) -> tuple[int, str]:
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": "dor-operator-readiness/1"})
-    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - operator-supplied HTTP(S) endpoint
+    request = Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "dor-operator-readiness/1"},
+    )
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - operator-supplied endpoint
         return int(response.status), response.read().decode("utf-8", errors="replace")
 
 
