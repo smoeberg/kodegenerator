@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
@@ -27,6 +28,7 @@ from domain.project import (
     ProjectStateError,
     fingerprint_event_payload,
 )
+from infrastructure.persistence.models import ProjectModel
 from infrastructure.persistence.repositories import RepositoryError
 from runtime.commands import CommandConflictError
 from runtime.context import ContextError
@@ -130,6 +132,55 @@ def _authorization_error(exc: CommandAuthorizationError) -> HTTPException:
             "reason_code": exc.decision.reason_code,
         },
     )
+
+
+@router.get("")
+def list_projects(
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> dict[str, object]:
+    """Return the authenticated tenant's readable project catalog.
+
+    The database query only discovers project IDs inside the authenticated
+    organization. Every disclosed project still passes through the canonical
+    ProjectRuntime read authorization boundary before it is returned.
+    """
+    organization_id = current_user.organization_id
+    if not organization_id:
+        return {"organization_id": None, "projects": []}
+
+    context = _context(dor, current_user, organization_id)
+    with dor.database.session(organization_id) as session:
+        project_ids = list(
+            session.scalars(
+                select(ProjectModel.id)
+                .where(ProjectModel.organization_id == organization_id)
+                .order_by(ProjectModel.updated_at.desc(), ProjectModel.id)
+            ).all()
+        )
+
+    projects: list[ControlPlaneProjectResponse] = []
+    for project_id in project_ids:
+        try:
+            project = dor.projects.get_project(context, str(project_id))
+        except CommandAuthorizationError:
+            # Fail closed on per-resource disclosure: denied projects do not
+            # become visible merely because their IDs exist in the tenant DB.
+            continue
+        except ProjectNotFoundError:
+            # A concurrent delete/visibility change must not break the catalog.
+            continue
+        except RepositoryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "project_catalog_unavailable"},
+            ) from exc
+        projects.append(_project_response(project))
+
+    return {
+        "organization_id": organization_id,
+        "projects": projects,
+    }
 
 
 @router.post(

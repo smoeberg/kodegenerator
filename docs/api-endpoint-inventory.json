@@ -1,5 +1,5 @@
 {
-  "count": 76,
+  "count": 77,
   "endpoints": [
     {
       "method": "GET",
@@ -233,6 +233,15 @@
       "path": "/api/v1/bot-selections/{run_id}",
       "tags": [
         "bot-selections"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.control_plane",
+      "name": "list_projects",
+      "path": "/api/v1/control-plane/projects",
+      "tags": [
+        "control-plane-v1"
       ]
     },
     {
