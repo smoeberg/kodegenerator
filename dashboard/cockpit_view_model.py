@@ -80,10 +80,13 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
         else:
             status = "human_required"
 
-        # Retry authority is deliberately backend-owned. A malformed or missing
-        # retry_allowed field fails closed even if the local presentation state
-        # happens to look rejected/blocking.
+        # Retry/rework authority is deliberately backend-owned. Malformed or missing
+        # allow-fields fail closed even if local presentation state looks eligible.
+        rework_active = item.get("rework_active") is True
         backend_retry_allowed = item.get("retry_allowed") is True
+        backend_rework_allowed = item.get("rework_allowed") is True
+        rework_task_id = str(item.get("rework_task_id") or "").strip() or None
+        rework_task_type = str(item.get("rework_task_type") or "").strip() or None
         normalized.append(
             {
                 "id": gate_id,
@@ -98,7 +101,18 @@ def normalize_gates(payload: Any) -> list[dict[str, Any]]:
                     backend_retry_allowed
                     and status == "rejected"
                     and blocking
+                    and not rework_active
                 ),
+                "rework_supported": item.get("rework_supported") is True,
+                "can_rework": (
+                    backend_rework_allowed
+                    and status == "rejected"
+                    and blocking
+                    and not rework_active
+                ),
+                "rework_active": rework_active,
+                "rework_task_id": rework_task_id,
+                "rework_task_type": rework_task_type,
                 "status": status,
             }
         )
@@ -118,6 +132,19 @@ def gate_decision_payload(gate_id: str, decision: str) -> dict[str, str]:
 
 def gate_retry_payload(gate_id: str, reason: str) -> dict[str, str]:
     """Build the exact GateRetryRequest payload accepted by FastAPI."""
+    gate_id = gate_id.strip()
+    reason = reason.strip()
+    if not gate_id:
+        raise ValueError("gate_id is required")
+    if not reason:
+        raise ValueError("reason is required")
+    if len(reason) > 2000:
+        raise ValueError("reason must be at most 2000 characters")
+    return {"gate_id": gate_id, "reason": reason}
+
+
+def gate_rework_payload(gate_id: str, reason: str) -> dict[str, str]:
+    """Build the exact GateReworkRequest payload accepted by FastAPI."""
     gate_id = gate_id.strip()
     reason = reason.strip()
     if not gate_id:
