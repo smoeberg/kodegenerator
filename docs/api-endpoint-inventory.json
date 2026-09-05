@@ -1,5 +1,5 @@
 {
-  "count": 75,
+  "count": 76,
   "endpoints": [
     {
       "method": "GET",
@@ -305,6 +305,15 @@
       "path": "/api/v1/decisions/{decision_id}/resolve",
       "tags": [
         "decisions"
+      ]
+    },
+    {
+      "method": "GET",
+      "module": "api.endpoints.execution_overview",
+      "name": "list_executions",
+      "path": "/api/v1/execution",
+      "tags": [
+        "execution"
       ]
     },
     {
