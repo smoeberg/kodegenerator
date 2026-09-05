@@ -16,6 +16,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.bot_evidence",
     "api.endpoints.bot_governance",
     "api.endpoints.bot_selection",
+    "api.endpoints.execution_overview",
     "api.endpoints.execution",
     "api.endpoints.integrations",
 )
