@@ -178,7 +178,7 @@ jobs:
           set -euo pipefail
           alembic upgrade 005_authority_org_scope
           alembic upgrade head
-          test "$(alembic current)" = "025_swarm_control_state (head)"
+          test "$(alembic current)" = "026_onboarding_intents (head)"
 
       - name: Verify upgrade after the 002b branch
         env:
@@ -187,7 +187,7 @@ jobs:
           set -euo pipefail
           alembic upgrade 002b_authority_org_scope
           alembic upgrade head
-          test "$(alembic current)" = "025_swarm_control_state (head)"
+          test "$(alembic current)" = "026_onboarding_intents (head)"
 
       - name: Verify clean PostgreSQL migration
         env:
@@ -195,7 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           alembic upgrade head
-          test "$(alembic current)" = "025_swarm_control_state (head)"
+          test "$(alembic current)" = "026_onboarding_intents (head)"
           alembic downgrade base
           test -z "$(alembic current)"
 
