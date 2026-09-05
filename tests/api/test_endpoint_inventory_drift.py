@@ -33,6 +33,12 @@ def test_inventory_is_machine_derived_and_unique() -> None:
     assert any(record.path == "/api/v1/swarm/ws/{project_id}" for record in records)
     assert any(record.path == "/api/v1/execution/ws/{workflow_id}" for record in records)
     assert any(record.path == "/api/v1/execution/events/{workflow_id}" for record in records)
+    assert any(
+        record.path == "/api/v1/control-plane/onboarding-intents"
+        and record.method == "POST"
+        and record.module == "api.endpoints.onboarding"
+        for record in records
+    )
 
 
 def test_committed_inventory_matches_mounted_routes() -> None:
