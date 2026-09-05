@@ -36,6 +36,23 @@ def _downgrade(database: Path, revision: str) -> None:
     )
 
 
+def _canonical_alembic_head() -> str:
+    heads = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    revisions = [
+        line.split()[0]
+        for line in heads.splitlines()
+        if line.strip() and not line.strip().startswith("+")
+    ]
+    assert len(revisions) == 1, f"expected a single canonical head, got {revisions}"
+    return revisions[0]
+
+
 def _assert_authority_scope(database: Path) -> None:
     engine = sa.create_engine(f"sqlite:///{database}")
     inspector = sa.inspect(engine)
@@ -56,7 +73,7 @@ def _assert_authority_scope(database: Path) -> None:
     assert "organization_id" in columns
     assert "uq_role_definition_org_id" in unique_constraints
     assert "ix_role_definitions_organization_id" in indexes
-    assert heads == {"025_swarm_control_state"}
+    assert heads == {_canonical_alembic_head()}
 
 
 def test_upgrade_converges_when_005_branch_was_applied_first(tmp_path: Path) -> None:

@@ -13,10 +13,13 @@ from .objectives import (
     objectives_for,
 )
 
+ONBOARDING_INTENT_CONTEXT_KEY = "onboarding-intent"
+
 __all__ = [
     "AUDIT_ONLY_OBJECTIVES",
     "EXTEND_OBJECTIVES",
     "MODERNIZE_REWRITE_OBJECTIVES",
+    "ONBOARDING_INTENT_CONTEXT_KEY",
     "OnboardingContractError",
     "OnboardingIntent",
     "OnboardingIntentDraft",
