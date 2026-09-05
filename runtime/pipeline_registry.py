@@ -150,6 +150,7 @@ class PipelineRegistry:
                 SQLAlchemyPipelineStateStore,
             )
             from infrastructure.runtime.db import build_session_factory
+            from infrastructure.runtime.queue import DatabaseQueue
 
             database_url = os.getenv("DOR_PIPELINE_DATABASE_URL") or os.getenv(
                 "DATABASE_URL"
