@@ -12,6 +12,8 @@ DEFAULTS = {
     "username": None,
     "organization_id": None,
     "selected_project_id": None,
+    "selected_project_fingerprint": None,
+    "selected_workflow_id": None,
     "realtime_status": "offline",
 }
 
@@ -31,6 +33,10 @@ def clear_auth() -> None:
     st.session_state["access_token"] = None
     st.session_state["username"] = None
     st.session_state["organization_id"] = None
+    st.session_state["selected_project_id"] = None
+    st.session_state["selected_project_fingerprint"] = None
+    st.session_state["selected_workflow_id"] = None
+    st.session_state.pop("workflow_input", None)
 
 
 def authenticated() -> bool:
