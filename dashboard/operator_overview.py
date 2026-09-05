@@ -9,6 +9,7 @@ import streamlit as st
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_lifecycle import render_cockpit_lifecycle
 from dashboard.context_navigation import render_context_navigation
+from dashboard.ui_primitives import format_timestamp, status_badge
 
 _ACTION_PRIORITY = {
     "human_decision": 0,
@@ -118,13 +119,13 @@ def _manual_fallback() -> None:
 
 def _render_action_state(item: dict[str, Any]) -> None:
     action = item["action_required"]
-    message = item["action_label"]
+    message = f"{status_badge(action)} · {item['action_label']}"
     if action == "human_decision":
-        st.warning(f"⚠️ {message}")
+        st.warning(message)
     elif action == "rejected":
-        st.error(f"🛑 {message}")
+        st.error(message)
     elif action == "rework_active":
-        st.info(f"🛠️ {message}")
+        st.info(message)
     else:
         st.caption(message)
 
@@ -149,7 +150,8 @@ def render_operator_overview(client: DORAPIClient) -> None:
     )
 
     try:
-        all_executions = normalize_execution_overview(client.get("/api/v1/execution"))
+        with st.spinner("Henter execution-overblik…"):
+            all_executions = normalize_execution_overview(client.get("/api/v1/execution"))
     except DORAPIError as exc:
         if exc.status_code == 401:
             raise
@@ -163,9 +165,7 @@ def render_operator_overview(client: DORAPIClient) -> None:
         _manual_fallback()
         return
 
-    executions = filter_executions_for_project(
-        all_executions, selected_project_id
-    )
+    executions = filter_executions_for_project(all_executions, selected_project_id)
     if selected_project_id:
         unlinked_count = sum(item["project_id"] is None for item in all_executions)
         st.caption(
@@ -189,7 +189,10 @@ def render_operator_overview(client: DORAPIClient) -> None:
     terminal_count = len(executions) - len(active)
     if not active:
         if selected_project_id:
-            st.info("Ingen aktive, eksplicit linkede executions for det valgte projekt.")
+            st.info(
+                "Ingen aktive, eksplicit linkede executions for det valgte projekt. "
+                "Vælg Alle projekter for at se unlinked/legacy executions."
+            )
         else:
             st.info("Ingen aktive executions rapporteret af backend.")
         if terminal_count:
@@ -206,9 +209,9 @@ def render_operator_overview(client: DORAPIClient) -> None:
             )
             st.caption(
                 f"Workflow `{item['workflow_id']}`{project_context} · "
-                f"fase `{item['current_state']}` · "
+                f"{status_badge(item['current_state'])} · "
                 f"åbne tasks {item['task_open']} / {item['task_total']} · "
-                f"opdateret {item['updated_at'] or '—'}"
+                f"opdateret {format_timestamp(item['updated_at'])}"
             )
             _render_action_state(item)
 
@@ -217,7 +220,7 @@ def render_operator_overview(client: DORAPIClient) -> None:
                 st.caption(
                     "Blocking gate: "
                     f"`{blocker.get('gate_id') or 'unknown'}` · "
-                    f"decision `{blocker.get('decision') or 'pending'}`"
+                    f"{status_badge(blocker.get('decision') or 'pending', blocking=True)}"
                 )
 
             rework = item["rework"]
