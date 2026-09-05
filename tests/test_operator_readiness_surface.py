@@ -18,7 +18,8 @@ def test_makefile_exposes_operator_readiness_target() -> None:
 
 def test_operator_readiness_runbook_preserves_existing_recovery_authority() -> None:
     runbook = Path("docs/OPERATOR_READINESS.md").read_text(encoding="utf-8")
+    normalized = " ".join(runbook.split())
 
-    assert "does not replace staging certification, rollback" in runbook
-    assert "real restore into a fresh target" in runbook
-    assert "READY` report is post-deploy evidence, not release authority" in runbook
+    assert "does not replace staging certification, rollback" in normalized
+    assert "real restore into a fresh target" in normalized
+    assert "READY` report is post-deploy evidence, not release authority" in normalized
