@@ -58,6 +58,7 @@ class DeclareOnboardingIntentCommand:
         _command_text("organization_id", self.organization_id)
         if not isinstance(self.draft, OnboardingIntentDraft):
             raise OnboardingContractError("draft must be an OnboardingIntentDraft")
+        _command_text("source_repository", self.draft.source_repository)
 
     @property
     def payload(self) -> dict[str, Any]:
