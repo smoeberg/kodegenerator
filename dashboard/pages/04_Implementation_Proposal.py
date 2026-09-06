@@ -1,6 +1,8 @@
 """Streamlit page for governed Implementation Agent patch proposals."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import streamlit as st
 
 from dashboard.implementation_proposal import render_implementation_proposal
@@ -20,3 +22,11 @@ if not authenticated():
     st.stop()
 
 render_implementation_proposal()
+
+proposal_result = st.session_state.get("implementation_proposal_result")
+if isinstance(proposal_result, Mapping):
+    st.page_link(
+        "pages/05_Patch_Review_And_Apply.py",
+        label="Gennemgå proposal og anmod om governed apply",
+        icon="🛡️",
+    )
