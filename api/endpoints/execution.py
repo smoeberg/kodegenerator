@@ -18,7 +18,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.websockets import WebSocketState
 
-from api.auth import User, authenticate_access_token, get_current_active_user
+from api.auth import (
+    User,
+    authenticate_access_token,
+    get_current_active_user,
+    require_user_organization,
+)
 from api.dependencies import get_dor
 from api.endpoints.swarm import project_access_allowed, require_project_access
 from runtime.core import DORRuntime
@@ -75,8 +80,11 @@ class ImplementationProposalRequest(BaseModel):
 _PROPOSALS: dict[str, list[dict[str, Any]]] = {}
 
 
-def _orchestrator(dor: DORRuntime) -> PipelineOrchestrator:
-    return get_pipeline_registry(dor).orchestrator
+def _orchestrator(dor: DORRuntime, current_user: User) -> PipelineOrchestrator:
+    organization_id = require_user_organization(current_user)
+    return get_pipeline_registry(
+        dor, organization_id=organization_id
+    ).orchestrator
 
 
 def _workflow_project_id(workflow: Any) -> str:
@@ -93,7 +101,11 @@ def _workflow_project_id(workflow: Any) -> str:
 def _workflow_organization_id(workflow: Any) -> str | None:
     context = dict(getattr(workflow, "context", {}) or {})
     metadata = dict(getattr(workflow, "metadata", {}) or {})
-    value = context.get("organization_id") or metadata.get("organization_id")
+    value = (
+        context.get("organization_id")
+        or metadata.get("organization_id")
+        or getattr(workflow, "organization_id", None)
+    )
     return str(value) if value else None
 
 
@@ -101,18 +113,10 @@ def _require_execution_access(
     workflow: Any,
     current_user: User,
 ) -> None:
-    """Enforce tenant ownership before disclosing execution state.
-
-    Execution workflows carry their organization identity in the canonical
-    workflow context. If that identity is present, an authenticated principal
-    must belong to the same organization. Missing workflow ownership metadata
-    is tolerated for legacy development fixtures only.
-    """
+    """Enforce exact tenant ownership before disclosing execution state."""
     workflow_organization_id = _workflow_organization_id(workflow)
-    if (
-        workflow_organization_id is not None
-        and current_user.organization_id != workflow_organization_id
-    ):
+    user_organization_id = require_user_organization(current_user)
+    if workflow_organization_id != user_organization_id:
         raise HTTPException(status_code=403, detail="Execution access denied")
 
 
@@ -156,7 +160,7 @@ def get_execution(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Return the canonical workflow/pipeline snapshot used by the cockpit."""
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     return orch.get_pipeline_status(workflow.id)
 
@@ -168,14 +172,15 @@ def start_execution(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Start a governed software-factory execution and return its snapshot."""
-    if current_user.organization_id is not None and request.organization_id != current_user.organization_id:
+    organization_id = require_user_organization(current_user)
+    if request.organization_id != organization_id:
         raise HTTPException(status_code=403, detail="Organization access denied")
 
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     try:
         workflow_id = orch.start_pipeline(
             requirements_yaml=request.requirements_yaml,
-            organization_id=request.organization_id,
+            organization_id=organization_id,
             created_by=current_user.username,
         )
         orch.advance_pipeline(workflow_id)
@@ -196,7 +201,7 @@ def advance_execution(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Advance the canonical pipeline; gates remain fail-closed."""
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     blocker = orch.get_blocking_gate(workflow_id)
     if blocker is not None:
@@ -212,7 +217,10 @@ def advance_execution(
         _emit(
             workflow,
             "EXECUTION_ADVANCED",
-            {"state": workflow.current_state.value, "reason": getattr(request, "reason", None)},
+            {
+                "state": workflow.current_state.value,
+                "reason": getattr(request, "reason", None),
+            },
         )
         return orch.get_pipeline_status(workflow_id)
     except ValueError as exc:
@@ -227,7 +235,7 @@ def list_execution_gates(
     dor: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
 ) -> list[dict[str, Any]]:
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     blocker = orch.get_blocking_gate(workflow_id)
     result: list[dict[str, Any]] = []
@@ -268,7 +276,7 @@ def decide_execution_gate(
     dor: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
         result = orch.decide_gate(
@@ -308,7 +316,7 @@ def retry_execution_gate(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Open a new decision round for the current rejected blocking gate."""
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
         result = orch.retry_gate(
@@ -343,7 +351,7 @@ def rework_execution_gate(
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
     """Queue governed upstream work while keeping the rejected gate fail-closed."""
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     try:
         result = orch.request_gate_rework(
@@ -378,7 +386,7 @@ def list_implementation_proposals(
     dor: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
 ) -> list[dict[str, Any]]:
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     _get_execution_or_404(orch, workflow_id, current_user)
     return list(_PROPOSALS.get(workflow_id, []))
 
@@ -390,7 +398,7 @@ def create_implementation_proposal(
     dor: DORRuntime = Depends(get_dor),
     current_user: User = Depends(get_current_active_user),
 ) -> dict[str, Any]:
-    orch = _orchestrator(dor)
+    orch = _orchestrator(dor, current_user)
     workflow = _get_execution_or_404(orch, workflow_id, current_user)
     proposal = {
         "id": f"proposal-{workflow_id[:8]}-{len(_PROPOSALS.get(workflow_id, [])) + 1}",
@@ -403,7 +411,11 @@ def create_implementation_proposal(
         "created_at": _utc_now(),
     }
     _PROPOSALS.setdefault(workflow_id, []).append(proposal)
-    _emit(workflow, "IMPLEMENTATION_PROPOSAL_CREATED", {"proposal_id": proposal["id"]})
+    _emit(
+        workflow,
+        "IMPLEMENTATION_PROPOSAL_CREATED",
+        {"proposal_id": proposal["id"]},
+    )
     return proposal
 
 
@@ -468,7 +480,9 @@ async def execution_websocket(websocket: WebSocket, workflow_id: str) -> None:
     async def heartbeat() -> None:
         while not stop.is_set():
             try:
-                await asyncio.wait_for(stop.wait(), timeout=WEBSOCKET_AUTH_REVALIDATION_SECONDS)
+                await asyncio.wait_for(
+                    stop.wait(), timeout=WEBSOCKET_AUTH_REVALIDATION_SECONDS
+                )
                 return
             except asyncio.TimeoutError:
                 if websocket.client_state != WebSocketState.CONNECTED:
@@ -483,7 +497,11 @@ async def execution_websocket(websocket: WebSocket, workflow_id: str) -> None:
                         stop.set()
                         return
                     await websocket.send_json(
-                        {"event_type": "HEARTBEAT", "workflow_id": workflow_id, "timestamp": _utc_now()}
+                        {
+                            "event_type": "HEARTBEAT",
+                            "workflow_id": workflow_id,
+                            "timestamp": _utc_now(),
+                        }
                     )
                 except HTTPException:
                     await websocket.close(code=1008, reason="authentication expired")
@@ -498,9 +516,13 @@ async def execution_websocket(websocket: WebSocket, workflow_id: str) -> None:
         while True:
             message = await websocket.receive_json()
             if str(message.get("type", "")).lower() == "ping":
-                await websocket.send_json({"event_type": "PONG", "timestamp": _utc_now()})
+                await websocket.send_json(
+                    {"event_type": "PONG", "timestamp": _utc_now()}
+                )
             else:
-                await websocket.send_json({"event_type": "ERROR", "message": "unsupported_client_message"})
+                await websocket.send_json(
+                    {"event_type": "ERROR", "message": "unsupported_client_message"}
+                )
     except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception:
@@ -528,7 +550,9 @@ async def execution_sse(
     dor: DORRuntime = Depends(get_dor),
 ) -> StreamingResponse:
     """SSE fallback for clients that cannot establish a WebSocket."""
-    workflow = _get_execution_or_404(_orchestrator(dor), workflow_id, current_user)
+    workflow = _get_execution_or_404(
+        _orchestrator(dor, current_user), workflow_id, current_user
+    )
     topic = project_topic(_workflow_project_id(workflow))
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
 
@@ -552,13 +576,19 @@ async def execution_sse(
     async def generator() -> Any:
         try:
             yield ": connected\n\n"
-            yield f"event: SSE_CONNECTED\ndata: {json.dumps({'workflow_id': workflow_id})}\n\n"
+            yield (
+                "event: SSE_CONNECTED\ndata: "
+                f"{json.dumps({'workflow_id': workflow_id})}\n\n"
+            )
             idle_rounds = 0
             while idle_rounds < 3:
                 try:
                     envelope = await asyncio.wait_for(queue.get(), timeout=0.5)
                     idle_rounds = 0
-                    yield f"event: {envelope.get('event_type', 'message')}\ndata: {json.dumps(envelope)}\n\n"
+                    yield (
+                        f"event: {envelope.get('event_type', 'message')}\ndata: "
+                        f"{json.dumps(envelope)}\n\n"
+                    )
                 except asyncio.TimeoutError:
                     idle_rounds += 1
                     yield f": heartbeat {_utc_now()}\n\n"
@@ -568,5 +598,9 @@ async def execution_sse(
     return StreamingResponse(
         generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
