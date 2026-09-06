@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from phase4.implementation_agent.patch_adapter import PatchExecutionRequestNotFoundError
 from phase4.implementation_agent.patch_models import (
     PatchRecordStatus,
     WorkspaceFileState,
@@ -360,7 +361,12 @@ def _server_apply_provenance(patch_runtime: Any, request_fingerprint: str):
         requests = governed_adapter._requests
         request = requests[request_fingerprint]
         record = governed_adapter.get_record(request_fingerprint)
-    except (AttributeError, KeyError, LookupError) as exc:
+    except (
+        AttributeError,
+        KeyError,
+        LookupError,
+        PatchExecutionRequestNotFoundError,
+    ) as exc:
         raise DeliveryCertificationUnavailableError(
             "server-owned apply provenance is unavailable for this candidate"
         ) from exc
