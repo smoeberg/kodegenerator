@@ -334,10 +334,6 @@ def _verify_log_identity(raw: object, stream: str) -> str:
         raise DeliveryVerificationGUIError(f"{stream} byte_count er ugyldig")
     if not isinstance(content, str) or type(truncated) is not bool:
         raise DeliveryVerificationGUIError(f"{stream} log metadata er ugyldig")
-    if not truncated and hashlib.sha256(content.encode("utf-8")).hexdigest() != sha256:
-        raise DeliveryVerificationGUIError(
-            f"{stream} log SHA-256 matcher ikke det komplette logindhold"
-        )
     expected = canonical_digest(
         {
             "stream": stream,
@@ -350,6 +346,10 @@ def _verify_log_identity(raw: object, stream: str) -> str:
     if artifact_id != expected:
         raise DeliveryVerificationGUIError(
             f"{stream} log artifact ID matcher ikke log provenance"
+        )
+    if not truncated and hashlib.sha256(content.encode("utf-8")).hexdigest() != sha256:
+        raise DeliveryVerificationGUIError(
+            f"{stream} log SHA-256 matcher ikke det komplette logindhold"
         )
     return artifact_id
 
