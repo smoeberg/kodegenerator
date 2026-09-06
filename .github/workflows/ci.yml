@@ -176,26 +176,29 @@ jobs:
           DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_005_first
         run: |
           set -euo pipefail
+          expected="$(python -c 'import json; print(json.load(open("docs/CURRENT_STATE.json"))["canonical_alembic_head"])')"
           alembic upgrade 005_authority_org_scope
           alembic upgrade head
-          test "$(alembic current)" = "026_onboarding_intents (head)"
+          test "$(alembic current)" = "$expected (head)"
 
       - name: Verify upgrade after the 002b branch
         env:
           DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_002b_first
         run: |
           set -euo pipefail
+          expected="$(python -c 'import json; print(json.load(open("docs/CURRENT_STATE.json"))["canonical_alembic_head"])')"
           alembic upgrade 002b_authority_org_scope
           alembic upgrade head
-          test "$(alembic current)" = "026_onboarding_intents (head)"
+          test "$(alembic current)" = "$expected (head)"
 
       - name: Verify clean PostgreSQL migration
         env:
           DATABASE_URL: postgresql+psycopg://dor:dor-ci-password@127.0.0.1:5432/dor_fresh
         run: |
           set -euo pipefail
+          expected="$(python -c 'import json; print(json.load(open("docs/CURRENT_STATE.json"))["canonical_alembic_head"])')"
           alembic upgrade head
-          test "$(alembic current)" = "026_onboarding_intents (head)"
+          test "$(alembic current)" = "$expected (head)"
           alembic downgrade base
           test -z "$(alembic current)"
 
