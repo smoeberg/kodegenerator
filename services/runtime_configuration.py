@@ -38,7 +38,7 @@ _ROLE_REQUIRED = {
         "DOR_ADMIN_PASSWORD",
         "DOR_ADMIN_USERNAME",
     ),
-    "dashboard": ("DOR_ADMIN_PASSWORD", "DOR_API_BASE"),
+    "dashboard": ("DOR_ADMIN_PASSWORD", "DOR_API_URL"),
     "migrate": (
         "DOR_WORKER_CAPABILITIES",
         "DOR_WORKER_CREDENTIAL",
@@ -113,7 +113,7 @@ def validate_runtime_configuration(
 
     _validate_url(values["ARTIFACT_STORE_URL"], "ARTIFACT_STORE_URL")
     if runtime_role == "dashboard":
-        _validate_url(values["DOR_API_BASE"], "DOR_API_BASE")
+        _validate_url(values["DOR_API_URL"], "DOR_API_URL")
     for name in _SECRET_NAMES:
         value = values.get(name, "").strip()
         if value:
