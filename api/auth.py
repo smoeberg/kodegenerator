@@ -121,13 +121,14 @@ def ensure_bootstrap_runtime_context(runtime: Any = None) -> None:
     (``identity_principals``). The Phase 3 runtime additionally requires the
     actor to be a member of the configured organization before any
     organization-scoped command is accepted (``establish_context``). This
-    helper seeds that runtime membership for the same env-configured
-    bootstrap identity so a fresh deployment works without manual seeding.
+    helper seeds that runtime membership and the cross-tenant organization
+    catalog for the same env-configured bootstrap identity.
 
     The operation is intentionally best-effort and idempotent:
 
     * organization is created only when missing
     * actor is registered only when missing
+    * organization membership is created only when missing
     * failures are logged and swallowed so a healthy bootstrap
       login still succeeds even if runtime seeding is unavailable
       (e.g. a standalone auth smoke test without a runtime database).
@@ -138,6 +139,7 @@ def ensure_bootstrap_runtime_context(runtime: Any = None) -> None:
     try:
         from domain.actor import Actor, ActorType
         from domain.organization import Organization
+        from infrastructure.persistence.models import OrganizationMembershipModel
         from runtime.core import RepositoryError
 
         organization_id = os.getenv("DOR_ADMIN_ORGANIZATION_ID", "dor-org")
@@ -174,6 +176,29 @@ def ensure_bootstrap_runtime_context(runtime: Any = None) -> None:
             logger.info("bootstrap actor registered: %s@%s", username, organization_id)
         except RepositoryError:
             pass  # already exists
+
+        with runtime.database.session() as session:
+            membership = session.get(
+                OrganizationMembershipModel,
+                (username, organization_id),
+            )
+            if membership is None:
+                now = datetime.now(timezone.utc)
+                session.add(
+                    OrganizationMembershipModel(
+                        username=username,
+                        organization_id=organization_id,
+                        is_admin=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                session.commit()
+                logger.info(
+                    "bootstrap organization membership created: %s@%s",
+                    username,
+                    organization_id,
+                )
     except Exception as exc:
         logger.warning("bootstrap runtime context skipped: %s", exc)
 
