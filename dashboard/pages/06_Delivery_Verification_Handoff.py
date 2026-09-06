@@ -20,3 +20,11 @@ if not authenticated():
     st.stop()
 
 render_delivery_verification_handoff()
+
+candidate = st.session_state.get("delivery_verification_candidate")
+if isinstance(candidate, dict) and candidate.get("candidate_id"):
+    st.page_link(
+        "pages/07_Delivery_Certificate.py",
+        label="Fortsæt til Authoritative Delivery Certificate",
+        icon="✅",
+    )
