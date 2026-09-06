@@ -38,6 +38,10 @@ def _authorized_operator():
     Operator authorization itself is covered independently by the hardening
     tests. This avoids coupling these response-shape tests to global bootstrap
     database state created by unrelated test modules during collection.
+
+    The application still mounts every canonical router behind the normal
+    ``get_current_active_user`` dependency, so callers must remain
+    authenticated even while this operator-specific dependency is overridden.
     """
     app.dependency_overrides[swarm_operations._require_platform_operator] = lambda: User(
         username="platform-admin", organization_id="platform-org"
@@ -63,7 +67,7 @@ def test_ops_endpoints_require_auth():
 
 def test_ops_health_ok():
     with _authorized_operator():
-        r = client.get("/api/v1/swarm/ops/health")
+        r = client.get("/api/v1/swarm/ops/health", headers=_auth_header())
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] in ("ok", "degraded", "down")
@@ -73,7 +77,7 @@ def test_ops_health_ok():
 
 def test_ops_snapshot_json():
     with _authorized_operator():
-        r = client.get("/api/v1/swarm/ops/snapshot")
+        r = client.get("/api/v1/swarm/ops/snapshot", headers=_auth_header())
     assert r.status_code == 200, r.text
     body = r.json()
     for key in (
@@ -93,7 +97,7 @@ def test_ops_snapshot_json():
 
 def test_ops_metrics_prometheus_text():
     with _authorized_operator():
-        r = client.get("/api/v1/swarm/ops/metrics")
+        r = client.get("/api/v1/swarm/ops/metrics", headers=_auth_header())
     assert r.status_code == 200, r.text
     assert "text/plain" in r.headers.get("content-type", "")
     text = r.text
