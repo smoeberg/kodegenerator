@@ -8,7 +8,6 @@ import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_lifecycle import render_cockpit_lifecycle
-from dashboard.context_navigation import render_context_navigation
 from dashboard.ui_primitives import format_timestamp, status_badge
 
 _ACTION_PRIORITY = {
@@ -131,9 +130,8 @@ def _render_action_state(item: dict[str, Any]) -> None:
 
 
 def render_operator_overview(client: DORAPIClient) -> None:
-    """Render project-aware executions and open one in the canonical cockpit."""
-    context = render_context_navigation(client)
-    selected_project_id = context["selected_project_id"]
+    """Render project-aware executions using the globally selected project context."""
+    selected_project_id = st.session_state.get("selected_project_id")
 
     active_workflow_id = str(
         st.session_state.get("workflow_input")
