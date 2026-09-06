@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    environment:
+      DOR_PROJECT_AUDIT_CHECKOUTS_ROOT: /audit/checkouts
+      DOR_PROJECT_AUDIT_CHECKOUT_CATALOG: /audit/catalog.json
+    volumes:
+      - type: bind
+        source: ${DOR_PROJECT_AUDIT_CHECKOUTS_HOST_ROOT:?DOR_PROJECT_AUDIT_CHECKOUTS_HOST_ROOT must be set}
+        target: /audit/checkouts
+        read_only: true
+      - type: bind
+        source: ${DOR_PROJECT_AUDIT_CHECKOUT_CATALOG_HOST_FILE:?DOR_PROJECT_AUDIT_CHECKOUT_CATALOG_HOST_FILE must be set}
+        target: /audit/catalog.json
+        read_only: true
