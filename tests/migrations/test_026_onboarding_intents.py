@@ -42,6 +42,6 @@ def test_onboarding_intent_migration_forces_postgres_rls() -> None:
     assert "WITH CHECK" in source
 
 
-def test_current_state_tracks_onboarding_intent_migration_head() -> None:
+def test_current_state_tracks_latest_migration_head() -> None:
     source = Path("docs/CURRENT_STATE.json").read_text()
-    assert '"canonical_alembic_head": "026_onboarding_intents"' in source
+    assert '"canonical_alembic_head": "027_organization_memberships"' in source
