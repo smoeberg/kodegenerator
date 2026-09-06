@@ -13,6 +13,8 @@ ENV/
 .coverage
 htmlcov/
 .env
+.env.demo
+.dor-demo/
 
 # Local/runtime key material — never commit
 *.key
