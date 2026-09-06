@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from dashboard.onboarding import build_onboarding_payload
+from dashboard.onboarding import build_onboarding_payload, resolve_onboarding_command_id
 
 
 def test_extend_payload_never_contains_trusted_identity_fields() -> None:
@@ -57,3 +57,41 @@ def test_non_rewrite_rejects_target_stack() -> None:
             rationale="Audit without implementation.",
             target_name="should-not-exist",
         )
+
+
+def test_hidden_command_id_is_stable_for_same_draft() -> None:
+    state: dict[str, object] = {}
+    payload = build_onboarding_payload(
+        command_id="pending",
+        source_repository="repository:external/example",
+        purpose="extend",
+        rationale="Extend current behavior.",
+    )
+
+    first = resolve_onboarding_command_id(state, payload)
+    second = resolve_onboarding_command_id(state, payload)
+
+    assert first.startswith("onboarding-")
+    assert second == first
+
+
+def test_hidden_command_id_rotates_when_semantic_draft_changes() -> None:
+    state: dict[str, object] = {}
+    first_payload = build_onboarding_payload(
+        command_id="pending",
+        source_repository="repository:external/example",
+        purpose="extend",
+        rationale="Extend current behavior.",
+    )
+    changed_payload = build_onboarding_payload(
+        command_id="pending",
+        source_repository="repository:external/example",
+        purpose="audit_only",
+        rationale="Audit only.",
+    )
+
+    first = resolve_onboarding_command_id(state, first_payload)
+    second = resolve_onboarding_command_id(state, changed_payload)
+
+    assert second.startswith("onboarding-")
+    assert second != first
