@@ -10,6 +10,10 @@ from typing import Any, MutableMapping
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.repository_checkout_catalog import (
+    RepositoryCheckoutCatalogError,
+    discover_repositories_for_organization,
+)
 from generation.project_spec import ArchitectureKind, ProjectDefinition, SUPPORTED_STACKS
 from phase4.onboarding import OnboardingPurpose
 
@@ -67,7 +71,9 @@ def resolve_onboarding_command_id(
     payload: dict[str, Any],
 ) -> str:
     """Keep retries idempotent while rotating the hidden command ID for changed drafts."""
-    semantic_payload = {key: value for key, value in payload.items() if key != "command_id"}
+    semantic_payload = {
+        key: value for key, value in payload.items() if key != "command_id"
+    }
     serialized = json.dumps(
         semantic_payload,
         sort_keys=True,
@@ -83,7 +89,11 @@ def resolve_onboarding_command_id(
 
 def _render_result(result: dict[str, Any], *, previous: bool = False) -> None:
     intent = result.get("intent", {}) if isinstance(result, dict) else {}
-    heading = "Senest registrerede onboarding-intent" if previous else "Onboarding-intent registreret"
+    heading = (
+        "Senest registrerede onboarding-intent"
+        if previous
+        else "Onboarding-intent registreret"
+    )
     st.markdown(f"#### {heading}")
 
     cols = st.columns(3)
@@ -111,9 +121,58 @@ def _render_result(result: dict[str, Any], *, previous: bool = False) -> None:
     )
 
 
+def _repository_input() -> str:
+    organization_id = str(st.session_state.get("organization_id") or "").strip()
+    repositories: tuple[str, ...] | None = None
+    discovery_failed = False
+    if organization_id:
+        try:
+            repositories = discover_repositories_for_organization(organization_id)
+        except RepositoryCheckoutCatalogError as exc:
+            discovery_failed = True
+            repositories = tuple()
+            st.error(f"Repository discovery er ikke gyldig: {exc}")
+
+    if repositories is None:
+        return st.text_input(
+            "Repository",
+            placeholder="repository:external/example",
+            help=(
+                "Angiv den canonical repository identity. Når repository-kataloget er "
+                "konfigureret server-side, erstattes dette felt automatisk af en governed picker."
+            ),
+            key="onboarding_source_repository",
+        )
+
+    if repositories:
+        selected = st.selectbox(
+            "Repository",
+            options=list(repositories),
+            help=(
+                "Listen kommer fra det server-ejede repository checkout-katalog og er scoped "
+                "til den authenticated organisation."
+            ),
+            key="onboarding_discovered_repository",
+        )
+        st.caption(
+            "Governed repository discovery er aktiv. Project Audit resolver den samme "
+            "org+repository binding igen før checkout-adgang."
+        )
+        return str(selected)
+
+    if not discovery_failed:
+        st.warning(
+            "Repository discovery er aktiv, men organisationen har ingen godkendte checkouts. "
+            "En operator skal tilføje repository'et til serverens katalog før onboarding."
+        )
+    return ""
+
+
 def render_onboarding(client: DORAPIClient) -> None:
     st.subheader("Repository onboarding")
-    st.caption("1. Vælg formål · 2. Beskriv repository · 3. Registrér intent · 4. Project Audit")
+    st.caption(
+        "1. Vælg formål · 2. Vælg/beskriv repository · 3. Registrér intent · 4. Project Audit"
+    )
     st.write(
         "Vælg formålet **før** audit. Bruger og organisation udledes automatisk af login-sessionen, "
         "og den tekniske command ID håndteres automatisk."
@@ -126,15 +185,7 @@ def render_onboarding(client: DORAPIClient) -> None:
         key="onboarding_purpose",
     )
 
-    source_repository = st.text_input(
-        "Repository",
-        placeholder="repository:external/example",
-        help=(
-            "Angiv den canonical repository identity. Repository discovery er endnu ikke koblet til GUI'en, "
-            "så feltet er manuelt indtil en governed discovery-kilde findes."
-        ),
-        key="onboarding_source_repository",
-    )
+    source_repository = _repository_input()
     rationale = st.text_area(
         "Hvorfor onboarder vi repository'et?",
         height=120,
@@ -144,7 +195,10 @@ def render_onboarding(client: DORAPIClient) -> None:
 
     correction = st.checkbox(
         "Dette retter et tidligere onboarding-intent",
-        help="Et eksisterende intent ændres aldrig; en rettelse opretter et nyt intent, som superseder det gamle.",
+        help=(
+            "Et eksisterende intent ændres aldrig; en rettelse opretter et nyt intent, "
+            "som superseder det gamle."
+        ),
         key="onboarding_is_correction",
     )
     supersedes = ""
@@ -163,7 +217,9 @@ def render_onboarding(client: DORAPIClient) -> None:
     target_database = "postgresql"
     if purpose == OnboardingPurpose.MODERNIZE_REWRITE.value:
         st.markdown("#### Target stack")
-        st.caption("Beskriv den ønskede målarkitektur. Valgene opdateres dynamisk efter valgt sprog.")
+        st.caption(
+            "Beskriv den ønskede målarkitektur. Valgene opdateres dynamisk efter valgt sprog."
+        )
         target_name = st.text_input(
             "Nyt projektnavn",
             placeholder="modernized-app",
@@ -220,7 +276,10 @@ def render_onboarding(client: DORAPIClient) -> None:
             target_api=target_api,
             target_database=target_database,
         )
-        payload["command_id"] = resolve_onboarding_command_id(st.session_state, payload)
+        payload["command_id"] = resolve_onboarding_command_id(
+            st.session_state,
+            payload,
+        )
         with st.spinner("Registrerer governed intent…"):
             result = client.post(
                 "/api/v1/control-plane/onboarding-intents",
@@ -236,12 +295,16 @@ def render_onboarding(client: DORAPIClient) -> None:
     intent = result.get("intent", {}) if isinstance(result, dict) else {}
     st.session_state["onboarding_intent_result"] = result
     st.session_state["selected_onboarding_intent_id"] = intent.get("intent_id")
-    st.session_state["onboarding_ready_for_project_audit"] = bool(intent.get("intent_id"))
+    st.session_state["onboarding_ready_for_project_audit"] = bool(
+        intent.get("intent_id")
+    )
     st.session_state["onboarding_delivery_allowed"] = (
         intent.get("purpose") != OnboardingPurpose.AUDIT_ONLY.value
     )
     if intent.get("source_repository"):
-        st.session_state["selected_onboarding_repository"] = intent["source_repository"]
+        st.session_state["selected_onboarding_repository"] = intent[
+            "source_repository"
+        ]
     if intent.get("organization_id"):
         st.session_state["organization_id"] = intent["organization_id"]
 
