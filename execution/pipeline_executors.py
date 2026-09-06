@@ -7,6 +7,7 @@ against a strict schema. Missing configuration fails closed.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -51,6 +52,21 @@ from services.side_effects import SideEffectCoordinator
 
 class PipelineExecutorConfigurationError(RuntimeError):
     pass
+
+
+_COMPOSE_ALLOWED_VARIABLES = frozenset({"DOR_IMAGE_TAG"})
+_COMPOSE_VARIABLE_PATTERN = re.compile(
+    r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)[^}]*\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
+)
+
+
+def _compose_environment(image_tag: str) -> dict[str, str]:
+    """Return the complete environment exposed to repository-controlled Compose."""
+    return {
+        "PATH": os.defpath,
+        "COMPOSE_DISABLE_ENV_FILE": "1",
+        "DOR_IMAGE_TAG": image_tag,
+    }
 
 
 class TaskExecutor(Protocol):
@@ -245,7 +261,7 @@ class DockerDeployService(GeneratedFilesDockerDeployService):
                     "--remove-orphans",
                 ],
                 cwd=root,
-                env={**os.environ, "DOR_IMAGE_TAG": image_tag},
+                env=_compose_environment(image_tag),
                 capture_output=True,
                 text=True,
                 timeout=900,
@@ -266,7 +282,7 @@ class DockerDeployService(GeneratedFilesDockerDeployService):
                             "--remove-orphans",
                         ],
                         cwd=root,
-                        env={**os.environ, "DOR_IMAGE_TAG": rollback},
+                        env=_compose_environment(rollback),
                         capture_output=True,
                         text=True,
                         timeout=900,
@@ -309,9 +325,22 @@ class GitDockerDeployBackend(DockerDeployService):
 def _validate_compose_policy(compose: Path) -> None:
     """Reject Compose capabilities that can escape the deployment boundary."""
     try:
-        document = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
+        raw = compose.read_text(encoding="utf-8")
+        document = yaml.safe_load(raw) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise ValueError(f"invalid compose file: {exc}") from exc
+
+    variables = {
+        match.group("braced") or match.group("plain")
+        for match in _COMPOSE_VARIABLE_PATTERN.finditer(raw)
+    }
+    disallowed = sorted(variables - _COMPOSE_ALLOWED_VARIABLES)
+    if disallowed:
+        raise ValueError(
+            "compose references non-allowlisted environment variables: "
+            + ", ".join(disallowed)
+        )
+
     services = document.get("services")
     if not isinstance(services, dict) or not services:
         raise ValueError("compose file requires a non-empty services mapping")
@@ -325,6 +354,12 @@ def _validate_compose_policy(compose: Path) -> None:
                 raise ValueError(f"compose service {name!r} requests host {key}")
         if service.get("devices"):
             raise ValueError(f"compose service {name!r} requests host devices")
+        if service.get("build") is not None:
+            raise ValueError(
+                f"compose service {name!r} requests repository-controlled build"
+            )
+        if service.get("env_file"):
+            raise ValueError(f"compose service {name!r} requests env_file access")
         for volume in service.get("volumes") or ():
             source = (
                 str(volume.get("source", ""))
@@ -333,6 +368,16 @@ def _validate_compose_policy(compose: Path) -> None:
             )
             if source.startswith("/") or "docker.sock" in source:
                 raise ValueError(f"compose service {name!r} requests a host volume")
+
+    for section in ("secrets", "configs"):
+        definitions = document.get(section) or {}
+        if not isinstance(definitions, dict):
+            raise ValueError(f"compose {section} must be a mapping")
+        for name, definition in definitions.items():
+            if isinstance(definition, dict) and definition.get("file"):
+                raise ValueError(
+                    f"compose {section[:-1]} {name!r} requests host file access"
+                )
 
 
 class ArchitectureExecutor:
