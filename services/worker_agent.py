@@ -17,10 +17,12 @@ def run(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     verifier = None
     if not args:
+        organization_id = None
         if os.environ.get("DOR_QUEUE_BACKEND", "local").lower() == "database":
             principal, verifier = _authenticated_principal()
             capabilities = ",".join(principal.capabilities)
             worker_id = principal.worker_id
+            organization_id = principal.organization_id
         else:
             capabilities = os.environ.get("DOR_WORKER_CAPABILITIES", "").strip()
             worker_id = (
@@ -35,11 +37,13 @@ def run(argv: list[str] | None = None) -> int:
             capabilities,
         ]
         if os.environ.get("DOR_QUEUE_BACKEND", "local").lower() == "database":
-            args.append("--pipeline")
+            if not organization_id:
+                raise RuntimeError("database worker has no authenticated organization")
+            args.extend(["--pipeline", "--organization-id", organization_id])
     return main(args, identity_verifier=verifier)
 
 
-def _authenticated_principal():
+def _authenticated_principal() -> tuple[WorkerPrincipal, object]:
     database_url = os.environ.get("DATABASE_URL")
     organization_id = os.environ.get("DOR_WORKER_ORGANIZATION_ID", "")
     service_id = os.environ.get("DOR_WORKER_SERVICE_ID", "")
