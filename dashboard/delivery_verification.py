@@ -282,7 +282,10 @@ def render_delivery_verification_handoff() -> None:
     previous = st.session_state.get("delivery_verification_candidate")
     if isinstance(previous, Mapping) and previous.get("candidate_id") == candidate.candidate_id:
         st.markdown("### Delivery candidate")
-        st.json(previous)
+        st.code(
+            json.dumps(previous, indent=2, sort_keys=True, ensure_ascii=False),
+            language="json",
+        )
         st.caption(
             "Candidate-ID'et er deterministisk over hele den validerede provenance-kæde, "
             "det committed artifact og de tre tool-evidence IDs."
@@ -331,6 +334,10 @@ def _verify_log_identity(raw: object, stream: str) -> str:
         raise DeliveryVerificationGUIError(f"{stream} byte_count er ugyldig")
     if not isinstance(content, str) or type(truncated) is not bool:
         raise DeliveryVerificationGUIError(f"{stream} log metadata er ugyldig")
+    if not truncated and hashlib.sha256(content.encode("utf-8")).hexdigest() != sha256:
+        raise DeliveryVerificationGUIError(
+            f"{stream} log SHA-256 matcher ikke det komplette logindhold"
+        )
     expected = canonical_digest(
         {
             "stream": stream,
