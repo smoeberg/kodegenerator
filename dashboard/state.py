@@ -35,9 +35,14 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "onboarding_target_language",
     "onboarding_target_name",
     "project_audit_result",
+    "project_plan_result",
+    "project_planning_acceptance_criteria",
+    "project_planning_constraints",
+    "project_planning_objective",
     "selected_onboarding_intent_id",
     "selected_onboarding_repository",
     "selected_project_audit_report_id",
+    "selected_project_plan_id",
 )
 
 
