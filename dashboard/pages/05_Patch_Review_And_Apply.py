@@ -1,6 +1,8 @@
 """Streamlit page for explicit human review and governed patch application."""
 from __future__ import annotations
 
+from typing import Mapping
+
 import streamlit as st
 
 from dashboard.implementation_apply import render_implementation_apply
@@ -20,3 +22,11 @@ if not authenticated():
     st.stop()
 
 render_implementation_apply()
+
+apply_result = st.session_state.get("implementation_apply_result")
+if isinstance(apply_result, Mapping) and apply_result.get("applied") is True:
+    st.page_link(
+        "pages/06_Delivery_Verification_Handoff.py",
+        label="Fortsæt til Delivery Verification Handoff",
+        icon="📦",
+    )
