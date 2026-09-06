@@ -206,6 +206,12 @@ def render_delivery_certification(client: DORAPIClient) -> None:
             st.info(
                 "Næste release/deploy-trin er fortsat separat og er ikke aktiveret af dette certificate."
             )
+            if verdict == "pass":
+                st.page_link(
+                    "pages/08_Requirement_Artifact_Traceability.py",
+                    label="Fortsæt til Requirement → Artifact Traceability",
+                    icon="🔗",
+                )
 
     st.page_link(
         "pages/06_Delivery_Verification_Handoff.py",

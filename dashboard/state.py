@@ -27,6 +27,8 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "_implementation_proposal_draft_key",
     "_onboarding_command_id",
     "_onboarding_command_draft_key",
+    "_requirement_traceability_command_id",
+    "_requirement_traceability_draft_fingerprint",
     "delivery_certificate_result",
     "delivery_certification_confirmed",
     "delivery_verification_candidate",
@@ -57,6 +59,8 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "project_planning_acceptance_criteria",
     "project_planning_constraints",
     "project_planning_objective",
+    "requirement_traceability_confirmed",
+    "requirement_traceability_result",
     "selected_delivery_certificate_id",
     "selected_delivery_verification_candidate_id",
     "selected_implementation_patch_record_id",
@@ -65,6 +69,7 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "selected_onboarding_repository",
     "selected_project_audit_report_id",
     "selected_project_plan_id",
+    "selected_requirement_traceability_manifest_id",
 )
 
 
@@ -115,8 +120,10 @@ def clear_auth() -> None:
     for key in _AUTH_SCOPED_ONBOARDING_KEYS:
         st.session_state.pop(key, None)
     for key in tuple(st.session_state):
-        if key.startswith("onboarding_target_api_") or key.startswith(
-            "onboarding_target_database_"
+        if (
+            key.startswith("onboarding_target_api_")
+            or key.startswith("onboarding_target_database_")
+            or key.startswith("requirement_traceability_")
         ):
             st.session_state.pop(key, None)
 

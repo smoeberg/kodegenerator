@@ -7,7 +7,7 @@ authorization before accepting WebSocket or SSE traffic.
 
 ## Supported authenticated routers
 
-- Control Plane
+- Control Plane, organization management, Delivery Certificates, and Requirement Traceability
 - Swarm and Swarm Operations
 - Workflows
 - Implementation Agent
@@ -17,6 +17,19 @@ authorization before accepting WebSocket or SSE traffic.
 
 Health and token issuance are the only intentionally unauthenticated HTTP
 boundaries. The internal Swarm dashboard module is not mounted.
+
+## Delivery and traceability evidence
+
+`/api/v1/control-plane/delivery-certificates` is the authoritative Delivery
+Contract v1 PASS/FAIL boundary over a content-addressed post-apply candidate.
+It does not grant merge, release, deploy, or execution authority.
+
+`/api/v1/control-plane/requirement-traceability` creates and reads immutable,
+tenant-scoped mappings from the exact AI-6 planning requirements to artifact
+paths and evidence IDs already bound by a PASS Delivery Certificate. The
+backend recomputes planning provenance and restricts all references to the
+certified candidate. Traceability validates reference integrity only:
+`semantic_result` remains null and `release_authority` remains false.
 
 ## Governed multi-bot evidence
 
