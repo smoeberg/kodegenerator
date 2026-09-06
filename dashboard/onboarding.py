@@ -179,12 +179,12 @@ def render_onboarding(client: DORAPIClient) -> None:
         target_api = left.selectbox(
             "API/framework",
             SUPPORTED_STACKS[target_language]["api"],
-            key="onboarding_target_api",
+            key=f"onboarding_target_api_{target_language}",
         )
         target_database = right.selectbox(
             "Database",
             SUPPORTED_STACKS[target_language]["database"],
-            key="onboarding_target_database",
+            key=f"onboarding_target_database_{target_language}",
         )
 
     submit = st.button("Registrér onboarding-intent", type="primary")
