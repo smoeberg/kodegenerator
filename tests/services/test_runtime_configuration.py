@@ -20,7 +20,7 @@ def _environment(role: str) -> dict[str, str]:
         "DOR_ADMIN_ORGANIZATION_ID": "org-1",
         "DOR_ADMIN_PASSWORD": "a" * 32,
         "DOR_ADMIN_USERNAME": "admin",
-        "DOR_API_BASE": "http://api:8000",
+        "DOR_API_URL": "http://api:8000",
         "DOR_AUTHORITY_SIGNING_KEY": "h" * 32,
         "DOR_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
         "DOR_ENV": "demo",
