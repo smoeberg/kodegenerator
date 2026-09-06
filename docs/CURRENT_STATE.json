@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "canonical_branch": "main",
-  "canonical_alembic_head": "029_requirement_traceability",
+  "canonical_alembic_head": "030_artifact_acceptances",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",
@@ -25,7 +25,6 @@
   "open_work": [
     "canonical_system_specification",
     "requirement_steward_multi_agent_function_deliberation",
-    "multi_spec_verified_artifact_acceptance",
     "demo_installation_implementation_and_certification"
   ]
 }
