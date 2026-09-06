@@ -29,6 +29,7 @@ from phase4.requirements_traceability import (
     PlanningRequirements,
     RequirementKind,
     RequirementTraceabilityError,
+    RequirementTraceabilityManifest,
     build_requirement_traceability_manifest,
     parse_requirement_traceability_manifest,
 )
@@ -165,7 +166,26 @@ def _restore_certificate(row) -> DeliveryCertificate:
         raise RequirementTraceabilityError(
             "persisted delivery certificate fields do not match its content identity"
         )
+    if (
+        row.organization_id != certificate.organization_id
+        or row.candidate_id != certificate.candidate_id
+        or row.result != certificate.result.value
+        or row.contract_id != certificate.contract_id
+        or row.contract_version != certificate.contract_version
+        or row.contract_fingerprint != certificate.contract_fingerprint
+        or row.certified_by != certificate.certified_by
+    ):
+        raise RequirementTraceabilityError(
+            "persisted delivery certificate columns do not match canonical payload"
+        )
     return certificate
+
+
+def _manifest_request_fingerprint(manifest: RequirementTraceabilityManifest) -> str:
+    """Bind replay semantics to exact user input while excluding creation time."""
+    payload = manifest.canonical(include_id=False)
+    payload.pop("created_at", None)
+    return canonical_digest(payload)
 
 
 @router.post(
@@ -254,7 +274,18 @@ def create_requirement_traceability(
                 command_id=request.command_id,
             )
             if existing is not None:
-                if existing.manifest_id != manifest.manifest_id:
+                try:
+                    existing_manifest = parse_requirement_traceability_manifest(
+                        store.response_payload(existing)
+                    )
+                except RequirementTraceabilityError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={"error": "requirement_traceability_provenance_invalid"},
+                    ) from exc
+                if _manifest_request_fingerprint(
+                    existing_manifest
+                ) != _manifest_request_fingerprint(manifest):
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
                         detail={"error": "requirement_traceability_command_conflict"},
@@ -265,7 +296,6 @@ def create_requirement_traceability(
                     manifest=store.response_payload(existing),
                 )
             row = store.add(command_id=request.command_id, manifest=manifest)
-            replayed = row.manifest_id != manifest.manifest_id
             session.commit()
             payload = store.response_payload(row)
     except HTTPException:
@@ -283,7 +313,7 @@ def create_requirement_traceability(
 
     return RequirementTraceabilityCreateResponse(
         command_id=request.command_id,
-        replayed=replayed,
+        replayed=False,
         manifest=payload,
     )
 
