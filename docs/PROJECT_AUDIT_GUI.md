@@ -6,29 +6,72 @@ The Streamlit Project Audit page is a server-side adapter over the existing gove
 
 The page restores the immutable onboarding intent from the API result stored in the authenticated Streamlit session and recalculates both `intent_id` and `content_fingerprint`. A mismatch fails closed.
 
-The repository checkout is selected only from server-side configuration:
+Repository discovery is server-owned. The preferred configuration uses:
+
+- `DOR_PROJECT_AUDIT_CHECKOUTS_ROOT`
+- `DOR_PROJECT_AUDIT_CHECKOUT_CATALOG`
+
+The catalog is versioned JSON with exact organization/repository identities and a relative checkout path under the trusted root:
+
+```json
+{
+  "version": 1,
+  "repositories": [
+    {
+      "organization_id": "dor-org",
+      "repository": "repository:smoeberg/kodegenerator",
+      "checkout": "kodegenerator"
+    }
+  ]
+}
+```
+
+Catalog entries reject authority wildcards, duplicate organization/repository identities, absolute checkout paths, `..` traversal, missing directories, and symlink resolution outside the trusted checkout root. Partial catalog configuration also fails closed.
+
+Onboarding uses the catalog as a governed repository picker scoped to the authenticated organization. Project Audit does not trust that UI selection as execution authority; it resolves the exact organization + repository identity against the server-owned catalog again before accessing the checkout.
+
+The browser never supplies a filesystem path. The audit always runs against `HEAD` of the resolved checkout, and the existing Git manifest builder rejects tracked working-tree drift before evidence is collected.
+
+## Production checkout catalog
+
+The runtime image includes the Git executable, but `.git` is deliberately excluded from the application image build context. Production therefore requires operator-managed Git checkouts mounted into the dashboard container/process.
+
+Use dedicated checkouts that:
+
+1. contain the Git metadata required by `ProjectAuditRuntime`;
+2. are clean at the intended revision;
+3. are mounted read-only into the dashboard runtime;
+4. contain only repository material intended for audit;
+5. do not expose deployment `.env` files, credentials, SSH material, or unrelated host paths.
+
+An example catalog is available at `docs/project-audit-checkouts.example.json`.
+
+For Docker Compose, set the host paths:
+
+```text
+DOR_PROJECT_AUDIT_CHECKOUTS_HOST_ROOT=/srv/dor/audit-checkouts
+DOR_PROJECT_AUDIT_CHECKOUT_CATALOG_HOST_FILE=/etc/dor/project-audit-checkouts.json
+```
+
+Then start with the explicit Project Audit override:
+
+```bash
+docker compose -f compose.yml -f compose.project-audit.yml up -d
+```
+
+The override mounts the host checkout root at `/audit/checkouts:ro`, mounts the catalog at `/audit/catalog.json:ro`, and sets the two server-side catalog environment variables inside the dashboard service. The canonical `compose.yml` still does not auto-mount a host source tree or credentials.
+
+For non-Compose deployments, mount equivalent read-only paths and set `DOR_PROJECT_AUDIT_CHECKOUTS_ROOT` and `DOR_PROJECT_AUDIT_CHECKOUT_CATALOG` directly in the dashboard process.
+
+## Legacy single-checkout compatibility
+
+The original v1 configuration remains supported when catalog mode is absent:
 
 - `DOR_PROJECT_AUDIT_ORGANIZATION_ID`
 - `DOR_PROJECT_AUDIT_REPOSITORY`
 - `DOR_PROJECT_AUDIT_CHECKOUT_ROOT`
 
-The configured organization and exact repository identity must match the onboarding intent. Wildcard repository identities are rejected.
-
-The browser never supplies a filesystem path. The audit always runs against `HEAD` of the configured checkout, and the existing Git manifest builder rejects tracked working-tree drift before evidence is collected.
-
-## Production checkout
-
-The runtime image includes the Git executable, but `.git` is deliberately excluded from the application image build context. Production therefore requires an operator-managed Git checkout mounted into the dashboard container/process.
-
-Use a dedicated checkout that:
-
-1. contains the Git metadata required by `ProjectAuditRuntime`;
-2. is clean at the intended revision;
-3. is mounted read-only into the dashboard runtime;
-4. contains only repository material intended for audit;
-5. does not expose deployment `.env` files, credentials, SSH material, or unrelated host paths.
-
-For example, an environment may bind a dedicated checkout to `/audit/repository:ro` and set `DOR_PROJECT_AUDIT_CHECKOUT_ROOT=/audit/repository`. The canonical `compose.yml` does not invent or auto-populate this checkout because repository acquisition and credentials are deployment-specific trust decisions.
+If either catalog variable is present, both are required and catalog mode takes precedence. The implementation never silently falls back to the legacy binding from a partially configured catalog.
 
 ## Semantics
 
