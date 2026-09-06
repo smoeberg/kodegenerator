@@ -19,12 +19,16 @@ DEFAULTS = {
 }
 
 _AUTH_SCOPED_ONBOARDING_KEYS = (
+    "_delivery_certification_candidate_id",
+    "_delivery_certification_command_id",
     "_implementation_apply_command_id",
     "_implementation_apply_proposal_id",
     "_implementation_proposal_command_id",
     "_implementation_proposal_draft_key",
     "_onboarding_command_id",
     "_onboarding_command_draft_key",
+    "delivery_certificate_result",
+    "delivery_certification_confirmed",
     "delivery_verification_candidate",
     "implementation_allowed_paths",
     "implementation_apply_confirmed",
@@ -53,6 +57,7 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "project_planning_acceptance_criteria",
     "project_planning_constraints",
     "project_planning_objective",
+    "selected_delivery_certificate_id",
     "selected_delivery_verification_candidate_id",
     "selected_implementation_patch_record_id",
     "selected_implementation_proposal_id",

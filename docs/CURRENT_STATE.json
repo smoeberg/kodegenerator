@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "canonical_branch": "main",
-  "canonical_alembic_head": "027_organization_memberships",
+  "canonical_alembic_head": "028_delivery_certificates",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",
@@ -26,7 +26,6 @@
     "canonical_system_specification",
     "requirement_steward_multi_agent_function_deliberation",
     "requirement_to_artifact_coverage",
-    "delivery_certificate",
     "multi_spec_verified_artifact_acceptance",
     "demo_installation_implementation_and_certification"
   ]
