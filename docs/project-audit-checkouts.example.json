@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "repositories": [
+    {
+      "organization_id": "dor-org",
+      "repository": "repository:smoeberg/kodegenerator",
+      "checkout": "kodegenerator"
+    },
+    {
+      "organization_id": "dor-org",
+      "repository": "repository:example/legacy-service",
+      "checkout": "legacy-service"
+    }
+  ]
+}
