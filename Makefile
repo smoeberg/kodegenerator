@@ -1,10 +1,13 @@
 .PHONY: help install dev test test-acceptance \
-	certify reconcile rollback fire-drill operator-readiness phase7-tests
+	certify reconcile rollback fire-drill operator-readiness phase7-tests \
+	demo-seed demo-preflight demo-up demo-down demo-certify demo-reset
 
 help:
 	@echo "Commands: make dev, make test, make test-acceptance,"
 	@echo "          make certify, make reconcile, make rollback, make fire-drill,"
-	@echo "          make operator-readiness"
+	@echo "          make operator-readiness,"
+	@echo "          make demo-seed, make demo-preflight, make demo-up,"
+	@echo "          make demo-certify, make demo-down, make demo-reset"
 
 dev:
 	pip install -r requirements.txt
@@ -44,3 +47,25 @@ fire-drill:
 # --- Post-deploy operator readiness -----------------------------------------
 operator-readiness:
 	PYTHONPATH=. python3 scripts/operator_readiness.py
+
+# --- Certified demo installation -------------------------------------------
+DEMO_ENV ?= .env.demo
+DEMO_COMPOSE = docker compose --env-file $(DEMO_ENV) -f compose.yml -f compose.demo.yml
+
+demo-seed:
+	PYTHONPATH=. python3 scripts/demo_installation.py seed --env-file $(DEMO_ENV)
+
+demo-preflight:
+	PYTHONPATH=. python3 scripts/demo_installation.py preflight --env-file $(DEMO_ENV)
+
+demo-up: demo-preflight
+	$(DEMO_COMPOSE) up -d --build
+
+demo-down:
+	$(DEMO_COMPOSE) down --remove-orphans
+
+demo-certify:
+	PYTHONPATH=. python3 scripts/demo_installation.py certify --env-file $(DEMO_ENV)
+
+demo-reset:
+	PYTHONPATH=. python3 scripts/demo_installation.py reset --env-file $(DEMO_ENV)

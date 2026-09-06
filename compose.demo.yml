@@ -1,0 +1,30 @@
+services:
+  api:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set for the certified demo}
+      DOR_IMPLEMENTATION_MODEL: ${DOR_IMPLEMENTATION_MODEL:?DOR_IMPLEMENTATION_MODEL must be set for the certified demo}
+      DOR_IMPLEMENTATION_ALLOWED_RESOURCES: ${DOR_IMPLEMENTATION_ALLOWED_RESOURCES:-repository:demo/golden}
+      DOR_PATCH_WORKSPACE_ROOT: /demo/patch-workspace
+      DOR_PATCH_ALLOWED_TOOLS: ${DOR_PATCH_ALLOWED_TOOLS:-python.ruff,python.pytest,python.compileall}
+    tmpfs:
+      - /demo:size=256m,mode=1777
+    volumes:
+      - type: bind
+        source: ${DOR_DEMO_PATCH_WORKSPACE_HOST:?DOR_DEMO_PATCH_WORKSPACE_HOST must be set}
+        target: /demo/patch-workspace
+        read_only: false
+
+  dashboard:
+    environment:
+      DOR_API_URL: http://api:8000
+      DOR_PROJECT_AUDIT_CHECKOUTS_ROOT: /audit/checkouts
+      DOR_PROJECT_AUDIT_CHECKOUT_CATALOG: /audit/catalog.json
+    volumes:
+      - type: bind
+        source: ${DOR_DEMO_AUDIT_CHECKOUTS_HOST_ROOT:?DOR_DEMO_AUDIT_CHECKOUTS_HOST_ROOT must be set}
+        target: /audit/checkouts
+        read_only: true
+      - type: bind
+        source: ${DOR_DEMO_AUDIT_CATALOG_HOST_FILE:?DOR_DEMO_AUDIT_CATALOG_HOST_FILE must be set}
+        target: /audit/catalog.json
+        read_only: true
