@@ -10,6 +10,7 @@ from api.auth import (
     authenticate_configured_user,
     bootstrap_configured_admin,
     create_access_token,
+    ensure_bootstrap_runtime_context,
 )
 from api.models import Token
 
@@ -22,6 +23,7 @@ async def login_for_access_token(
 ) -> Token:
     """Authenticate a configured admin and issue a JWT access token."""
     bootstrap_configured_admin()
+    ensure_bootstrap_runtime_context()
     user = authenticate_configured_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
