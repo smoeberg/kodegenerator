@@ -2,6 +2,7 @@
   "schema_version": 1,
   "canonical_branch": "main",
   "canonical_alembic_head": "030_artifact_acceptances",
+  "canonical_system_specification": "docs/CANONICAL_SYSTEM_SPECIFICATION.md",
   "canonical_runtime_paths": [
     "runtime/core.py",
     "runtime/pipeline_orchestrator.py",
@@ -23,7 +24,6 @@
     "phase_6": 156
   },
   "open_work": [
-    "canonical_system_specification",
     "requirement_steward_multi_agent_function_deliberation",
     "demo_installation_implementation_and_certification"
   ]
