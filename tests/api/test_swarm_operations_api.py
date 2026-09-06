@@ -8,6 +8,7 @@ os.environ.setdefault("DOR_JWT_SECRET_KEY", "test-secret-key-min-32-chars-long")
 os.environ.setdefault("DOR_ENV", "test")
 os.environ.setdefault("DOR_ADMIN_USERNAME", "admin")
 os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
+os.environ.setdefault("DOR_ADMIN_ORGANIZATION_ID", "dor-org")
 
 from fastapi.testclient import TestClient
 
