@@ -33,6 +33,32 @@ class RequirementTraceabilityStore:
             )
         )
 
+    def list(
+        self,
+        *,
+        organization_id: str,
+        repository: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[RequirementTraceabilityModel]:
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        statement = select(RequirementTraceabilityModel).where(
+            RequirementTraceabilityModel.organization_id == organization_id
+        )
+        if repository is not None:
+            statement = statement.where(
+                RequirementTraceabilityModel.manifest_payload["repository"].as_string()
+                == repository
+            )
+        if status is not None:
+            statement = statement.where(RequirementTraceabilityModel.status == status)
+        statement = statement.order_by(
+            RequirementTraceabilityModel.created_at.desc(),
+            RequirementTraceabilityModel.manifest_id.asc(),
+        ).limit(limit)
+        return list(self.session.scalars(statement))
+
     def get_for_command(
         self,
         *,
