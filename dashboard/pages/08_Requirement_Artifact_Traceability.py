@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Mapping
+
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient
@@ -24,3 +26,13 @@ if not authenticated():
 render_requirement_traceability(
     DORAPIClient(token=st.session_state.get("access_token"))
 )
+
+result = st.session_state.get("requirement_traceability_result")
+if isinstance(result, Mapping):
+    manifest = result.get("manifest")
+    if isinstance(manifest, Mapping) and manifest.get("status") == "complete":
+        st.page_link(
+            "pages/09_Multi_Spec_Artifact_Acceptance.py",
+            label="Fortsæt til Multi-Spec Artifact Acceptance",
+            icon="🧩",
+        )

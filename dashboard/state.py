@@ -19,6 +19,8 @@ DEFAULTS = {
 }
 
 _AUTH_SCOPED_ONBOARDING_KEYS = (
+    "_artifact_acceptance_command_id",
+    "_artifact_acceptance_draft_fingerprint",
     "_delivery_certification_candidate_id",
     "_delivery_certification_command_id",
     "_implementation_apply_command_id",
@@ -29,6 +31,10 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "_onboarding_command_draft_key",
     "_requirement_traceability_command_id",
     "_requirement_traceability_draft_fingerprint",
+    "artifact_acceptance_confirmed",
+    "artifact_acceptance_manifest_ids",
+    "artifact_acceptance_rationale",
+    "artifact_acceptance_result",
     "delivery_certificate_result",
     "delivery_certification_confirmed",
     "delivery_verification_candidate",
@@ -61,6 +67,7 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "project_planning_objective",
     "requirement_traceability_confirmed",
     "requirement_traceability_result",
+    "selected_artifact_acceptance_id",
     "selected_delivery_certificate_id",
     "selected_delivery_verification_candidate_id",
     "selected_implementation_patch_record_id",
@@ -121,7 +128,8 @@ def clear_auth() -> None:
         st.session_state.pop(key, None)
     for key in tuple(st.session_state):
         if (
-            key.startswith("onboarding_target_api_")
+            key.startswith("artifact_acceptance_")
+            or key.startswith("onboarding_target_api_")
             or key.startswith("onboarding_target_database_")
             or key.startswith("requirement_traceability_")
         ):
