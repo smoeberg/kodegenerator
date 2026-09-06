@@ -10,6 +10,7 @@ from dashboard.project_audit import (
     ProjectAuditGUIError,
     restore_onboarding_intent,
 )
+from dashboard.repository_checkout_catalog import RepositoryCheckoutCatalogError
 from phase4.onboarding import OnboardingIntent, OnboardingIntentDraft, OnboardingPurpose
 
 
@@ -65,7 +66,10 @@ def test_checkout_binding_rejects_other_repository(tmp_path) -> None:
         root=tmp_path,
     )
 
-    with pytest.raises(ProjectAuditGUIError, match="ingen konfigureret audit-checkout"):
+    with pytest.raises(
+        RepositoryCheckoutCatalogError,
+        match="ingen konfigureret audit-checkout",
+    ):
         binding.root_for(intent)
 
 
@@ -77,12 +81,12 @@ def test_checkout_binding_rejects_other_organization(tmp_path) -> None:
         root=tmp_path,
     )
 
-    with pytest.raises(ProjectAuditGUIError, match="organisation"):
+    with pytest.raises(RepositoryCheckoutCatalogError, match="organisation"):
         binding.root_for(intent)
 
 
 def test_checkout_binding_requires_absolute_existing_path(tmp_path) -> None:
-    with pytest.raises(ProjectAuditGUIError, match="absolut"):
+    with pytest.raises(RepositoryCheckoutCatalogError, match="absolut"):
         ProjectAuditCheckoutBinding.from_environment(
             {
                 "DOR_PROJECT_AUDIT_ORGANIZATION_ID": "org-a",
@@ -91,7 +95,7 @@ def test_checkout_binding_requires_absolute_existing_path(tmp_path) -> None:
             }
         )
 
-    with pytest.raises(ProjectAuditGUIError, match="findes ikke"):
+    with pytest.raises(RepositoryCheckoutCatalogError, match="findes ikke"):
         ProjectAuditCheckoutBinding.from_environment(
             {
                 "DOR_PROJECT_AUDIT_ORGANIZATION_ID": "org-a",
@@ -102,7 +106,10 @@ def test_checkout_binding_requires_absolute_existing_path(tmp_path) -> None:
 
 
 def test_checkout_binding_rejects_authority_glob(tmp_path) -> None:
-    with pytest.raises(ProjectAuditGUIError, match="eksakt repository identity"):
+    with pytest.raises(
+        RepositoryCheckoutCatalogError,
+        match="eksakt repository identity",
+    ):
         ProjectAuditCheckoutBinding.from_environment(
             {
                 "DOR_PROJECT_AUDIT_ORGANIZATION_ID": "org-a",
