@@ -187,7 +187,7 @@ services:
       <<: *runtime-environment
       DOR_RUNTIME_ROLE: dashboard
       HOME: /tmp/dashboard-home
-      DOR_API_BASE: http://api:8000
+      DOR_API_URL: http://api:8000
       DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
     ports:
       - "${DOR_DASHBOARD_PORT:-8501}:8501"
