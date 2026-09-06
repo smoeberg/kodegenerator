@@ -77,7 +77,8 @@ demo-reset:
 	PYTHONPATH=. python3 scripts/demo_installation.py reset --env-file $(DEMO_ENV)
 
 # --- Golden Real Run v1 -----------------------------------------------------
-demo-golden-prepare: demo-certify
+demo-golden-prepare: demo-up
+	@PYTHONPATH=. python3 scripts/demo_installation.py certify --env-file $(DEMO_ENV)
 	@mkdir -p .dor-demo
 	@rm -f $(GOLDEN_PREPARED) $(GOLDEN_GOVERNED) $(GOLDEN_ACCEPTANCE) $(GOLDEN_FINAL)
 	@$(DEMO_COMPOSE) exec -T dashboard python scripts/golden_run.py prepare > $(GOLDEN_PREPARED)
