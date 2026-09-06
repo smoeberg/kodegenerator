@@ -9,6 +9,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.control_plane_organizations",
     "api.endpoints.delivery_certificates",
     "api.endpoints.requirements_traceability",
+    "api.endpoints.artifact_acceptances",
     "api.endpoints.onboarding",
     "api.endpoints.swarm",
     "api.endpoints.swarm_operations",
