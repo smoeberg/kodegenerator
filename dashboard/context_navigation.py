@@ -139,7 +139,10 @@ def render_sidebar_organization_switcher(client: DORAPIClient) -> None:
     if not isinstance(catalog, Mapping):
         try:
             sync_organization_context(client)
-        except DORAPIError:
+        except Exception:
+            # Navigation is read-only. If discovery is unavailable, preserve the
+            # legacy/default organization while server-side tenant checks remain
+            # authoritative for every subsequent operation.
             return
         catalog = st.session_state.get(_ORGANIZATION_CATALOG_KEY)
     if not isinstance(catalog, Mapping):
@@ -263,6 +266,14 @@ def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
             raise
         st.warning(f"Organisationskatalog ikke tilgængeligt ({exc.status_code}): {exc}")
         organization_id = st.session_state.get("organization_id")
+        catalog = {"organization_id": organization_id, "projects": []}
+        st.session_state[_PROJECT_CATALOG_KEY] = catalog
+    except Exception as exc:
+        # Preserve the authenticated legacy/default organization when the
+        # read-only catalog projection is unavailable. This cannot grant tenant
+        # access because all mutating/read API boundaries validate membership.
+        organization_id = st.session_state.get("organization_id")
+        st.warning(f"Organisationskatalog kunne ikke indlæses: {exc}")
         catalog = {"organization_id": organization_id, "projects": []}
         st.session_state[_PROJECT_CATALOG_KEY] = catalog
 
