@@ -104,6 +104,11 @@ def _render_result(result: dict[str, Any], *, previous: bool = False) -> None:
             "Næste trin er Project Audit. Intentet er gemt i sessionen som canonical provenance-input. "
             "Audit-start kræver fortsat en eksplicit governed repository execution boundary."
         )
+    st.page_link(
+        "pages/02_Project_Audit.py",
+        label="Fortsæt til Project Audit",
+        icon="🔎",
+    )
 
 
 def render_onboarding(client: DORAPIClient) -> None:
