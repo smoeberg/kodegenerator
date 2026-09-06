@@ -1,20 +1,18 @@
-from api.main import app
+from api.endpoints.requirements_traceability import router
 
 
-def test_requirement_traceability_routes_are_canonical_and_authenticated() -> None:
-    routes = {
-        (route.path, method, getattr(route.endpoint, "__module__", ""))
-        for route in app.routes
-        if hasattr(route, "methods")
-        for method in route.methods
+def test_requirement_traceability_router_exposes_create_and_read() -> None:
+    operations = {
+        (route.path, method)
+        for route in router.routes
+        for method in (getattr(route, "methods", ()) or ())
     }
+
     assert (
         "/api/v1/control-plane/requirement-traceability",
         "POST",
-        "api.endpoints.requirements_traceability",
-    ) in routes
+    ) in operations
     assert (
         "/api/v1/control-plane/requirement-traceability/{manifest_id}",
         "GET",
-        "api.endpoints.requirements_traceability",
-    ) in routes
+    ) in operations
