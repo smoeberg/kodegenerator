@@ -316,7 +316,7 @@ def test_manual_advance_returns_409_when_rejected_gate_blocks(monkeypatch) -> No
         approver="alice",
         decision="rejected",
     )
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     with pytest.raises(HTTPException) as exc:
         execution_api.advance_execution(
@@ -337,7 +337,7 @@ def test_manual_advance_returns_409_when_retried_gate_is_pending(monkeypatch) ->
     gate_id = "gate_requirements_approval"
     orch.decide_gate(workflow.id, gate_id, approver="alice", decision="rejected")
     orch.retry_gate(workflow.id, gate_id, actor="bob", reason="Corrected")
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     with pytest.raises(HTTPException) as exc:
         execution_api.advance_execution(
@@ -361,7 +361,7 @@ def test_gate_list_exposes_round_and_retry_authority(monkeypatch) -> None:
         approver="alice",
         decision="rejected",
     )
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     gates = execution_api.list_execution_gates(
         workflow.id,
@@ -384,7 +384,7 @@ def test_retry_endpoint_opens_round_and_emits_event(monkeypatch) -> None:
     gate_id = "gate_requirements_approval"
     orch.decide_gate(workflow.id, gate_id, approver="alice", decision="rejected")
     events = []
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
     monkeypatch.setattr(
         execution_api,
         "_emit",
@@ -421,7 +421,7 @@ def test_retry_endpoint_fails_closed_for_blank_reason(monkeypatch) -> None:
     orch, workflow = build_orchestrator()
     gate_id = "gate_requirements_approval"
     orch.decide_gate(workflow.id, gate_id, approver="alice", decision="rejected")
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     with pytest.raises(HTTPException) as exc:
         execution_api.retry_execution_gate(
@@ -439,7 +439,7 @@ def test_retry_endpoint_fails_closed_for_blank_reason(monkeypatch) -> None:
 def test_decide_endpoint_emits_rejection_without_claiming_advance(monkeypatch) -> None:
     orch, workflow = build_orchestrator()
     events = []
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
     monkeypatch.setattr(
         execution_api,
         "_emit",
