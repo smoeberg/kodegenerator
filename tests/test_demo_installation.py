@@ -15,6 +15,7 @@ from scripts.demo_installation import (
     seed_workspaces,
     validate_env,
 )
+from services.runtime_configuration import _ROLE_REQUIRED
 
 
 def test_seed_workspaces_creates_distinct_clean_checkouts_at_same_baseline(
@@ -134,6 +135,11 @@ def test_compose_preflight_locks_api_dashboard_and_patch_wiring(tmp_path: Path) 
         "implementation_runtime_wiring",
     }
     assert all(item.passed for item in results)
+
+
+def test_dashboard_runtime_contract_uses_canonical_api_url() -> None:
+    assert "DOR_API_URL" in _ROLE_REQUIRED["dashboard"]
+    assert "DOR_API_BASE" not in _ROLE_REQUIRED["dashboard"]
 
 
 def test_repository_declares_certified_demo_as_canonical_and_closed() -> None:
