@@ -114,6 +114,70 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+def ensure_bootstrap_runtime_context(runtime: Any = None) -> None:
+    """Idempotently ensure the bootstrap admin's runtime context exists.
+
+    The configured bootstrap admin authenticates against the identity store
+    (``identity_principals``). The Phase 3 runtime additionally requires the
+    actor to be a member of the configured organization before any
+    organization-scoped command is accepted (``establish_context``). This
+    helper seeds that runtime membership for the same env-configured
+    bootstrap identity so a fresh deployment works without manual seeding.
+
+    The operation is intentionally best-effort and idempotent:
+
+    * organization is created only when missing
+    * actor is registered only when missing
+    * failures are logged and swallowed so a healthy bootstrap
+      login still succeeds even if runtime seeding is unavailable
+      (e.g. a standalone auth smoke test without a runtime database).
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        from domain.actor import Actor, ActorType
+        from domain.organization import Organization
+        from runtime.core import RepositoryError
+
+        organization_id = os.getenv("DOR_ADMIN_ORGANIZATION_ID", "dor-org")
+        if not organization_id:
+            return
+        if runtime is None:
+            from api.dependencies import get_dor
+
+            try:
+                runtime = get_dor()
+            except Exception as exc:  # pragma: no cover - environment dependent
+                logger.warning(
+                    "bootstrap runtime context skipped: runtime unavailable (%s)",
+                    exc,
+                )
+                return
+        try:
+            runtime.create_organization(
+                Organization(id=organization_id, name=organization_id)
+            )
+            logger.info("bootstrap organization created: %s", organization_id)
+        except RepositoryError:
+            pass  # already exists
+        username = os.getenv("DOR_ADMIN_USERNAME", "admin")
+        try:
+            runtime.register_actor(
+                Actor(
+                    id=username,
+                    type=ActorType.HUMAN,
+                    identity=username,
+                ),
+                organization_id=organization_id,
+            )
+            logger.info("bootstrap actor registered: %s@%s", username, organization_id)
+        except RepositoryError:
+            pass  # already exists
+    except Exception as exc:
+        logger.warning("bootstrap runtime context skipped: %s", exc)
+
+
 def bootstrap_configured_admin() -> None:
     """Synchronize the explicitly configured bootstrap user from environment settings.
 
