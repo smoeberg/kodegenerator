@@ -236,8 +236,12 @@ def artifact_acceptance_bundle_fingerprint(
 ) -> str:
     _require_digest(artifact_set_fingerprint, "artifact_set_fingerprint")
     ids = tuple(sorted(manifest_ids))
-    if not _MIN_SPECS <= len(ids) <= _MAX_SPECS or len(ids) != len(set(ids)):
-        raise ArtifactAcceptanceError("acceptance bundle requires unique multi-spec manifests")
+    if not _MIN_SPECS <= len(ids) <= _MAX_SPECS:
+        raise ArtifactAcceptanceError(
+            f"acceptance bundle requires {_MIN_SPECS}..{_MAX_SPECS} manifests"
+        )
+    if len(ids) != len(set(ids)):
+        raise ArtifactAcceptanceError("manifest IDs must be unique")
     for manifest_id in ids:
         _require_digest(manifest_id, "manifest_id")
     return canonical_digest(
