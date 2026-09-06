@@ -67,7 +67,9 @@ def restore_apply_provenance(
             "Proposal-resultatet skal være unapplied før governed apply"
         )
     if proposal_result.get("plan_id") != plan_result.get("plan_id"):
-        raise ImplementationApplyGUIError("Proposal-resultatet matcher ikke den aktuelle AI-6 plan")
+        raise ImplementationApplyGUIError(
+            "Proposal-resultatet matcher ikke den aktuelle AI-6 plan"
+        )
     if proposal_result.get("plan_request_fingerprint") != plan_result.get(
         "request_fingerprint"
     ):
@@ -103,14 +105,20 @@ def restore_apply_provenance(
     if request.get("organization_id") != intent.organization_id:
         raise ImplementationApplyGUIError("Proposal-requesten matcher ikke organisationen")
     if request.get("resource") != intent.source_repository:
-        raise ImplementationApplyGUIError("Proposal-requesten matcher ikke repository resource")
+        raise ImplementationApplyGUIError(
+            "Proposal-requesten matcher ikke repository resource"
+        )
 
     if response.get("command_id") != command_id:
-        raise ImplementationApplyGUIError("Proposal response matcher ikke proposal command_id")
+        raise ImplementationApplyGUIError(
+            "Proposal response matcher ikke proposal command_id"
+        )
     if response.get("authority_decision") != "allow":
         raise ImplementationApplyGUIError("Proposal response mangler AI-3 ALLOW")
     if response.get("execution_status") not in {"succeeded", "replayed"}:
-        raise ImplementationApplyGUIError("Proposal execution er ikke successful/replayed")
+        raise ImplementationApplyGUIError(
+            "Proposal execution er ikke successful/replayed"
+        )
     if response.get("outcome_status") not in {"succeeded", "replayed"}:
         raise ImplementationApplyGUIError("Proposal outcome er ikke successful/replayed")
 
@@ -122,7 +130,7 @@ def restore_apply_provenance(
     proposal_id = _required_digest(proposal, "proposal_id")
     provider_id = _required_text(proposal, "provider_id")
     diff_sha256 = _required_digest(proposal, "diff_sha256")
-    unified_diff = _required_text(proposal, "unified_diff")
+    unified_diff = _required_content(proposal, "unified_diff")
     if hashlib.sha256(unified_diff.encode("utf-8")).hexdigest() != diff_sha256:
         raise ImplementationApplyGUIError("Patch diff SHA-256 matcher ikke unified diff")
 
@@ -133,13 +141,19 @@ def restore_apply_provenance(
     if len(touched_paths) != len(set(touched_paths)):
         raise ImplementationApplyGUIError("Patch proposal har dublerede touched_paths")
     if any(path not in scope.allowed_paths for path in touched_paths):
-        raise ImplementationApplyGUIError("Patch proposal rører filer uden for approved scope")
+        raise ImplementationApplyGUIError(
+            "Patch proposal rører filer uden for approved scope"
+        )
     if len(touched_paths) > scope.max_files:
-        raise ImplementationApplyGUIError("Patch proposal overstiger approved file budget")
+        raise ImplementationApplyGUIError(
+            "Patch proposal overstiger approved file budget"
+        )
 
     changed_lines = proposal.get("changed_lines")
     if type(changed_lines) is not int or not 1 <= changed_lines <= scope.max_changed_lines:
-        raise ImplementationApplyGUIError("Patch proposal har ugyldigt changed-line budget")
+        raise ImplementationApplyGUIError(
+            "Patch proposal har ugyldigt changed-line budget"
+        )
 
     expected_proposal_id = _canonical_digest(
         {
@@ -178,7 +192,9 @@ def build_apply_payload(
     if not isinstance(proposal, VerifiedPatchProposal):
         raise TypeError("proposal must be a VerifiedPatchProposal")
     if not command_id or command_id != command_id.strip():
-        raise ImplementationApplyGUIError("apply command_id skal være canonical og ikke-tom")
+        raise ImplementationApplyGUIError(
+            "apply command_id skal være canonical og ikke-tom"
+        )
     return {
         "organization_id": proposal.organization_id,
         "command_id": command_id,
@@ -201,7 +217,9 @@ def submit_governed_patch_apply(
             f"Governed patch apply blev afvist ({exc.status_code}): {exc}"
         ) from exc
     if not isinstance(response, Mapping):
-        raise ImplementationApplyGUIError("Patch execution API returnerede ikke et objekt")
+        raise ImplementationApplyGUIError(
+            "Patch execution API returnerede ikke et objekt"
+        )
     verified = _verify_apply_response(response, payload, proposal)
     return {
         "request": payload,
@@ -256,7 +274,6 @@ def render_implementation_apply() -> None:
     cols[1].metric("Proposal", proposal.proposal_id[:12])
     cols[2].metric("Touched files", len(proposal.touched_paths))
     cols[3].metric("Changed lines", proposal.changed_lines)
-
     st.error(
         "Dette trin kan ændre den operator-konfigurerede workspace. Apply sker kun efter "
         "en ny human capability-check, en ny AI-3 authority-beslutning og serverens egne "
@@ -296,7 +313,6 @@ def render_implementation_apply() -> None:
         "Jeg anmoder eksplicit om governed patch apply; serveren må stadig afvise operationen",
         key="implementation_apply_confirmed",
     )
-
     if st.session_state.get("_implementation_apply_proposal_id") != proposal.proposal_id:
         st.session_state["_implementation_apply_proposal_id"] = proposal.proposal_id
         st.session_state["_implementation_apply_command_id"] = str(uuid.uuid4())
@@ -320,9 +336,13 @@ def render_implementation_apply() -> None:
                     "response"
                 ]["record_id"]
                 if result["applied"]:
-                    st.success("Patch blev committed gennem den governed execution boundary.")
+                    st.success(
+                        "Patch blev committed gennem den governed execution boundary."
+                    )
                 else:
-                    st.error("Patch blev ikke committed. Se execution-evidence nedenfor.")
+                    st.error(
+                        "Patch blev ikke committed. Se execution-evidence nedenfor."
+                    )
             except ImplementationApplyGUIError as exc:
                 st.error(str(exc))
 
@@ -347,7 +367,6 @@ def _render_apply_result(result: Mapping[str, Any]) -> None:
     cols[1].metric("Record", str(response.get("record_status", "—")))
     cols[2].metric("Committed", "Ja" if response.get("committed") else "Nej")
     cols[3].metric("Rolled back", "Ja" if response.get("rolled_back") else "Nej")
-
     if response.get("committed"):
         st.success(
             "Serveren committed patchen efter exact baseline-binding og bestået fixed lint/test/build evidence."
@@ -374,7 +393,6 @@ def _render_apply_result(result: Mapping[str, Any]) -> None:
         ]
         if rows:
             st.dataframe(rows, use_container_width=True, hide_index=True)
-
     st.info(
         "Tool-evidence er ikke DOR PASS/FAIL authority. P3-20 forbliver den authoritative gate."
     )
@@ -393,7 +411,9 @@ def _scope_from_request(request: Mapping[str, Any]) -> ImplementationScope:
             max_changed_lines=request.get("max_changed_lines"),
         )
     except (TypeError, ValueError) as exc:
-        raise ImplementationApplyGUIError("Proposal-requestens scope er ugyldig") from exc
+        raise ImplementationApplyGUIError(
+            "Proposal-requestens scope er ugyldig"
+        ) from exc
 
 
 def _verify_apply_response(
@@ -402,11 +422,17 @@ def _verify_apply_response(
     proposal: VerifiedPatchProposal,
 ) -> dict[str, Any]:
     if response.get("command_id") != payload.get("command_id"):
-        raise ImplementationApplyGUIError("Patch execution response matcher ikke command_id")
+        raise ImplementationApplyGUIError(
+            "Patch execution response matcher ikke command_id"
+        )
     if response.get("proposal_id") != proposal.proposal_id:
-        raise ImplementationApplyGUIError("Patch execution response matcher ikke proposal_id")
+        raise ImplementationApplyGUIError(
+            "Patch execution response matcher ikke proposal_id"
+        )
     if response.get("authority_decision") != "allow":
-        raise ImplementationApplyGUIError("Patch execution response mangler AI-3 ALLOW")
+        raise ImplementationApplyGUIError(
+            "Patch execution response mangler AI-3 ALLOW"
+        )
 
     _required_digest(response, "request_fingerprint")
     baseline_fingerprint = _required_digest(response, "baseline_fingerprint")
@@ -416,33 +442,51 @@ def _verify_apply_response(
     record_status = response.get("record_status")
     if record_status not in {"succeeded", "failed"}:
         raise ImplementationApplyGUIError("Patch execution record har ukendt status")
-    if type(response.get("committed")) is not bool or type(response.get("rolled_back")) is not bool:
-        raise ImplementationApplyGUIError("Patch execution commit/rollback flags er ugyldige")
+    if type(response.get("committed")) is not bool or type(
+        response.get("rolled_back")
+    ) is not bool:
+        raise ImplementationApplyGUIError(
+            "Patch execution commit/rollback flags er ugyldige"
+        )
 
     committed = response["committed"]
     rolled_back = response["rolled_back"]
     error = response.get("error")
     evidence = response.get("evidence")
     if not isinstance(evidence, list):
-        raise ImplementationApplyGUIError("Patch execution response mangler tool evidence")
+        raise ImplementationApplyGUIError(
+            "Patch execution response mangler tool evidence"
+        )
 
     if record_status == "succeeded":
         if response.get("execution_status") not in {"succeeded", "replayed"}:
-            raise ImplementationApplyGUIError("Successful patch record mangler successful AI-4 execution")
+            raise ImplementationApplyGUIError(
+                "Successful patch record mangler successful AI-4 execution"
+            )
         if response.get("outcome_status") not in {"succeeded", "replayed"}:
-            raise ImplementationApplyGUIError("Successful patch record mangler successful AI-5 outcome")
+            raise ImplementationApplyGUIError(
+                "Successful patch record mangler successful AI-5 outcome"
+            )
         if not committed or rolled_back or error is not None:
-            raise ImplementationApplyGUIError("Successful patch record har inkonsistente commit-flags")
+            raise ImplementationApplyGUIError(
+                "Successful patch record har inkonsistente commit-flags"
+            )
         artifact = response.get("artifact")
         if not isinstance(artifact, Mapping):
-            raise ImplementationApplyGUIError("Successful patch record mangler committed artifact")
+            raise ImplementationApplyGUIError(
+                "Successful patch record mangler committed artifact"
+            )
         _verify_apply_artifact(artifact, proposal, baseline_fingerprint)
         _verify_success_evidence(evidence, artifact)
     else:
         if committed:
-            raise ImplementationApplyGUIError("Failed patch record må ikke være committed")
+            raise ImplementationApplyGUIError(
+                "Failed patch record må ikke være committed"
+            )
         if not isinstance(error, str) or not error.strip():
-            raise ImplementationApplyGUIError("Failed patch record mangler non-empty error")
+            raise ImplementationApplyGUIError(
+                "Failed patch record mangler non-empty error"
+            )
 
     return dict(response)
 
@@ -456,15 +500,25 @@ def _verify_apply_artifact(
     if artifact.get("proposal_id") != proposal.proposal_id:
         raise ImplementationApplyGUIError("Patch artifact matcher ikke proposal_id")
     if artifact.get("diff_sha256") != proposal.diff_sha256:
-        raise ImplementationApplyGUIError("Patch artifact matcher ikke proposal diff SHA-256")
+        raise ImplementationApplyGUIError(
+            "Patch artifact matcher ikke proposal diff SHA-256"
+        )
     if artifact.get("baseline_fingerprint") != baseline_fingerprint:
-        raise ImplementationApplyGUIError("Patch artifact matcher ikke authority-bound baseline")
+        raise ImplementationApplyGUIError(
+            "Patch artifact matcher ikke authority-bound baseline"
+        )
     files = artifact.get("files")
     if not isinstance(files, list) or not files:
         raise ImplementationApplyGUIError("Patch artifact mangler file manifest")
-    paths = tuple(str(item.get("path")) for item in files if isinstance(item, Mapping))
-    if len(paths) != len(files) or tuple(sorted(paths)) != tuple(sorted(proposal.touched_paths)):
-        raise ImplementationApplyGUIError("Patch artifact files matcher ikke proposal touched scope")
+    paths = tuple(
+        str(item.get("path")) for item in files if isinstance(item, Mapping)
+    )
+    if len(paths) != len(files) or tuple(sorted(paths)) != tuple(
+        sorted(proposal.touched_paths)
+    ):
+        raise ImplementationApplyGUIError(
+            "Patch artifact files matcher ikke proposal touched scope"
+        )
 
 
 def _verify_success_evidence(
@@ -472,25 +526,37 @@ def _verify_success_evidence(
     artifact: Mapping[str, Any],
 ) -> None:
     if not evidence:
-        raise ImplementationApplyGUIError("Successful patch record mangler tool evidence")
+        raise ImplementationApplyGUIError(
+            "Successful patch record mangler tool evidence"
+        )
     kinds: set[str] = set()
     for item in evidence:
         if not isinstance(item, Mapping):
             raise ImplementationApplyGUIError("Patch tool evidence er malformed")
         kind = item.get("kind")
         if kind not in _REQUIRED_TOOL_KINDS:
-            raise ImplementationApplyGUIError("Patch tool evidence har ukendt tool kind")
+            raise ImplementationApplyGUIError(
+                "Patch tool evidence har ukendt tool kind"
+            )
         if kind in kinds:
-            raise ImplementationApplyGUIError("Patch tool evidence har dubleret tool kind")
+            raise ImplementationApplyGUIError(
+                "Patch tool evidence har dubleret tool kind"
+            )
         kinds.add(str(kind))
         if item.get("status") != "passed" or item.get("passed") is not True:
-            raise ImplementationApplyGUIError("Successful patch record indeholder ikke-passing evidence")
+            raise ImplementationApplyGUIError(
+                "Successful patch record indeholder ikke-passing evidence"
+            )
         if item.get("artifact_id") != artifact.get("artifact_id"):
-            raise ImplementationApplyGUIError("Tool evidence matcher ikke committed artifact")
+            raise ImplementationApplyGUIError(
+                "Tool evidence matcher ikke committed artifact"
+            )
         _required_digest(item, "evidence_id")
         _required_digest(item, "tool_fingerprint")
     if kinds != _REQUIRED_TOOL_KINDS:
-        raise ImplementationApplyGUIError("Successful patch record kræver lint, test og build evidence")
+        raise ImplementationApplyGUIError(
+            "Successful patch record kræver lint, test og build evidence"
+        )
 
 
 def _canonical_digest(value: object) -> str:
@@ -514,4 +580,11 @@ def _required_text(source: Mapping[str, Any], key: str) -> str:
     value = source.get(key)
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ImplementationApplyGUIError(f"Mangler canonical {key}")
+    return value
+
+
+def _required_content(source: Mapping[str, Any], key: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value:
+        raise ImplementationApplyGUIError(f"Mangler {key}")
     return value
