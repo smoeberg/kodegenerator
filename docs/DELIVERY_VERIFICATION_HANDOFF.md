@@ -1,14 +1,10 @@
 # Delivery Verification Handoff
 
-This document defines the first concrete slice of the open `delivery_certificate` work item: a content-addressed, non-authoritative handoff from a successful governed patch apply to a future authoritative delivery gate.
+This document defines the content-addressed, non-authoritative handoff from a successful governed patch apply to the authoritative Delivery Contract v1 boundary.
 
-## Why this is a handoff, not PASS
+## Why the handoff itself is not PASS
 
-The current repository has a Phase 4 epistemic verification subsystem, but that subsystem evaluates verifier observations and deliberately does not grant execution authority. The current API surface also has no canonical delivery-verification command that the dashboard can invoke.
-
-The dashboard therefore must not invent a `/verify` endpoint, run shell/CI commands from the browser, or reinterpret successful lint/test/build evidence as an authoritative delivery PASS.
-
-A Delivery Verification Candidate has exactly one lifecycle state:
+The handoff artifact remains deliberately unable to express PASS/FAIL. It packages exact validated provenance and has one lifecycle state:
 
 - `pending_authoritative_verification`
 
@@ -17,7 +13,7 @@ It is always:
 - `authoritative = false`
 - `verification_result = null`
 
-The candidate itself cannot express PASS or FAIL.
+The separate Delivery Certificate API introduced after this handoff consumes the candidate and publishes the authoritative Delivery Contract v1 result. The candidate itself never gains that authority retroactively.
 
 ## Trust boundary
 
@@ -59,6 +55,14 @@ The candidate then content-addresses the validated provenance again into `candid
 
 Any change to those inputs yields a different candidate or fails reconstruction.
 
+## Authoritative consumer
+
+`POST /api/v1/control-plane/delivery-certificates` is the canonical consumer of the handoff.
+
+Before issuing PASS/FAIL, the backend reconstructs the candidate and cross-checks it against server-owned governed apply provenance, the configured trusted toolchain/executables, and the current trusted workspace file state. The resulting immutable certificate is persisted under migration `028_delivery_certificates`.
+
+See `docs/DELIVERY_CERTIFICATE.md` for the authoritative contract.
+
 ## Explicit non-capabilities
 
 Creating a handoff does **not**:
@@ -72,10 +76,8 @@ Creating a handoff does **not**:
 - release or deploy an artifact,
 - grant execution, release or deployment authority.
 
-Those capabilities require separate governed contracts and transports.
+The Delivery Certificate boundary also does not grant release/deploy authority; it only publishes the authoritative result for Delivery Contract v1.
 
 ## Current-state relationship
 
-`docs/CURRENT_STATE.json` still lists `delivery_certificate` as open work. This handoff intentionally does not mark that item complete: it supplies the immutable candidate/provenance boundary that a later authoritative delivery-certification implementation can consume.
-
-Until that later boundary exists, the only correct UI state after handoff creation is **PENDING authoritative verification**.
+The handoff supplied the immutable candidate/provenance boundary. `delivery_certificate` is closed only by the separate authoritative Delivery Certificate v1 implementation; the handoff remains the required preceding artifact.
