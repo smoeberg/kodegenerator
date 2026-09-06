@@ -75,6 +75,7 @@ def test_control_plane_router_exposes_get_and_post_project_collection() -> None:
 
 def test_project_catalog_fails_closed_without_authenticated_organization() -> None:
     result = list_projects(
+        organization_id=None,
         current_user=User(username="alice", organization_id=None),
         dor=SimpleNamespace(),
     )
@@ -101,6 +102,7 @@ def test_project_catalog_uses_tenant_query_and_canonical_project_read_boundary()
             return established_context
 
     result = list_projects(
+        organization_id=None,
         current_user=User(username="alice", organization_id="org-1"),
         dor=FakeDOR(),
     )
