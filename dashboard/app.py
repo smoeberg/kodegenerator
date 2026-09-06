@@ -15,6 +15,7 @@ from dashboard.cockpit_view_model import (
     normalize_gates,
     normalize_proposals,
 )
+from dashboard.context_navigation import render_context_navigation
 from dashboard.evidence_trace import render_evidence_trace
 from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
 from dashboard.operator_overview import render_operator_overview
@@ -114,10 +115,13 @@ def project_page(client: DORAPIClient) -> None:
         "**Hvad bygger vi?** Projektets intent oprettes gennem Control Plane "
         "og behandles som immutable."
     )
+    organization_id = st.session_state.get("organization_id")
+    if not organization_id:
+        st.warning("Vælg eller opret en aktiv organisation ovenfor først.")
+        return
+    st.caption(f"Nye projekter oprettes i organisation `{organization_id}`.")
+
     with st.form("project_create"):
-        organization_id = st.text_input(
-            "Organisation ID", value=st.session_state.get("organization_id") or ""
-        )
         name = st.text_input("System-/projektnavn")
         goal = st.text_area("Mål", height=100)
         description = st.text_area("Beskrivelse", height=100)
@@ -133,13 +137,8 @@ def project_page(client: DORAPIClient) -> None:
         command_id = st.text_input("Command ID", value=str(uuid.uuid4()))
         create = st.form_submit_button("Opret projekt", type="primary")
     if create:
-        if (
-            not organization_id.strip()
-            or not name.strip()
-            or not goal.strip()
-            or not command_id.strip()
-        ):
-            st.warning("Organisation ID, navn, mål og Command ID er påkrævet.")
+        if not name.strip() or not goal.strip() or not command_id.strip():
+            st.warning("Navn, mål og Command ID er påkrævet.")
             return
         constraints: dict[str, str] = {}
         for line in constraints_text.splitlines():
@@ -147,7 +146,7 @@ def project_page(client: DORAPIClient) -> None:
                 key, value = line.split("=", 1)
                 constraints[key.strip()] = value.strip()
         payload = {
-            "organization_id": organization_id.strip(),
+            "organization_id": organization_id,
             "name": name.strip(),
             "command_id": command_id.strip(),
             "intent": {
@@ -168,11 +167,11 @@ def project_page(client: DORAPIClient) -> None:
             with st.spinner("Opretter projekt…"):
                 result = client.post("/api/v1/control-plane/projects", json=payload)
             project = result.get("project", result)
-            st.session_state["organization_id"] = organization_id.strip()
             st.session_state["selected_project_id"] = project.get("project_id")
             st.session_state["selected_project_fingerprint"] = project.get(
                 "project_fingerprint"
             )
+            st.session_state.pop("project_context_catalog", None)
             st.success("Projekt oprettet.")
             with st.expander("Teknisk oprettelsesresultat"):
                 st.json(result)
@@ -185,9 +184,7 @@ def project_page(client: DORAPIClient) -> None:
     )
     if project_id:
         st.session_state["selected_project_id"] = project_id
-        org = st.session_state.get("organization_id") or st.text_input(
-            "Organisation ID for projekt", key="project_lookup_org"
-        )
+        org = organization_id
         try:
             with st.spinner("Henter projektstatus…"):
                 project = client.get(
@@ -201,7 +198,9 @@ def project_page(client: DORAPIClient) -> None:
             project_cols = st.columns(3)
             project_cols[0].metric("Status", status_badge(project.get("status")))
             project_cols[1].metric("Project ID", project_id)
-            project_cols[2].metric("Opdateret", format_timestamp(project.get("updated_at")))
+            project_cols[2].metric(
+                "Opdateret", format_timestamp(project.get("updated_at"))
+            )
             with st.expander("Tekniske projektdata"):
                 st.json(project)
 
@@ -630,14 +629,12 @@ def administration_page(client: DORAPIClient) -> None:
     tabs = st.tabs(["Bot Governance", "Redmine Integration", "System Health"])
 
     with tabs[0]:
-        organization_id = st.text_input(
-            "Organisation ID",
-            value=st.session_state.get("organization_id") or "",
-            key="admin_org",
-        )
-        if organization_id.strip():
-            st.session_state["organization_id"] = organization_id.strip()
-        render_multi_bot_control_plane(client, organization_id)
+        organization_id = st.session_state.get("organization_id")
+        if organization_id:
+            st.caption(f"Governance vises for `{organization_id}`.")
+            render_multi_bot_control_plane(client, organization_id)
+        else:
+            st.warning("Vælg eller opret en aktiv organisation ovenfor først.")
 
     with tabs[1]:
         render_redmine_integration(client)
@@ -669,6 +666,8 @@ def main() -> None:
         return
     client = api()
     header(client)
+    render_context_navigation(client)
+    st.divider()
     page = st.sidebar.radio(
         "Kontrolplan",
         [
