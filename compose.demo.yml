@@ -4,12 +4,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set for the certified demo}
       DOR_IMPLEMENTATION_MODEL: ${DOR_IMPLEMENTATION_MODEL:?DOR_IMPLEMENTATION_MODEL must be set for the certified demo}
       DOR_IMPLEMENTATION_ALLOWED_RESOURCES: ${DOR_IMPLEMENTATION_ALLOWED_RESOURCES:-repository:demo/golden}
-      DOR_PATCH_WORKSPACE_ROOT: /demo/patch-workspace
+      DOR_PATCH_WORKSPACE_ROOT: /tmp/dor-demo-patch-workspace
       DOR_PATCH_ALLOWED_TOOLS: ${DOR_PATCH_ALLOWED_TOOLS:-python.ruff,python.pytest,python.compileall}
     volumes:
       - type: bind
         source: ${DOR_DEMO_PATCH_WORKSPACE_HOST:?DOR_DEMO_PATCH_WORKSPACE_HOST must be set}
-        target: /demo/patch-workspace
+        target: /tmp/dor-demo-patch-workspace
         read_only: false
 
   dashboard:
