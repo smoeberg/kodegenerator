@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 
 os.environ.setdefault("DOR_JWT_SECRET_KEY", "test-secret-key-min-32-chars-long")
 os.environ.setdefault("DOR_ENV", "test")
@@ -11,6 +12,8 @@ os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
 
 from fastapi.testclient import TestClient
 
+from api.auth import User
+from api.endpoints import swarm_operations
 from api.main import app
 
 client = TestClient(app)
@@ -28,6 +31,30 @@ def _auth_header() -> dict[str, str]:
     return {"Authorization": f"Bearer {_auth_token()}"}
 
 
+@contextmanager
+def _authorized_operator():
+    """Override only the operator gate while exercising ops response contracts.
+
+    Operator authorization itself is covered independently by the hardening
+    tests. This avoids coupling these response-shape tests to global bootstrap
+    database state created by unrelated test modules during collection.
+
+    The application still mounts every canonical router behind the normal
+    ``get_current_active_user`` dependency, so callers must remain
+    authenticated even while this operator-specific dependency is overridden.
+    """
+    app.dependency_overrides[swarm_operations._require_platform_operator] = lambda: User(
+        username="platform-admin", organization_id="platform-org"
+    )
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(
+            swarm_operations._require_platform_operator,
+            None,
+        )
+
+
 def test_ops_endpoints_require_auth():
     for path in (
         "/api/v1/swarm/ops/snapshot",
@@ -39,7 +66,8 @@ def test_ops_endpoints_require_auth():
 
 
 def test_ops_health_ok():
-    r = client.get("/api/v1/swarm/ops/health", headers=_auth_header())
+    with _authorized_operator():
+        r = client.get("/api/v1/swarm/ops/health", headers=_auth_header())
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] in ("ok", "degraded", "down")
@@ -48,7 +76,8 @@ def test_ops_health_ok():
 
 
 def test_ops_snapshot_json():
-    r = client.get("/api/v1/swarm/ops/snapshot", headers=_auth_header())
+    with _authorized_operator():
+        r = client.get("/api/v1/swarm/ops/snapshot", headers=_auth_header())
     assert r.status_code == 200, r.text
     body = r.json()
     for key in (
@@ -67,7 +96,8 @@ def test_ops_snapshot_json():
 
 
 def test_ops_metrics_prometheus_text():
-    r = client.get("/api/v1/swarm/ops/metrics", headers=_auth_header())
+    with _authorized_operator():
+        r = client.get("/api/v1/swarm/ops/metrics", headers=_auth_header())
     assert r.status_code == 200, r.text
     assert "text/plain" in r.headers.get("content-type", "")
     text = r.text
