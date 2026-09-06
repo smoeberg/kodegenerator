@@ -98,11 +98,8 @@ def _resolve_queue(args: argparse.Namespace) -> SwarmTaskQueue:
     try:
         from api.dependencies import get_dor
         from runtime.pipeline_registry import get_pipeline_registry
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "pipeline registry unavailable; falling back to empty local queue"
-        )
-        return SwarmTaskQueue(lease_seconds=args.lease_seconds)
+    except ImportError as exc:
+        raise RuntimeError("pipeline registry unavailable") from exc
 
     # Initialise the exact tenant registry with the same runtime the API uses.
     try:
