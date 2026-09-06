@@ -75,18 +75,24 @@ def init_state() -> None:
 
     token = st.session_state.get("access_token")
     if token:
-        # Bootstrap the tenant/project context from the authenticated API rather
-        # than decoding JWT claims or requiring a manual organization input.
-        from dashboard.context_navigation import sync_organization_context
+        # Bootstrap the accessible organization catalog from the authenticated
+        # API. The selected organization remains GUI state; every backend call
+        # still revalidates its runtime membership.
+        from dashboard.context_navigation import (
+            render_sidebar_organization_switcher,
+            sync_organization_context,
+        )
 
+        client = DORAPIClient(token=token)
         try:
-            sync_organization_context(DORAPIClient(token=token))
+            sync_organization_context(client)
+            render_sidebar_organization_switcher(client)
         except DORAPIError as exc:
             if exc.status_code == 401:
                 clear_auth()
         except Exception:
             # Context navigation is a read-only convenience surface. Transport
-            # failure must not suppress the existing manual API/cockpit paths.
+            # failure must not suppress the existing API/cockpit paths.
             pass
 
 
@@ -98,7 +104,9 @@ def clear_auth() -> None:
     st.session_state["selected_project_fingerprint"] = None
     st.session_state["selected_workflow_id"] = None
     st.session_state.pop("workflow_input", None)
+    st.session_state.pop("organization_context_catalog", None)
     st.session_state.pop("project_context_catalog", None)
+    st.session_state.pop("active_organization_selector", None)
     for key in _AUTH_SCOPED_ONBOARDING_KEYS:
         st.session_state.pop(key, None)
     for key in tuple(st.session_state):

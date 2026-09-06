@@ -42,8 +42,29 @@ class OrganizationRepository:
 
     def get(self, organization_id: str) -> Optional[Organization]:
         row = self.session.get(OrganizationModel, organization_id)
+        return self._to_domain(row) if row is not None else None
+
+    def list(self) -> list[Organization]:
+        """Return all organizations in stable display order."""
+        rows = self.session.scalars(
+            select(OrganizationModel).order_by(
+                OrganizationModel.name,
+                OrganizationModel.id,
+            )
+        ).all()
+        return [self._to_domain(row) for row in rows]
+
+    def update(self, organization: Organization) -> None:
+        row = self.session.get(OrganizationModel, organization.id)
         if row is None:
-            return None
+            raise RepositoryError(f"Organization not found: {organization.id}")
+        row.name = organization.name
+        row.description = organization.description
+        row.updated_at = organization.updated_at
+        self.session.flush()
+
+    @staticmethod
+    def _to_domain(row: OrganizationModel) -> Organization:
         return Organization(
             id=row.id,
             name=row.name,

@@ -136,25 +136,26 @@ def _authorization_error(exc: CommandAuthorizationError) -> HTTPException:
 
 @router.get("")
 def list_projects(
+    organization_id: str | None = Query(default=None, min_length=1, max_length=128),
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ) -> dict[str, object]:
-    """Return the authenticated tenant's readable project catalog.
+    """Return the selected authenticated organization's readable project catalog.
 
-    The database query only discovers project IDs inside the authenticated
-    organization. Every disclosed project still passes through the canonical
-    ProjectRuntime read authorization boundary before it is returned.
+    Explicit organization selection is validated through the canonical runtime
+    context boundary. Omitting it preserves the identity principal's legacy
+    default organization for existing API clients.
     """
-    organization_id = current_user.organization_id
-    if not organization_id:
+    selected_organization_id = organization_id or current_user.organization_id
+    if not selected_organization_id:
         return {"organization_id": None, "projects": []}
 
-    context = _context(dor, current_user, organization_id)
-    with dor.database.session(organization_id) as session:
+    context = _context(dor, current_user, selected_organization_id)
+    with dor.database.session(selected_organization_id) as session:
         project_ids = list(
             session.scalars(
                 select(ProjectModel.id)
-                .where(ProjectModel.organization_id == organization_id)
+                .where(ProjectModel.organization_id == selected_organization_id)
                 .order_by(ProjectModel.updated_at.desc(), ProjectModel.id)
             ).all()
         )
@@ -164,11 +165,8 @@ def list_projects(
         try:
             project = dor.projects.get_project(context, str(project_id))
         except CommandAuthorizationError:
-            # Fail closed on per-resource disclosure: denied projects do not
-            # become visible merely because their IDs exist in the tenant DB.
             continue
         except ProjectNotFoundError:
-            # A concurrent delete/visibility change must not break the catalog.
             continue
         except RepositoryError as exc:
             raise HTTPException(
@@ -178,7 +176,7 @@ def list_projects(
         projects.append(_project_response(project))
 
     return {
-        "organization_id": organization_id,
+        "organization_id": selected_organization_id,
         "projects": projects,
     }
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKeyConstraint,
     Integer,
@@ -40,7 +41,7 @@ class ActorModel(Base):
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
+        String(128), primary_key=True, nullable=False, index=True
     )
     actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
     identity: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -77,6 +78,23 @@ class IdentityPrincipalModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+
+
+class OrganizationMembershipModel(Base):
+    """Cross-tenant access index for authenticated control-plane principals.
+
+    This table is intentionally not protected by tenant RLS: callers must query
+    it by the authenticated username and then establish normal tenant context
+    before accessing tenant-owned runtime data.
+    """
+
+    __tablename__ = "organization_memberships"
+
+    username: Mapped[str] = mapped_column(String(128), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class RoleDefinitionModel(Base):

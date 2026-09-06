@@ -61,6 +61,7 @@ from api.endpoints import (  # noqa: E402
     bot_governance,
     bot_selection,
     control_plane,
+    control_plane_organizations,
     decisions,
     execution,
     execution_overview,
@@ -126,6 +127,7 @@ if HAS_AUTH:
     # until they derive identity and tenant scope from the verified principal.
     CANONICAL_AUTHENTICATED_ROUTERS = (
         control_plane.router,
+        control_plane_organizations.router,
         onboarding.router,
         swarm.router,
         swarm_operations.router,
@@ -144,6 +146,7 @@ if HAS_AUTH:
     validate_canonical_modules(
         (
             control_plane.__name__,
+            control_plane_organizations.__name__,
             onboarding.__name__,
             swarm.__name__,
             swarm_operations.__name__,
