@@ -1,5 +1,5 @@
 {
-  "count": 83,
+  "count": 85,
   "endpoints": [
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate_selection","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","tags":["bot-evidence"]},
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate","path":"/api/v1/bot-evidence/candidates/{candidate_id}","tags":["bot-evidence"]},
@@ -38,6 +38,8 @@
     {"method":"GET","module":"api.endpoints.control_plane","name":"get_project","path":"/api/v1/control-plane/projects/{project_id}","tags":["control-plane-v1"]},
     {"method":"GET","module":"api.endpoints.control_plane","name":"get_project_events","path":"/api/v1/control-plane/projects/{project_id}/events","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.control_plane","name":"launch_project","path":"/api/v1/control-plane/projects/{project_id}/launch","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.requirements_traceability","name":"create_requirement_traceability","path":"/api/v1/control-plane/requirement-traceability","tags":["control-plane-v1"]},
+    {"method":"GET","module":"api.endpoints.requirements_traceability","name":"get_requirement_traceability","path":"/api/v1/control-plane/requirement-traceability/{manifest_id}","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.decisions","name":"create_decision","path":"/api/v1/decisions","tags":["decisions"]},
     {"method":"GET","module":"api.endpoints.decisions","name":"get_pending_decisions","path":"/api/v1/decisions/pending","tags":["decisions"]},
     {"method":"GET","module":"api.endpoints.decisions","name":"get_decision","path":"/api/v1/decisions/{decision_id}","tags":["decisions"]},
