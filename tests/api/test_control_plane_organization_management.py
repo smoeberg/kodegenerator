@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from api.auth import User
+from api.endpoints.control_plane import list_projects
 from api.endpoints.control_plane_organizations import (
     OrganizationCreateRequest,
     OrganizationPatchRequest,
@@ -263,3 +264,44 @@ def test_update_organization_requires_admin_on_exact_target(
         organization = OrganizationRepository(session).get("org-b")
     assert organization is not None
     assert organization.name == "Beta"
+
+
+def test_project_catalog_accepts_only_runtime_accessible_selected_organization(
+    runtime: DORRuntime,
+) -> None:
+    _seed_organization(
+        runtime,
+        organization_id="org-a",
+        name="Alpha",
+        username="alice",
+        is_admin=True,
+    )
+    _seed_organization(
+        runtime,
+        organization_id="org-b",
+        name="Beta",
+        username="alice",
+        is_admin=True,
+    )
+    _seed_organization(
+        runtime,
+        organization_id="org-secret",
+        name="Secret",
+        username="bob",
+        is_admin=True,
+    )
+
+    result = list_projects(
+        organization_id="org-b",
+        current_user=_user(),
+        dor=runtime,
+    )
+    assert result == {"organization_id": "org-b", "projects": []}
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_projects(
+            organization_id="org-secret",
+            current_user=_user(),
+            dor=runtime,
+        )
+    assert exc_info.value.status_code == 403
