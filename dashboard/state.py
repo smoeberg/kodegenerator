@@ -19,11 +19,16 @@ DEFAULTS = {
 }
 
 _AUTH_SCOPED_ONBOARDING_KEYS = (
+    "_implementation_apply_command_id",
+    "_implementation_apply_proposal_id",
     "_implementation_proposal_command_id",
     "_implementation_proposal_draft_key",
     "_onboarding_command_id",
     "_onboarding_command_draft_key",
     "implementation_allowed_paths",
+    "implementation_apply_confirmed",
+    "implementation_apply_result",
+    "implementation_apply_reviewed",
     "implementation_instruction",
     "implementation_max_changed_lines",
     "implementation_max_files",
@@ -47,6 +52,7 @@ _AUTH_SCOPED_ONBOARDING_KEYS = (
     "project_planning_acceptance_criteria",
     "project_planning_constraints",
     "project_planning_objective",
+    "selected_implementation_patch_record_id",
     "selected_implementation_proposal_id",
     "selected_onboarding_intent_id",
     "selected_onboarding_repository",

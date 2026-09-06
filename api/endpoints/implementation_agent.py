@@ -55,7 +55,7 @@ def execute_patch(request: ImplementationPatchExecutionRequest,current_user: Use
         dor.authority.require_capability(context,capability_id=IMPLEMENTATION_APPLY_ACTION,command_id=request.command_id,command_type="ImplementationPatchExecutionCommand",resource_id=request.organization_id,resource_organization_id=request.organization_id,aggregate_type="implementation_execution")
     except CommandAuthorizationError as exc: raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail={"error":"authorization_denied","reason_code":exc.decision.reason_code,"reason":exc.decision.reason}) from exc
     except (ContextError,NotFoundError) as exc: raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail={"error":"organization_context_denied"}) from exc
-    try: run=patch_runtime.run(proposal_id=request.proposal_id,idempotency_key=request.command_id)
+    try: run=patch_runtime.run(proposal_id=request.proposal_id,idempotency_key=request.command_id,organization_id=request.organization_id)
     except PatchProposalNotFoundError as exc: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail={"error":"patch_proposal_not_found"}) from exc
     except GovernedPatchAuthorityError as exc: raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail={"error":"agent_authority_denied","policy_id":exc.decision.policy_id}) from exc
     except GovernedPatchCommandConflictError as exc: raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail={"error":"patch_execution_command_conflict"}) from exc

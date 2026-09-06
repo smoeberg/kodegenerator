@@ -160,11 +160,15 @@ class GovernedPatchExecutionRuntime:
     def workspace_root(self) -> Path:
         return self._workspace.root
 
-    def run(self, *, proposal_id: str, idempotency_key: str) -> GovernedPatchRun:
+    def run(self, *, proposal_id: str, idempotency_key: str, organization_id: str | None = None) -> GovernedPatchRun:
         for name, value in (("proposal_id", proposal_id), ("idempotency_key", idempotency_key)):
             if not isinstance(value, str) or not value.strip() or value != value.strip():
                 raise ValueError(f"{name} must be a canonical non-empty string")
+        if organization_id is not None and (not isinstance(organization_id, str) or not organization_id.strip() or organization_id != organization_id.strip()):
+            raise ValueError("organization_id must be canonical when supplied")
         proposal = self._proposal_runtime.get_proposal(proposal_id)
+        if organization_id is not None and proposal.request.organization_id != organization_id:
+            raise GovernedPatchRuntimeError("proposal organization does not match the expected organization")
         if proposal.request.resource not in self._proposal_runtime.allowed_resources:
             raise GovernedPatchRuntimeError("proposal resource is outside the operator-configured runtime scope")
         agent_identity = str(self._proposal_runtime.agent.identity)

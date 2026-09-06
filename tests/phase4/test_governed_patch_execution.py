@@ -130,6 +130,7 @@ def _tools() -> tuple[TrustedToolSpec, ...]:
 def _proposal_runtime(
     root: Path,
     *,
+    organization_id: str = "org-a",
     provider: StaticProvider | None = None,
     diff: str = VALID_DIFF,
     allowed_paths: tuple[str, ...] = ("src/app.py",),
@@ -140,6 +141,7 @@ def _proposal_runtime(
         allowed_resources=(RESOURCE,),
     )
     run = runtime.run(
+        organization_id=organization_id,
         resource=RESOURCE,
         instruction="Apply the bounded change.",
         allowed_paths=allowed_paths,
