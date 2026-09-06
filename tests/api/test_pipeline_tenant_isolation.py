@@ -95,8 +95,10 @@ def test_database_pipeline_registry_queue_and_snapshot_are_tenant_isolated(
         created_by="bob",
     )
 
-    assert registry_a.orchestrator._get_workflow(workflow_b) is None
-    assert registry_b.orchestrator._get_workflow(workflow_a) is None
+    assert workflow_a in registry_a.orchestrator._workflows
+    assert workflow_b not in registry_a.orchestrator._workflows
+    assert workflow_b in registry_b.orchestrator._workflows
+    assert workflow_a not in registry_b.orchestrator._workflows
     assert registry_a.queue.pending_count() == 1
     assert registry_b.queue.pending_count() == 0
     assert registry_b.queue.claim_next_task("worker-b", ["domain", "arch"]) is None
@@ -115,10 +117,10 @@ def test_database_pipeline_registry_queue_and_snapshot_are_tenant_isolated(
     restored_a = get_pipeline_registry(runtime, organization_id="org-a")
     restored_b = get_pipeline_registry(runtime, organization_id="org-b")
 
-    assert restored_a.orchestrator._get_workflow(workflow_a) is not None
-    assert restored_a.orchestrator._get_workflow(workflow_b) is None
-    assert restored_b.orchestrator._get_workflow(workflow_b) is not None
-    assert restored_b.orchestrator._get_workflow(workflow_a) is None
+    assert workflow_a in restored_a.orchestrator._workflows
+    assert workflow_b not in restored_a.orchestrator._workflows
+    assert workflow_b in restored_b.orchestrator._workflows
+    assert workflow_a not in restored_b.orchestrator._workflows
     assert restored_a.queue.pending_count() == 1
     assert restored_b.queue.pending_count() == 0
 
