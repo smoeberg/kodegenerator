@@ -5,8 +5,9 @@ Usage::
     # In-process empty queue (legacy demo)
     python -m cli.worker --id worker-01 --caps code,test
 
-    # Claim tasks published by the pipeline orchestrator (shared registry)
-    python -m cli.worker --id worker-01 --caps code,test,domain,arch --pipeline
+    # Claim tasks published by one tenant's pipeline orchestrator
+    python -m cli.worker --id worker-01 --caps code,test,domain,arch \
+        --pipeline --organization-id org-acme
 """
 
 from __future__ import annotations
@@ -48,10 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pipeline",
         action="store_true",
-        help=(
-            "Claim from the process-shared pipeline task queue "
-            "(requires API/worker in the same process or a prior registry init)."
-        ),
+        help="Claim from one explicitly tenant-scoped pipeline task queue.",
+    )
+    parser.add_argument(
+        "--organization-id",
+        dest="organization_id",
+        default=None,
+        help="Organization whose pipeline queue this worker may claim from.",
     )
     parser.add_argument(
         "--poll-interval",
@@ -80,28 +84,39 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _require_pipeline_organization(args: argparse.Namespace) -> str:
+    organization_id = str(args.organization_id or "").strip()
+    if not organization_id:
+        raise RuntimeError("pipeline workers require --organization-id")
+    return organization_id
+
+
 def _resolve_queue(args: argparse.Namespace) -> SwarmTaskQueue:
     if not args.pipeline:
         return SwarmTaskQueue(lease_seconds=args.lease_seconds)
+    organization_id = _require_pipeline_organization(args)
     try:
         from api.dependencies import get_dor
         from runtime.pipeline_registry import get_pipeline_registry
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "pipeline registry unavailable; falling back to empty local queue"
-        )
-        return SwarmTaskQueue(lease_seconds=args.lease_seconds)
+    except ImportError as exc:
+        raise RuntimeError("pipeline registry unavailable") from exc
 
-    # Initialise registry with the same runtime the API uses when possible.
+    # Initialise the exact tenant registry with the same runtime the API uses.
     try:
         runtime = get_dor()
     except Exception:
         runtime = None
     if runtime is not None:
-        registry = get_pipeline_registry(runtime, lease_seconds=args.lease_seconds)
+        registry = get_pipeline_registry(
+            runtime,
+            lease_seconds=args.lease_seconds,
+            organization_id=organization_id,
+        )
     else:
-        # Registry must already exist (e.g. API started first in-process).
-        registry = get_pipeline_registry(lease_seconds=args.lease_seconds)
+        registry = get_pipeline_registry(
+            lease_seconds=args.lease_seconds,
+            organization_id=organization_id,
+        )
     return registry.queue
 
 
@@ -132,11 +147,12 @@ def main(
             TaskExecutionService,
         )
 
-        registry = get_pipeline_registry()
+        organization_id = _require_pipeline_organization(args)
+        registry = get_pipeline_registry(organization_id=organization_id)
 
         @contextmanager
         def execution_service_factory():
-            with registry.runtime.database.session() as session:
+            with registry.runtime.database.session(organization_id) as session:
                 yield TaskExecutionService(
                     UnitOfWork(session),
                     DictTaskExecutorFactory(build_pipeline_executor_registry()),

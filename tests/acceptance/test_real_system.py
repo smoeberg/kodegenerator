@@ -21,6 +21,8 @@ from fastapi.testclient import TestClient
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from api.main import app as control_plane
+from domain.actor import Actor, ActorType
+from domain.organization import Organization
 from execution.pipeline_executors import (
     ArchitectureExecutor,
     CodeExecutor,
@@ -258,8 +260,19 @@ def test_todo_api_pipeline_through_http_workers_and_real_executors(
 
     runtime = DORRuntime(database_url=database_url)
     runtime.boot()
+    runtime.create_organization(
+        Organization(id="acceptance-org", name="Acceptance Organization")
+    )
+    runtime.register_actor(
+        Actor(
+            id="acceptance-user",
+            type=ActorType.HUMAN,
+            identity="acceptance-user",
+        ),
+        organization_id="acceptance-org",
+    )
     reset_pipeline_registry()
-    registry = get_pipeline_registry(runtime)
+    registry = get_pipeline_registry(runtime, organization_id="acceptance-org")
     deploy_backend = HttpVerifiedDeployBackend(tmp_path / "todos.db")
     publisher = HermeticPublisher()
     executors = {
@@ -343,7 +356,7 @@ def test_todo_api_pipeline_through_http_workers_and_real_executors(
 
     control_plane.dependency_overrides[get_dor] = lambda: runtime
     control_plane.dependency_overrides[get_current_active_user] = lambda: User(
-        username="acceptance-user"
+        username="acceptance-user", organization_id="acceptance-org"
     )
     try:
         with TestClient(control_plane) as client:
@@ -355,7 +368,9 @@ def test_todo_api_pipeline_through_http_workers_and_real_executors(
             workflow_id = start.json()["workflow_id"]
 
             for _ in range(30):
-                status = client.get(f"/pipeline/{workflow_id}")
+                status = client.get(
+                    f"/pipeline/{workflow_id}?organization_id=acceptance-org"
+                )
                 assert status.status_code == 200, status.text
                 if status.json()["current_state"] == "released":
                     break
@@ -364,11 +379,14 @@ def test_todo_api_pipeline_through_http_workers_and_real_executors(
                     queued = registry.queue.get_task(claimed.task_id)
                     assert queued.status is QueuedTaskStatus.COMPLETED
                     continue
-                gates = client.get(f"/api/v1/pipeline-gates/{workflow_id}")
+                gates = client.get(
+                    f"/api/v1/pipeline-gates/{workflow_id}"
+                    "?organization_id=acceptance-org"
+                )
                 unresolved = [gate for gate in gates.json() if not gate["resolved"]]
                 assert unresolved, f"pipeline stalled: {status.json()}"
                 approved = client.post(
-                    "/api/v1/pipeline-gates/approve",
+                    "/api/v1/pipeline-gates/approve?organization_id=acceptance-org",
                     json={
                         "workflow_id": workflow_id,
                         "gate_id": unresolved[0]["id"],
@@ -377,7 +395,9 @@ def test_todo_api_pipeline_through_http_workers_and_real_executors(
                 assert approved.status_code == 200, approved.text
             else:
                 raise AssertionError("pipeline did not reach released")
-            final = client.get(f"/pipeline/{workflow_id}").json()
+            final = client.get(
+                f"/pipeline/{workflow_id}?organization_id=acceptance-org"
+            ).json()
     finally:
         control_plane.dependency_overrides.clear()
         reset_pipeline_registry()

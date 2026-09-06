@@ -302,7 +302,7 @@ def test_gate_list_exposes_backend_rework_authority(monkeypatch) -> None:
     orch, workflow = build_orchestrator()
     gate_id = "gate_architecture_approval"
     reject(orch, workflow, gate_id)
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     gates = execution_api.list_execution_gates(
         workflow.id,
@@ -340,7 +340,7 @@ def test_rework_endpoint_queues_task_and_emits_event(monkeypatch) -> None:
     gate_id = "gate_architecture_approval"
     reject(orch, workflow, gate_id)
     events = []
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
     monkeypatch.setattr(
         execution_api,
         "_emit",
@@ -378,7 +378,7 @@ def test_rework_endpoint_fails_closed_for_unsupported_gate(monkeypatch) -> None:
     orch, workflow = build_orchestrator(PipelineState.REQUIREMENTS_VALIDATED)
     gate_id = "gate_requirements_approval"
     reject(orch, workflow, gate_id)
-    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor: orch)
+    monkeypatch.setattr(execution_api, "_orchestrator", lambda _dor, _user: orch)
 
     with pytest.raises(HTTPException) as exc:
         execution_api.rework_execution_gate(
