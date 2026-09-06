@@ -25,8 +25,15 @@ class DORAPIError(RuntimeError):
 
 
 class DORAPIClient:
-    def __init__(self, base_url: str | None = None, token: str | None = None, timeout: float = 15.0):
-        self.base_url = (base_url or os.getenv("DOR_API_URL", "http://api:8000")).rstrip("/")
+    def __init__(
+        self,
+        base_url: str | None = None,
+        token: str | None = None,
+        timeout: float = 15.0,
+    ):
+        self.base_url = (
+            base_url or os.getenv("DOR_API_URL", "http://api:8000")
+        ).rstrip("/")
         self.token = token
         self.timeout = timeout
         self.session = requests.Session()
@@ -37,8 +44,16 @@ class DORAPIClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def request(self, method: str, path: str, *, params: dict[str, Any] | None = None,
-                json: Any = None, data: Any = None, timeout: float | None = None) -> Any:
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+        data: Any = None,
+        timeout: float | None = None,
+    ) -> Any:
         response = self.session.request(
             method,
             f"{self.base_url}/{path.lstrip('/')}",
@@ -55,7 +70,9 @@ class DORAPIClient:
         if response.status_code == 401:
             raise DORAPIError(401, "API session expired or is invalid", payload)
         if not response.ok:
-            message = payload.get("detail", payload) if isinstance(payload, dict) else payload
+            message = (
+                payload.get("detail", payload) if isinstance(payload, dict) else payload
+            )
             raise DORAPIError(response.status_code, str(message), payload)
         return payload
 
@@ -80,11 +97,17 @@ class DORAPIClient:
         except ValueError:
             payload = response.text
         if not response.ok:
-            message = payload.get("detail", payload) if isinstance(payload, dict) else payload
+            message = (
+                payload.get("detail", payload) if isinstance(payload, dict) else payload
+            )
             raise DORAPIError(response.status_code, str(message), payload)
         token = payload.get("access_token")
         if not token:
-            raise DORAPIError(response.status_code, "Token response did not contain access_token", payload)
+            raise DORAPIError(
+                response.status_code,
+                "Token response did not contain access_token",
+                payload,
+            )
         self.token = token
         return token
 
@@ -112,6 +135,9 @@ class DORAPIClient:
 
     def post(self, path: str, **kwargs: Any) -> Any:
         return self.request("POST", path, **kwargs)
+
+    def patch(self, path: str, **kwargs: Any) -> Any:
+        return self.request("PATCH", path, **kwargs)
 
     def delete(self, path: str, **kwargs: Any) -> Any:
         return self.request("DELETE", path, **kwargs)
