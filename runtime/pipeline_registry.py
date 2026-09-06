@@ -6,7 +6,7 @@ request) made claiming impossible because tasks lived in a throw-away registry.
 
 Usage::
 
-    registry = get_pipeline_registry(runtime)
+    registry = get_pipeline_registry(runtime, organization_id="org-a")
     workflow_id = registry.orchestrator.start_pipeline(...)
     registry.orchestrator.advance_pipeline(workflow_id)  # enqueues tasks
     queued = registry.queue.claim_next_task(worker_id, capabilities)
@@ -134,7 +134,7 @@ class PipelineAwareQueue:
 
 
 class PipelineRegistry:
-    """Holds the single in-process orchestrator and the claimable task queue."""
+    """Holds one in-process orchestrator and claimable task queue for one tenant."""
 
     def __init__(
         self,
@@ -160,8 +160,8 @@ class PipelineRegistry:
             )
             if not database_url or not organization_id:
                 raise RuntimeError(
-                    "database queue requires DATABASE_URL and "
-                    "DOR_PIPELINE_STATE_ORGANIZATION_ID"
+                    "database queue requires DATABASE_URL and explicit pipeline "
+                    "organization scope"
                 )
             sessions = build_session_factory(database_url)
             self._raw_queue = DatabaseSwarmTaskQueue(
@@ -213,7 +213,17 @@ def get_pipeline_registry(
     lease_seconds: int = 300,
     organization_id: str | None = None,
 ) -> PipelineRegistry:
-    """Return one process registry per authenticated organization."""
+    """Return one process registry per explicitly authenticated organization.
+
+    Demo and production fail closed when callers omit the tenant key. Development
+    retains the legacy local/default key solely for isolated tests and local tools.
+    """
+    environment = os.getenv("DOR_ENV", "development").strip().lower()
+    if organization_id is None and environment in {"demo", "production"}:
+        raise RuntimeError(
+            "demo and production pipeline registry access requires explicit "
+            "organization_id"
+        )
     key = organization_id or os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID") or "local"
     with _lock:
         registry = _registries.get(key)
