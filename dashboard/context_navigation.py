@@ -89,7 +89,9 @@ def _clear_execution_context() -> None:
     st.session_state["realtime_status"] = "offline"
 
 
-def _project_catalog(client: DORAPIClient, organization_id: str | None) -> dict[str, Any]:
+def _project_catalog(
+    client: DORAPIClient, organization_id: str | None
+) -> dict[str, Any]:
     if not organization_id:
         return {"organization_id": None, "projects": []}
     return normalize_project_catalog(
@@ -111,7 +113,11 @@ def sync_organization_context(client: DORAPIClient) -> dict[str, Any]:
     current = st.session_state.get("organization_id")
     if current not in available_ids:
         default = organizations.get("active_organization_id")
-        current = default if default in available_ids else (available_ids[0] if available_ids else None)
+        current = (
+            default
+            if default in available_ids
+            else (available_ids[0] if available_ids else None)
+        )
         if current != st.session_state.get("organization_id"):
             _clear_execution_context()
         st.session_state["organization_id"] = current
@@ -140,7 +146,9 @@ def render_sidebar_organization_switcher(client: DORAPIClient) -> None:
         return
 
     organizations_value = catalog.get("organizations")
-    organizations = organizations_value if isinstance(organizations_value, list) else []
+    organizations = (
+        organizations_value if isinstance(organizations_value, list) else []
+    )
     if not organizations:
         st.sidebar.warning("Ingen organisationer er knyttet til din bruger.")
         return
@@ -203,19 +211,25 @@ def _render_organization_management(client: DORAPIClient) -> None:
                 st.success(f"Organisation `{created['name']}` blev oprettet.")
                 st.rerun()
             except DORAPIError as exc:
-                st.error(f"Organisation kunne ikke oprettes ({exc.status_code}): {exc}")
+                st.error(
+                    f"Organisation kunne ikke oprettes ({exc.status_code}): {exc}"
+                )
 
         if active is None:
             return
         if active.get("is_admin") is not True:
-            st.caption("Du kan vælge organisationen, men har ikke admin-ret til at omdøbe den.")
+            st.caption(
+                "Du kan vælge organisationen, men har ikke admin-ret til at omdøbe den."
+            )
             return
 
         st.divider()
         st.markdown("#### Omdøb / redigér aktiv organisation")
         st.caption(f"Det permanente ID er `{active['id']}`.")
         with st.form(f"organization_update_form_{active['id']}"):
-            updated_name = st.text_input("Navn", value=str(active.get("name") or ""))
+            updated_name = st.text_input(
+                "Navn", value=str(active.get("name") or "")
+            )
             updated_description = st.text_area(
                 "Beskrivelse",
                 value=str(active.get("description") or ""),
@@ -234,17 +248,35 @@ def _render_organization_management(client: DORAPIClient) -> None:
                 st.success(f"Organisation `{updated['name']}` blev opdateret.")
                 st.rerun()
             except DORAPIError as exc:
-                st.error(f"Organisation kunne ikke opdateres ({exc.status_code}): {exc}")
+                st.error(
+                    f"Organisation kunne ikke opdateres ({exc.status_code}): {exc}"
+                )
 
 
 def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
-    """Render Organization -> Project -> Execution context from backend state."""
+    """Render Organization -> Project -> Execution context from backend state once."""
     st.subheader("🧭 Arbejdskontekst")
+    try:
+        catalog = sync_organization_context(client)
+    except DORAPIError as exc:
+        if exc.status_code == 401:
+            raise
+        st.warning(f"Organisationskatalog ikke tilgængeligt ({exc.status_code}): {exc}")
+        organization_id = st.session_state.get("organization_id")
+        catalog = {"organization_id": organization_id, "projects": []}
+        st.session_state[_PROJECT_CATALOG_KEY] = catalog
+
+    render_sidebar_organization_switcher(client)
     _render_organization_management(client)
 
     organization_id = st.session_state.get("organization_id")
-    catalog = st.session_state.get(_PROJECT_CATALOG_KEY)
-    if not isinstance(catalog, Mapping) or catalog.get("organization_id") != organization_id:
+    cached_catalog = st.session_state.get(_PROJECT_CATALOG_KEY)
+    if (
+        isinstance(cached_catalog, Mapping)
+        and cached_catalog.get("organization_id") == organization_id
+    ):
+        catalog = cached_catalog
+    elif organization_id:
         try:
             catalog = _project_catalog(client, organization_id)
             st.session_state[_PROJECT_CATALOG_KEY] = catalog
@@ -253,6 +285,8 @@ def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
                 raise
             st.warning(f"Projektkatalog ikke tilgængeligt ({exc.status_code}): {exc}")
             catalog = {"organization_id": organization_id, "projects": []}
+    else:
+        catalog = {"organization_id": None, "projects": []}
 
     projects_value = catalog.get("projects")
     projects = projects_value if isinstance(projects_value, list) else []
@@ -275,7 +309,9 @@ def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
         format_func=format_project,
         help="Projektlisten kommer fra den valgte authenticated organisation.",
     )
-    selected_project_id = None if selected_value == _ALL_PROJECTS else selected_value
+    selected_project_id = (
+        None if selected_value == _ALL_PROJECTS else selected_value
+    )
 
     if selected_project_id != current_project_id:
         st.session_state["selected_project_id"] = selected_project_id
@@ -292,7 +328,9 @@ def render_context_navigation(client: DORAPIClient) -> dict[str, Any]:
                 "project_fingerprint"
             )
 
-    selected_project_name = selected_project["name"] if selected_project else "Alle projekter"
+    selected_project_name = (
+        selected_project["name"] if selected_project else "Alle projekter"
+    )
     workflow_id = st.session_state.get("selected_workflow_id") or "—"
     st.caption(
         " › ".join(
