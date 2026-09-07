@@ -17,7 +17,7 @@ from infrastructure.runtime.work_queue_lease import WorkQueueLeaseService
 
 
 ORG = "org-lease"
-NOW = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def capability() -> Capability:
