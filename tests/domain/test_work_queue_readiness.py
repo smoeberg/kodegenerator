@@ -12,11 +12,12 @@ def work_unit(
     work_unit_id: str = "WU-001",
     state: WorkUnitState = WorkUnitState.PENDING,
     depends_on: tuple[str, ...] = (),
+    required_capability_id: str = "capability.work",
 ) -> WorkUnit:
     return WorkUnit(
         id=work_unit_id,
         title="Work",
-        required_capability=capability("capability.work", "Work Capability"),
+        required_capability=capability(required_capability_id, "Work Capability"),
         state=state,
         depends_on=depends_on,
     )
@@ -56,6 +57,18 @@ def test_unresolved_dependency_is_not_ready() -> None:
     assert is_ready(unit, {}) is False
 
 
+def test_dependency_mapping_requires_matching_work_unit_identity() -> None:
+    unit = work_unit(depends_on=("DEP-1",))
+    dependencies = {"DEP-1": work_unit("OTHER", WorkUnitState.APPROVED)}
+    assert is_ready(unit, dependencies) is False
+
+
+def test_dependency_mapping_requires_matching_identity_and_approval() -> None:
+    unit = work_unit(depends_on=("DEP-1",))
+    dependencies = {"DEP-1": work_unit("DEP-1", WorkUnitState.PENDING)}
+    assert is_ready(unit, dependencies) is False
+
+
 def test_non_pending_work_unit_is_not_new_ready_candidate() -> None:
     for state in WorkUnitState:
         if state is not WorkUnitState.PENDING:
@@ -77,6 +90,26 @@ def test_exact_required_capability_id_is_eligible() -> None:
     unit = work_unit()
     worker_capabilities = [capability("capability.work", "Different Name")]
     assert is_worker_eligible(unit, worker_capabilities) is True
+
+
+def test_invalid_empty_required_capability_id_is_not_eligible() -> None:
+    unit = work_unit(required_capability_id="")
+    assert is_worker_eligible(unit, [capability("", "Work Capability")]) is False
+
+
+def test_invalid_whitespace_required_capability_id_is_not_eligible() -> None:
+    unit = work_unit(required_capability_id=" ")
+    assert is_worker_eligible(unit, [capability(" ", "Work Capability")]) is False
+
+
+def test_invalid_empty_worker_capability_id_is_not_eligible() -> None:
+    unit = work_unit()
+    assert is_worker_eligible(unit, [capability("", "Work Capability")]) is False
+
+
+def test_invalid_whitespace_worker_capability_id_is_not_eligible() -> None:
+    unit = work_unit()
+    assert is_worker_eligible(unit, [capability(" ", "Work Capability")]) is False
 
 
 def test_missing_capability_id_is_not_eligible() -> None:
