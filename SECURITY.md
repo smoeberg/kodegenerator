@@ -4,18 +4,44 @@ This document describes **runtime secrets and security boundaries** as
 implemented in the codebase. It is not a substitute for architecture contracts
 in `docs/`.
 
-## Required environment variables (production)
+## Production secret boundary
 
-| Variable | Purpose |
-|----------|---------|
-| `DATABASE_URL` | SQLAlchemy database URL for persistence |
-| `DOR_IDENTITY_DATABASE_URL` | Optional separate SQLAlchemy URL for persistent HTTP principals; defaults to `DATABASE_URL` in production |
-| `DOR_JWT_SECRET_KEY` | Explicit JWT signing secret |
-| `DOR_ADMIN_PASSWORD` | One-time bootstrap credential for the initial persistent admin |
-| `DOR_AUTHORITY_SIGNING_KEY` | URL-safe base64 key (≥32 decoded bytes) shared by AI-3/AI-4 processes that exchange grants |
-| `OPENAI_API_KEY` | Only if Implementation Agent provider is enabled |
-| `DOR_IMPLEMENTATION_MODEL` | Model id for Implementation Agent |
-| `DOR_IMPLEMENTATION_ALLOWED_RESOURCES` | Comma-separated allowlisted resources |
+The canonical production installation does **not** use `.env` or Compose
+environment interpolation as the secret-value store. `compose.yml` receives
+operator-managed secret **file paths**, mounts those files under `/run/secrets`,
+and DOR materializes allowlisted `*_FILE` inputs only after the runtime process
+starts.
+
+In `DOR_ENV=production`, inheriting an allowlisted secret directly as
+`NAME=value` fails closed. A configuration may not provide both `NAME` and
+`NAME_FILE`. Secret-file reads are bounded and reject relative paths,
+non-regular files, symlinks, empty payloads and invalid UTF-8 without including
+the payload in errors.
+
+Canonical production inputs include:
+
+| Secret | Canonical source |
+|--------|------------------|
+| PostgreSQL password | `POSTGRES_PASSWORD_FILE` |
+| Artifact-store access identity | `AWS_ACCESS_KEY_ID_FILE` |
+| Artifact-store secret | `AWS_SECRET_ACCESS_KEY_FILE` |
+| JWT signing keyring | `DOR_JWT_SIGNING_KEYS_FILE` |
+| Authority signing key | `DOR_AUTHORITY_SIGNING_KEY_FILE` |
+| Encryption key | `DOR_ENCRYPTION_KEY_FILE` |
+| Bootstrap admin password | `DOR_ADMIN_PASSWORD_FILE` |
+| Worker credential | `DOR_WORKER_CREDENTIAL_FILE` |
+
+The canonical SQLAlchemy database URLs are constructed inside the runtime after
+the PostgreSQL password file is materialized. Non-Compose production platforms
+may instead mount a complete URL and expose `DATABASE_URL_FILE`,
+`DOR_IDENTITY_DATABASE_URL_FILE`, and `DOR_PIPELINE_DATABASE_URL_FILE`.
+Optional provider credentials use the same mechanism, for example
+`OPENAI_API_KEY_FILE` and `REDMINE_API_KEY_FILE`.
+
+The complete normative contract, rotation model and non-goals are in
+[`docs/PRODUCTION_SECRET_BOUNDARY.md`](docs/PRODUCTION_SECRET_BOUNDARY.md).
+Development and demo environments retain direct-environment compatibility; that
+compatibility is not a production bypass.
 
 ### Generate an authority signing key
 
@@ -23,15 +49,18 @@ in `docs/`.
 python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
 ```
 
-If `DOR_AUTHORITY_SIGNING_KEY` is **absent**, DOR creates a **process-local
-ephemeral key**. That is safe for single-process tests but **fails closed across
-restarts** and is not a multi-process configuration.
+If `DOR_AUTHORITY_SIGNING_KEY` is **absent** in development/test contexts, DOR
+may create a **process-local ephemeral key**. That is safe for single-process
+tests but **fails closed across restarts** and is not a production or
+multi-process configuration.
 
 ### Rotation
 
-- Rotating the signing key invalidates outstanding grants (expected).
+- Rotating the authority signing key invalidates outstanding grants (expected).
 - It must **not** wipe the execution replay ledger; replay identity is
   `execution_id`, not the HMAC key.
+- Replace provider-managed secret files atomically and restart/redeploy every
+  process that consumes the rotated material.
 
 ## Authority → execution boundary
 
@@ -76,25 +105,25 @@ disablement increment the version, immediately invalidating previously issued
 tokens across all API instances.
 
 The process-local `fake_users_db` alias remains solely for development and
-legacy test fixtures. Production startup requires `DATABASE_URL` and never
-uses that map as its identity authority. Apply Alembic migrations before
-starting the canonical API.
+legacy test fixtures. Production startup requires the canonical PostgreSQL
+wiring and never uses that map as its identity authority. Apply Alembic
+migrations before starting the canonical API.
 
 ### JWT signing-key rotation
 
-Production may migrate from the single `DOR_JWT_SECRET_KEY` to a named HMAC
-keyring. Configure `DOR_JWT_SIGNING_KEYS` as a JSON object and select the only
-issuer key with `DOR_JWT_ACTIVE_KEY_ID`. Issued tokens contain that key ID in
-the protected `kid` header. Verification selects only the named key: missing,
-unknown, algorithm-mismatched, or revoked key IDs fail closed without trying
-another secret.
+Production uses a named HMAC keyring. Configure the keyring through
+`DOR_JWT_SIGNING_KEYS_FILE` and select the issuer key with
+`DOR_JWT_ACTIVE_KEY_ID`. Issued tokens contain that key ID in the protected
+`kid` header. Verification selects only the named key: missing, unknown,
+algorithm-mismatched, or revoked key IDs fail closed without trying another
+secret.
 
 Rotate without an authentication outage by adding a new key, switching the
 active ID, retaining the previous verification key for at least the maximum
 token lifetime, and then adding the previous ID to
 `DOR_JWT_REVOKED_KEY_IDS`. The active key may never be revoked. All production
 HMAC values must contain at least 32 characters. Deploy keyring changes
-atomically to every API replica through the configured secret manager; never
+atomically to every API replica through the approved secret provider; never
 store the JSON keyring in source control.
 
 ## Tenant isolation
@@ -115,8 +144,9 @@ tenant keys, and RLS.
 
 ## Local secrets
 
-Key material and salts must stay out of git (see `.gitignore`). Prefer
-environment or secret stores over files in the working tree.
+Key material and salts must stay out of git (see `.gitignore`). `.env` may hold
+non-secret configuration and host paths to secret files, but production secret
+values belong in the approved operator/platform secret provider.
 
 ## Phase 6 sandbox
 

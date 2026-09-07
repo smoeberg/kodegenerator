@@ -34,10 +34,15 @@ def test_compose_has_healthchecks_and_resource_limits():
 def test_prod_override_is_restart_safe_and_entrypoint_has_bounded_migrations():
     data = yaml.safe_load((ROOT / "compose.yml").read_text())
     assert data["x-runtime-service"]["restart"] == "unless-stopped"
-    script = (ROOT / "scripts" / "entrypoint.sh").read_text()
-    assert "DOR_RUN_MIGRATIONS:-0" in script
-    assert "alembic upgrade head" in script
-    assert 'exec "$@"' in script
+
+    shell_entrypoint = (ROOT / "scripts" / "entrypoint.sh").read_text()
+    assert 'exec python -m scripts.runtime_entrypoint "$@"' in shell_entrypoint
+
+    runtime_entrypoint = (ROOT / "scripts" / "runtime_entrypoint.py").read_text()
+    assert 'run_migrations = _enabled("DOR_RUN_MIGRATIONS")' in runtime_entrypoint
+    assert '_run_module("scripts.init_database")' in runtime_entrypoint
+    assert '_run_module("alembic", "upgrade", "head")' in runtime_entrypoint
+    assert "os.execvp(command[0], command)" in runtime_entrypoint
 
 
 def test_legacy_docker_paths_are_explicitly_not_demo_paths():
