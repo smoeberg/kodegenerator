@@ -84,7 +84,7 @@ HAS_AUTH = True
 
 app = FastAPI(
     title="Digital Organization Runtime (DOR)",
-    version="0.1.0",
+    version="1.4.0",
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
     openapi_url=None if IS_PRODUCTION else "/openapi.json",
