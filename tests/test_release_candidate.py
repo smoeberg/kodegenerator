@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ci.release_candidate import REQUIRED_GATES, evaluate
+from ci.release_candidate import evaluate, REQUIRED_GATES
 
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -20,7 +20,7 @@ def _gate(gate: str, *, status: str = "success", sha: str = SHA) -> dict:
                 "run_id": 100,
                 "check_run_id": 200,
                 "sha": sha,
-                "status": "completed" if status == "success" else "completed",
+                "status": "completed",
                 "conclusion": "success" if status == "success" else "failure",
                 "completed_at": "2026-09-07T19:00:00Z",
                 "details_url": "https://github.com/example/repo/actions/runs/100/job/200",
@@ -78,7 +78,9 @@ def test_missing_gate_blocks() -> None:
 
 def test_unknown_extra_gates_are_ignored() -> None:
     report = _gates()
-    report["gates"]["some-unknown-gate"] = _gate("some-unknown-gate", status="failure")
+    report["gates"]["some-unknown-gate"] = _gate(
+        "some-unknown-gate", status="failure"
+    )
     assert evaluate(report)["ready"] is True
 
 
