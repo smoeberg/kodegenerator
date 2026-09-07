@@ -43,12 +43,30 @@ jobs:
             type=sha,format=short,prefix=sha-
             type=ref,event=tag
 
-      - name: Build and push Docker image
+      - name: Build and push canonical runtime image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: docker/Dockerfile.runtime
+          build-args: |
+            DOR_BUILD_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify published image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          case "${IMAGE_DIGEST}" in
+            sha256:*) ;;
+            *)
+              echo "::error::canonical image publish returned no immutable sha256 digest"
+              exit 1
+              ;;
+          esac
+          echo "Published canonical runtime image at ${IMAGE_DIGEST}"
