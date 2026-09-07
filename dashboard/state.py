@@ -103,7 +103,6 @@ def init_state() -> None:
         client = DORAPIClient(token=token)
         try:
             sync_organization_context(client)
-            render_sidebar_organization_switcher(client)
         except DORAPIError as exc:
             if exc.status_code == 401:
                 clear_auth()
