@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ci.release_evidence import GATE_REQUIREMENTS, build_report, collect_until_terminal
+from ci.release_evidence import build_report, collect_until_terminal, GATE_REQUIREMENTS
 
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
