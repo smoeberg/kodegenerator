@@ -17,7 +17,7 @@ from infrastructure.runtime.work_queue_review import WorkQueueReviewService
 
 
 ORG = "org-review"
-NOW = datetime(2026, 9, 7, 13, 0, tzinfo=timezone.utc)
+NOW = datetime(2030, 1, 1, 13, 0, tzinfo=timezone.utc)
 ARTIFACT = ImmutableVersionRef(kind="git_commit", value="artifact-v1")
 
 
