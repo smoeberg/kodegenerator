@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Collect authoritative GitHub check evidence for a release candidate.
 
 The collector never invents gate results. It resolves the latest matching
@@ -14,9 +13,10 @@ import os
 import re
 import time
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -211,7 +211,7 @@ class GitHubChecksClient:
         with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):
-            raise RuntimeError("GitHub API returned a non-object payload")
+            raise TypeError("GitHub API returned a non-object payload")
         return payload
 
     def snapshot(self) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
@@ -222,7 +222,7 @@ class GitHubChecksClient:
         payload = self._get_json(url)
         raw_checks = payload.get("check_runs")
         if not isinstance(raw_checks, list):
-            raise RuntimeError("GitHub check-runs response is missing check_runs")
+            raise TypeError("GitHub check-runs response is missing check_runs")
         interesting_names = {
             requirement.job_name
             for requirements in GATE_REQUIREMENTS.values()
