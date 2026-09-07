@@ -77,9 +77,7 @@ def test_missing_gate_blocks() -> None:
 
 def test_unknown_extra_gates_are_ignored() -> None:
     report = _gates()
-    report["gates"]["some-unknown-gate"] = _gate(
-        "some-unknown-gate", status="failure"
-    )
+    report["gates"]["some-unknown-gate"] = _gate("some-unknown-gate", status="failure")
     assert evaluate(report)["ready"] is True
 
 
