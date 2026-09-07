@@ -148,27 +148,40 @@ if HAS_AUTH:
         execution_overview.router,
         execution.router,
         integrations.router,
-        execution_realtime.router,
     )
-    for router in CANONICAL_AUTHENTICATED_ROUTERS:
-        app.include_router(router, prefix="/api/v1")
-
-    app.include_router(auth.router, prefix="/api/v1")
-
-    validate_canonical_modules(app)
-
-
-def run() -> None:
-    """Run the DOR API with uvicorn."""
-    import uvicorn
-
-    uvicorn.run(
-        "api.main:app",
-        host=os.environ.get("DOR_API_HOST", "127.0.0.1"),
-        port=int(os.environ.get("DOR_API_PORT", "8000")),
-        reload=False,
+    validate_canonical_modules(
+        (
+            control_plane.__name__,
+            control_plane_organizations.__name__,
+            delivery_certificates.__name__,
+            requirements_traceability.__name__,
+            artifact_acceptances.__name__,
+            onboarding.__name__,
+            swarm.__name__,
+            swarm_operations.__name__,
+            workflows.__name__,
+            implementation_agent.__name__,
+            decisions.__name__,
+            pipeline.__name__,
+            pipeline_gates.__name__,
+            bot_evidence.__name__,
+            bot_governance.__name__,
+            bot_selection.__name__,
+            execution_overview.__name__,
+            execution.__name__,
+            integrations.__name__,
+        )
     )
 
-
-if __name__ == "__main__":
-    run()
+    app.include_router(auth.router)
+    # Mount browser-compatible realtime before the canonical execution router
+    # so its transport paths take precedence over the legacy header-only stream.
+    app.include_router(execution_realtime.router)
+    for canonical_router in CANONICAL_AUTHENTICATED_ROUTERS:
+        app.include_router(
+            canonical_router,
+            dependencies=[Depends(get_current_active_user)],
+        )
+    # Realtime endpoints enforce the same JWT plus project access internally,
+    # before accepting a WebSocket or opening an SSE response.
+    app.include_router(swarm_websocket.router)
