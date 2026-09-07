@@ -10,7 +10,7 @@ from .models import Base
 
 
 class WorkUnitModel(Base):
-    """Organization-scoped durable work unit row."""
+    """Organization-scoped durable work unit row (current projection)."""
 
     __tablename__ = "work_units"
 
@@ -31,3 +31,18 @@ class WorkUnitModel(Base):
     rework_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorkUnitRevisionModel(Base):
+    """Append-only tenant-scoped immutable WorkUnit revision history."""
+
+    __tablename__ = "work_unit_revisions"
+
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    work_unit_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+__all__ = ["WorkUnitModel", "WorkUnitRevisionModel"]
