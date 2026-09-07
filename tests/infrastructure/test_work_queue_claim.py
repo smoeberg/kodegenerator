@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
@@ -161,6 +163,33 @@ def test_claim_candidate_order_created_at_asc(session_factory) -> None:
     assert service.claim_next_ready("worker-1", [cap]).id == "wu-first-mined"
     assert service.claim_next_ready("worker-1", [cap]).id == "wu-second"
     assert service.claim_next_ready("worker-1", [cap]).id == "wu-third"
+
+
+def test_claim_orders_by_created_at_then_work_unit_id(session_factory) -> None:
+    # Two claimable units share an identical created_at but are inserted in
+    # REVERSE-ID order. The comparator is (created_at ASC, work_unit_id ASC), so
+    # the first claim must be the lexicographically-first ID (wu-a), NOT the
+    # insertion order (wu-z).
+    identical = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    for unit_id in ("wu-z", "wu-a"):
+        with session_factory() as session:
+            WorkUnitRepository(session).add(
+                ORG,
+                WorkUnit(
+                    id=unit_id,
+                    title=unit_id,
+                    required_capability=capability(),
+                    state=WorkUnitState.PENDING,
+                    created_at=identical,
+                    updated_at=identical,
+                ),
+            )
+            session.commit()
+    service = WorkQueueClaimService(session_factory, organization_id=ORG)
+    cap = capability()
+    assert service.claim_next_ready("worker-1", [cap]).id == "wu-a"
+    assert service.claim_next_ready("worker-1", [cap]).id == "wu-z"
+    assert service.claim_next_ready("worker-1", [cap]) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -400,30 +429,86 @@ def test_claim_missing_dependency_no_claim(session_factory) -> None:
     assert service.claim_next_ready("worker-1", [capability()]) is None
 
 
-def test_claim_mandatory_10_worker_race_single_winner(session_factory) -> None:
-    # 10 workers race for a single claimable unit; exactly one wins, and no
-    # race loser persists ownership or an extra claim revision.
-    add_unit(session_factory, "wu-race")
-    winner = None
-    for worker_id in [f"worker-{i}" for i in range(1, 11)]:
-        service = WorkQueueClaimService(session_factory, organization_id=ORG)
-        claimed = service.claim_next_ready(worker_id, [capability()])
-        if claimed is not None:
-            winner = claimed
-    assert winner is not None
-    # exactly one successful claim
-    assert winner.claimed_by in [f"worker-{i}" for i in range(1, 11)]
-    # consistency between claimed_by and lease.worker_id
+def test_claim_mandatory_10_worker_race_single_winner(tmp_path) -> None:
+    # 10 workers genuinely race for a single claimable unit against a shared
+    # file-backed SQLite database. The CAS guard (state=PENDING,
+    # claimed_by IS NULL, lease IS NULL) forces exactly one winner.
+    #
+    # To make all contenders collide at the same CAS instant deterministically,
+    # the internal _cas_claim entry is wrapped with a 10-way threading barrier
+    # right before the UPDATE executes, as the spec's correction allows.
+    db = tmp_path / "race.db"
+    engine = create_engine(
+        f"sqlite:///{db}",
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, future=True)
+
+    # Seed exactly one claimable PENDING unit.
+    ORG_RACE = "org-race"
+    with session_factory() as session:
+        repo = WorkUnitRepository(session)
+        repo.add(
+            ORG_RACE,
+            WorkUnit(
+                id="wu-race",
+                title="wu-race",
+                required_capability=capability(),
+                state=WorkUnitState.PENDING,
+            ),
+        )
+        session.commit()
+    revs_before = len(histories(session_factory, "wu-race", ORG_RACE))
+
+    barrier = threading.Barrier(10)
+    original_cas = WorkQueueClaimService._cas_claim
+
+    def _barrier_before_cas(self, session, candidate, worker_id, snapshot):
+        # All 10 contenders read the same PENDING row, then block here so none
+        # performs its UPDATE before every contender is at the CAS entry.
+        barrier.wait(timeout=60)
+        return original_cas(self, session, candidate, worker_id, snapshot)
+
+    WorkQueueClaimService._cas_claim = _barrier_before_cas
+    try:
+        results: dict[str, object] = {}
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {
+                pool.submit(
+                    WorkQueueClaimService(
+                        session_factory, organization_id=ORG_RACE
+                    ).claim_next_ready,
+                    f"worker-{i}",
+                    [capability()],
+                ): f"worker-{i}"
+                for i in range(1, 11)
+            }
+            for fut, worker in futures.items():
+                results[worker] = fut.result(timeout=90)
+    finally:
+        WorkQueueClaimService._cas_claim = original_cas
+
+    # exactly one winner across all 10 racing workers, the rest lose
+    winners = {
+        worker: claimed for worker, claimed in results.items() if claimed is not None
+    }
+    assert len(winners) == 1
+    winner_worker, winner = next(iter(winners.items()))
+    assert winner.claimed_by == winner_worker
     assert winner.lease is not None
-    assert winner.lease.worker_id == winner.claimed_by
-    stored = units(session_factory, "wu-race")
+    assert winner.lease.worker_id == winner_worker
+
+    # persisted projection: exactly one CLAIMED owner with the loser workers absent
+    stored = units(session_factory, "wu-race", ORG_RACE)
     assert stored.state is WorkUnitState.CLAIMED
-    # persisted ownership identity agrees with the returning winner
-    assert stored.claimed_by == winner.claimed_by
-    assert stored.lease is not None
-    assert stored.lease.worker_id == winner.claimed_by
-    # exactly add(rev 1) + one claim revision (rev 2); no duplicate revisions
-    assert len(histories(session_factory, "wu-race")) == 2
+    assert stored.claimed_by == winner_worker
+    assert stored.lease.worker_id == winner_worker
+
+    # exactly one claim revision appended (add + one claim), no duplicates
+    revs_after = histories(session_factory, "wu-race", ORG_RACE)
+    assert len(revs_after) == revs_before + 1 == 2
 
 
 
