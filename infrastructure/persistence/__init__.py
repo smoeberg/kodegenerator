@@ -13,6 +13,7 @@ from .repositories import (
 )
 from .side_effect_store import SQLAlchemySideEffectStore
 from .uow import UnitOfWork
+from .work_queue_models import WorkUnitModel, WorkUnitRevisionModel
 
 __all__ = [
     "Database",
@@ -26,4 +27,6 @@ __all__ = [
     "SQLAlchemyLLMReplayStore",
     "SQLAlchemyPipelineStateStore",
     "SQLAlchemySideEffectStore",
+    "WorkUnitModel",
+    "WorkUnitRevisionModel",
 ]
