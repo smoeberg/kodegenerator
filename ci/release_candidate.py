@@ -59,9 +59,10 @@ def _valid_gate_evidence(gate: Any, *, sha: str) -> bool:
             return False
         if type(item.get("check_run_id")) is not int or item["check_run_id"] < 1:
             return False
-        if not isinstance(item.get("completed_at"), str) or not item[
-            "completed_at"
-        ].strip():
+        if (
+            not isinstance(item.get("completed_at"), str)
+            or not item["completed_at"].strip()
+        ):
             return False
     return True
 
