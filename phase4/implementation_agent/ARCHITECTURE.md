@@ -144,7 +144,14 @@ The current operational slice does not:
 - grant authority or bypass AI-3;
 - mutate AI-1 identity, AI-2 context, or AI-5 outcomes.
 
-The temporary workspace is process isolation from the live checkout, not an OS
-security sandbox. It does not provide container namespaces, network isolation,
-distributed locking, crash-safe multi-file transactions, or durable replay.
-Those remain Phase 4D/Phase 6 production-hardening responsibilities.
+The temporary validation workspace isolates tool side effects from the live
+checkout. In the governed runtime, tool execution additionally uses the Phase 6
+`BubblewrapToolRunner` by default, providing OS-level namespace isolation,
+including a separate network namespace, together with an allowlisted runtime
+filesystem and resource limits. The temporary copy by itself is not the
+security boundary.
+
+Distributed locking, crash-safe multi-file transactions, and durable replay are
+still outside this slice. In particular, proposal/apply command binding remains
+process-local and must be made durable before multi-instance 24/7 handoff can be
+considered crash-safe.
