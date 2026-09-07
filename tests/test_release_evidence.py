@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ci.release_evidence import GATE_REQUIREMENTS, build_report, collect_until_terminal
 
 
@@ -35,26 +37,23 @@ def _check(
         "status": status,
         "conclusion": conclusion,
         "completed_at": "2026-09-07T19:00:00Z" if status == "completed" else None,
-        "details_url": f"https://github.com/example/repo/actions/runs/{run_id}/job/{check_id}",
+        "details_url": (
+            f"https://github.com/example/repo/actions/runs/{run_id}/job/{check_id}"
+        ),
     }
 
 
 def _all_green() -> tuple[list[dict], dict[int, dict]]:
     checks: list[dict] = []
     workflows: dict[int, dict] = {}
+    seen: set[tuple[str, str]] = set()
     next_id = 100
     for requirements in GATE_REQUIREMENTS.values():
         for requirement in requirements:
             key = (requirement.workflow_path, requirement.job_name)
-            if any(
-                check["name"] == requirement.job_name
-                and workflows[int(check["details_url"].split("/runs/")[1].split("/")[0])][
-                    "path"
-                ]
-                == requirement.workflow_path
-                for check in checks
-            ):
+            if key in seen:
                 continue
+            seen.add(key)
             next_id += 1
             run_id = next_id + 1_000
             workflows[run_id] = _run(run_id, requirement.workflow_path)
@@ -114,7 +113,9 @@ def test_wrong_workflow_path_cannot_spoof_a_named_check() -> None:
 
 def test_sdk_proxy_gate_requires_both_matrix_checks() -> None:
     checks, workflows = _all_green()
-    checks[:] = [check for check in checks if check["name"] != "SDK proxy matrix (exported)"]
+    checks[:] = [
+        check for check in checks if check["name"] != "SDK proxy matrix (exported)"
+    ]
 
     report = build_report(
         sha=SHA,
@@ -175,3 +176,11 @@ def test_collector_returns_immediately_on_authoritative_failure() -> None:
 
     assert calls == 1
     assert report["gates"]["merge-gate"]["status"] == "failure"
+
+
+def test_phase7_workflow_uses_collector_instead_of_synthetic_success() -> None:
+    workflow = Path(".github/workflows/phase7.yml").read_text(encoding="utf-8")
+
+    assert "python ci/release_evidence.py" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+    assert 'gates = {g: {"status": "success"}' not in workflow
