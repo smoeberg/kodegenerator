@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ci.release_candidate import evaluate, REQUIRED_GATES
+from ci.release_candidate import REQUIRED_GATES, evaluate
 
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
