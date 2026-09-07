@@ -152,6 +152,92 @@ def test_capability_corruption_fail_closed(session) -> None:
     with pytest.raises(WorkUnitPersistenceError):
         repo.get("org-1", "wu-corrupt")
 
+    # Case 4: missing level (fail-closed, must not default to BEGINNER)
+    model.required_capability = {"id": "cap.test", "name": "Test Cap"}
+    session.flush()
+    with pytest.raises(WorkUnitPersistenceError):
+        repo.get("org-1", "wu-corrupt")
+
+    # Case 5: malformed payload type (not a dict, e.g. string)
+    model.required_capability = "corrupt-string-payload"
+    session.flush()
+    with pytest.raises(WorkUnitPersistenceError):
+        repo.get("org-1", "wu-corrupt")
+
+
+def test_ordinary_update_history(session) -> None:
+    repo = WorkUnitRepository(session)
+    cap = Capability(id="cap.ord", name="Ordinary Cap")
+
+    # Revision 1: initial add, state PENDING, previous_worker None
+    wu = WorkUnit(id="wu-ord", title="Ordinary Test", required_capability=cap, state=WorkUnitState.PENDING)
+    repo.add("org-1", wu)
+    session.commit()
+
+    # Revision 2: ordinary update changing state and previous_worker (no artifact change)
+    wu_v2 = WorkUnit(
+        id="wu-ord",
+        title="Ordinary Test",
+        required_capability=cap,
+        state=WorkUnitState.CLAIMED,
+        previous_worker="worker-alpha",
+    )
+    repo.update("org-1", wu_v2)
+    session.commit()
+
+    history = repo.list_history("org-1", "wu-ord")
+    assert len(history) == 2
+    assert history[0].state == WorkUnitState.PENDING
+    assert history[0].previous_worker is None
+    assert history[1].state == WorkUnitState.CLAIMED
+    assert history[1].previous_worker == "worker-alpha"
+
+
+def test_tenant_history_isolation(session) -> None:
+    repo = WorkUnitRepository(session)
+    cap = Capability(id="cap.tenant", name="Tenant Cap")
+
+    # Same WorkUnit ID in two different organizations with different history updates
+    wu_a = WorkUnit(id="wu-shared-id", title="Org A WU", required_capability=cap, state=WorkUnitState.PENDING)
+    repo.add("org-A", wu_a)
+
+    wu_b = WorkUnit(id="wu-shared-id", title="Org B WU", required_capability=cap, state=WorkUnitState.PENDING)
+    repo.add("org-B", wu_b)
+    session.commit()
+
+    # Update org-A
+    wu_a_v2 = WorkUnit(id="wu-shared-id", title="Org A WU Updated", required_capability=cap, state=WorkUnitState.APPROVED)
+    repo.update("org-A", wu_a_v2)
+    session.commit()
+
+    history_a = repo.list_history("org-A", "wu-shared-id")
+    history_b = repo.list_history("org-B", "wu-shared-id")
+
+    assert len(history_a) == 2
+    assert history_a[0].title == "Org A WU"
+    assert history_a[1].title == "Org A WU Updated"
+    assert history_a[1].state == WorkUnitState.APPROVED
+
+    assert len(history_b) == 1
+    assert history_b[0].title == "Org B WU"
+    assert history_b[0].state == WorkUnitState.PENDING
+
+
+def test_isolated_metadata_registration() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import infrastructure.persistence as p\n"
+        "tables = list(p.Base.metadata.tables.keys())\n"
+        "assert 'work_units' in tables, f'work_units missing: {tables}'\n"
+        "assert 'work_unit_revisions' in tables, f'work_unit_revisions missing: {tables}'\n"
+        "print('SUCCESS')\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd="/rool-drive/kodegenerator_repo")
+    assert result.returncode == 0, f"Subprocess failed: {result.stderr}"
+    assert "SUCCESS" in result.stdout
+
 
 def test_provenance_history_and_revisions(session) -> None:
     repo = WorkUnitRepository(session)
