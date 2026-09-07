@@ -82,20 +82,35 @@ def _read_secret_file(name: str, raw_path: str) -> str:
     path = Path(raw_path)
     if not path.is_absolute():
         raise RuntimeSecretError(f"{name} must reference an absolute path")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        metadata = path.lstat()
+        descriptor = os.open(path, flags)
     except OSError as exc:
         raise RuntimeSecretError(f"{name} cannot be read") from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise RuntimeSecretError(f"{name} must reference a regular non-symlink file")
-    if metadata.st_size < 1 or metadata.st_size > MAX_SECRET_BYTES:
-        raise RuntimeSecretError(
-            f"{name} must contain between 1 and {MAX_SECRET_BYTES} bytes"
-        )
+
     try:
-        payload = path.read_bytes()
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeSecretError(f"{name} must reference a regular file")
+        if metadata.st_size < 1 or metadata.st_size > MAX_SECRET_BYTES:
+            raise RuntimeSecretError(
+                f"{name} must contain between 1 and {MAX_SECRET_BYTES} bytes"
+            )
+        with os.fdopen(os.dup(descriptor), "rb") as handle:
+            payload = handle.read(MAX_SECRET_BYTES + 1)
+    except OSError as exc:
+        raise RuntimeSecretError(f"{name} cannot be read") from exc
+    finally:
+        os.close(descriptor)
+
+    if len(payload) > MAX_SECRET_BYTES:
+        raise RuntimeSecretError(f"{name} exceeds the maximum secret size")
+    try:
         value = payload.decode("utf-8").rstrip("\r\n")
-    except (OSError, UnicodeDecodeError) as exc:
+    except UnicodeDecodeError as exc:
         raise RuntimeSecretError(f"{name} cannot be read as UTF-8 text") from exc
     if not value:
         raise RuntimeSecretError(f"{name} must not be empty")
