@@ -45,4 +45,4 @@ def test_delivery_certificate_migration_forces_postgres_rls() -> None:
 
 def test_current_state_tracks_delivery_certificate_migration_head() -> None:
     source = Path("docs/CURRENT_STATE.json").read_text()
-    assert '"canonical_alembic_head": "030_artifact_acceptances"' in source
+    assert '"canonical_alembic_head": "032_work_unit_revisions"' in source
