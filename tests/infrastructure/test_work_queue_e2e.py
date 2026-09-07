@@ -52,6 +52,14 @@ def capability() -> Capability:
     )
 
 
+def upstream_capability() -> Capability:
+    return Capability(
+        id="capability.upstream",
+        name="Upstream Builder",
+        level=CapabilityLevel.EXPERT,
+    )
+
+
 def factory():
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
@@ -99,13 +107,16 @@ def test_work_queue_v0_end_to_end_proof() -> None:
     metrics = WorkQueueMetrics()
     metric_service = WorkQueueMetricsService(sf, organization_id=ORG, metrics=metrics)
 
-    # Start with an unresolved dependency: downstream is PENDING but not ready.
+    # Start with an unresolved dependency.  Upstream is itself READY because it
+    # has no dependencies, but worker-a lacks its capability, so the downstream
+    # unit remains unclaimable until upstream is explicitly approved with an
+    # immutable delivered version.
     add(
         sf,
         WorkUnit(
             id="upstream",
             title="upstream",
-            required_capability=cap,
+            required_capability=upstream_capability(),
             state=WorkUnitState.PENDING,
             created_at=CREATED,
             updated_at=CREATED,
@@ -124,17 +135,18 @@ def test_work_queue_v0_end_to_end_proof() -> None:
     )
 
     claim_service = WorkQueueClaimService(sf, organization_id=ORG, lease_seconds=60)
-    assert metric_service.snapshot().ready_queue_depth == 0
+    assert metric_service.snapshot().ready_queue_depth == 1  # upstream only
     assert claim_service.claim_next_ready("worker-a", [cap]) is None
     assert get(sf, "downstream").state is WorkUnitState.PENDING
 
-    # Approval plus an immutable delivered version makes the dependency claimable.
+    # Approval plus an immutable delivered version moves readiness to downstream.
     approve_upstream(sf)
-    assert metric_service.snapshot().ready_queue_depth == 1
+    assert metric_service.snapshot().ready_queue_depth == 1  # downstream only
 
     claimed = claim_service.claim_next_ready("worker-a", [cap])
     metrics.record_claim(latency_seconds=0.01, conflict=False)
     assert claimed is not None
+    assert claimed.id == "downstream"
     assert claimed.state is WorkUnitState.CLAIMED
     assert claimed.claimed_by == "worker-a"
     assert claimed.lease is not None
