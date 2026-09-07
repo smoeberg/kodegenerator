@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, null, select
 from sqlalchemy.orm import Session
 
 from domain.capability import Capability, CapabilityLevel
@@ -28,6 +28,16 @@ class WorkUnitConflictError(RuntimeError):
     """Raised when a WorkUnit already exists with the same ID in the organization."""
 
 
+def _lease_payload(lease: WorkerLease) -> dict:
+    """Serialise a WorkerLease to its JSON payload form."""
+    return {
+        "lease_id": lease.lease_id,
+        "worker_id": lease.worker_id,
+        "claimed_at": lease.claimed_at.isoformat(),
+        "expires_at": lease.expires_at.isoformat(),
+    }
+
+
 class WorkUnitRepository:
     """Organization-scoped repository for WorkUnits with provenance revisions."""
 
@@ -44,15 +54,12 @@ class WorkUnitRepository:
         model = self._to_model(organization_id, work_unit)
         self.session.add(model)
 
-        payload = self._serialize_payload(work_unit)
-        rev_model = WorkUnitRevisionModel(
-            organization_id=organization_id,
-            work_unit_id=work_unit.id,
-            revision=1,
-            payload=payload,
+        self._append_revision(
+            organization_id,
+            work_unit,
             recorded_at=work_unit.updated_at,
+            revision=1,
         )
-        self.session.add(rev_model)
         self.session.flush()
 
     def get(self, organization_id: str, work_unit_id: str) -> Optional[WorkUnit]:
@@ -74,23 +81,7 @@ class WorkUnitRepository:
             if not key.startswith("_"):
                 setattr(model, key, value)
 
-        max_rev_stmt = (
-            select(func.max(WorkUnitRevisionModel.revision))
-            .where(WorkUnitRevisionModel.organization_id == organization_id)
-            .where(WorkUnitRevisionModel.work_unit_id == work_unit.id)
-        )
-        max_rev = self.session.scalar(max_rev_stmt) or 0
-        new_rev = max_rev + 1
-
-        payload = self._serialize_payload(work_unit)
-        rev_model = WorkUnitRevisionModel(
-            organization_id=organization_id,
-            work_unit_id=work_unit.id,
-            revision=new_rev,
-            payload=payload,
-            recorded_at=datetime.now(timezone.utc),
-        )
-        self.session.add(rev_model)
+        self._append_revision(organization_id, work_unit)
         self.session.flush()
 
     def list_for_organization(self, organization_id: str) -> tuple[WorkUnit, ...]:
@@ -111,6 +102,42 @@ class WorkUnitRepository:
         if not models:
             return ()
         return tuple(self._from_payload(m.payload) for m in models)
+
+    def append_revision(self, organization_id: str, work_unit: WorkUnit) -> None:
+        """Append the next append-only provenance revision for ``work_unit``.
+
+        Public helper shared by ordinary ``update`` and the atomic claim runtime so
+        that projection CAS + revision append stay in one transaction.
+        """
+        self._append_revision(organization_id, work_unit)
+
+    def _append_revision(
+        self,
+        organization_id: str,
+        work_unit: WorkUnit,
+        recorded_at: datetime | None = None,
+        revision: int | None = None,
+    ) -> None:
+        """Record one append-only provenance revision within the current transaction."""
+        if revision is None:
+            max_rev_stmt = (
+                select(func.max(WorkUnitRevisionModel.revision))
+                .where(WorkUnitRevisionModel.organization_id == organization_id)
+                .where(WorkUnitRevisionModel.work_unit_id == work_unit.id)
+            )
+            max_rev = self.session.scalar(max_rev_stmt) or 0
+            revision = max_rev + 1
+        payload = self._serialize_payload(work_unit)
+        rev_model = WorkUnitRevisionModel(
+            organization_id=organization_id,
+            work_unit_id=work_unit.id,
+            revision=revision,
+            payload=payload,
+            recorded_at=(
+                recorded_at if recorded_at is not None else datetime.now(timezone.utc)
+            ),
+        )
+        self.session.add(rev_model)
 
     @staticmethod
     def _serialize_payload(wu: WorkUnit) -> dict:
@@ -185,7 +212,9 @@ class WorkUnitRepository:
             acceptance_refs=list(wu.acceptance_refs),
             delivered_artifact_version=payload["delivered_artifact_version"],
             claimed_by=wu.claimed_by,
-            lease=payload["lease"],
+            # The JSON column must hold a genuine SQL NULL when there is no
+            # lease so that the atomic-claim CAS guard `lease IS NULL` matches.
+            lease=(_lease_payload(wu.lease) if wu.lease else null()),
             previous_worker=wu.previous_worker,
             rework_attempts=wu.rework_attempts,
             created_at=wu.created_at,
