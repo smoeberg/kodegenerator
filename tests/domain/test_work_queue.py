@@ -13,7 +13,7 @@ from domain.work_queue import (
 )
 
 
-CAPABILITY = Capability(id="capability.work")
+CAPABILITY = Capability(id="capability.work", name="Work Capability")
 
 
 def test_required_work_unit_states_exist() -> None:
