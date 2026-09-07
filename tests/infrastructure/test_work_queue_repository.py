@@ -226,6 +226,10 @@ def test_tenant_history_isolation(session) -> None:
 def test_isolated_metadata_registration() -> None:
     import subprocess
     import sys
+    from pathlib import Path
+
+    # Resolve repository root portably from this test file's own location.
+    repo_root = Path(__file__).resolve().parents[2]
 
     code = (
         "import infrastructure.persistence as p\n"
@@ -234,7 +238,9 @@ def test_isolated_metadata_registration() -> None:
         "assert 'work_unit_revisions' in tables, f'work_unit_revisions missing: {tables}'\n"
         "print('SUCCESS')\n"
     )
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd="/rool-drive/kodegenerator_repo")
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=repo_root
+    )
     assert result.returncode == 0, f"Subprocess failed: {result.stderr}"
     assert "SUCCESS" in result.stdout
 
