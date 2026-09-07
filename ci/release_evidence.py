@@ -26,30 +26,18 @@ class CheckRequirement:
 
 
 GATE_REQUIREMENTS: dict[str, tuple[CheckRequirement, ...]] = {
-    "pytest-3.11": (
-        CheckRequirement(".github/workflows/ci.yml", "test (3.11)"),
-    ),
-    "pytest-3.12": (
-        CheckRequirement(".github/workflows/ci.yml", "test (3.12)"),
-    ),
+    "pytest-3.11": (CheckRequirement(".github/workflows/ci.yml", "test (3.11)"),),
+    "pytest-3.12": (CheckRequirement(".github/workflows/ci.yml", "test (3.12)"),),
     "coverage-branch": (
         CheckRequirement(".github/workflows/phase7.yml", "Branch coverage gate"),
     ),
-    "ruff": (
-        CheckRequirement(".github/workflows/phase7.yml", "Ruff lint"),
-    ),
-    "bandit": (
-        CheckRequirement(".github/workflows/ci.yml", "security"),
-    ),
-    "dep-audit": (
-        CheckRequirement(".github/workflows/ci.yml", "security"),
-    ),
+    "ruff": (CheckRequirement(".github/workflows/phase7.yml", "Ruff lint"),),
+    "bandit": (CheckRequirement(".github/workflows/ci.yml", "security"),),
+    "dep-audit": (CheckRequirement(".github/workflows/ci.yml", "security"),),
     "alembic": (
         CheckRequirement(".github/workflows/ci.yml", "PostgreSQL migration graph"),
     ),
-    "merge-gate": (
-        CheckRequirement(".github/workflows/merge_gate.yml", "merge-gate"),
-    ),
+    "merge-gate": (CheckRequirement(".github/workflows/merge_gate.yml", "merge-gate"),),
     "bwrap": (
         CheckRequirement(
             ".github/workflows/phase7.yml",
@@ -253,16 +241,16 @@ def collect_until_terminal(
     *,
     sha: str,
     collector_workflow_run_id: int,
-    snapshot: Callable[
-        [], tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]
-    ],
+    snapshot: Callable[[], tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]],
     timeout_seconds: int,
     poll_seconds: int,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     if timeout_seconds < 0 or poll_seconds < 1:
-        raise ValueError("timeout_seconds must be non-negative and poll_seconds positive")
+        raise ValueError(
+            "timeout_seconds must be non-negative and poll_seconds positive"
+        )
     deadline = monotonic() + timeout_seconds
     while True:
         checks, workflows = snapshot()
@@ -299,7 +287,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    if not args.repository or not args.sha or not args.token or args.workflow_run_id < 1:
+    if (
+        not args.repository
+        or not args.sha
+        or not args.token
+        or args.workflow_run_id < 1
+    ):
         raise SystemExit(
             "repository, sha, workflow-run-id and GitHub token are required"
         )
