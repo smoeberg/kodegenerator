@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Phase 7 release-candidate evaluation.
 
-A release candidate is produced only when every gate in the CI pipeline is
-green. This module renders a deterministic candidate manifest, marks a skip
-report for the artifact store, and refuses to certify a candidate while any
-required gate is missing or failed.
-
-Gates are intentionally declared as data so the CI job and this evaluator can
-never drift apart: the workflow uploads ``phase7_gates.json`` and this script
-reads it.
+A release candidate is produced only when every required gate is backed by
+completed, successful, exact-SHA GitHub check evidence. Missing, failed,
+pending, or provenance-incomplete gates block certification.
 """
 
 from __future__ import annotations
@@ -35,39 +30,73 @@ REQUIRED_GATES: list[str] = [
 ]
 
 
+def _valid_gate_evidence(gate: Any, *, sha: str) -> bool:
+    if not isinstance(gate, dict) or gate.get("status") != "success":
+        return False
+    required_checks = gate.get("required_checks")
+    evidence = gate.get("evidence")
+    if type(required_checks) is not int or required_checks < 1:
+        return False
+    if not isinstance(evidence, list) or len(evidence) != required_checks:
+        return False
+    for item in evidence:
+        if not isinstance(item, dict):
+            return False
+        if item.get("sha") != sha:
+            return False
+        if item.get("status") != "completed" or item.get("conclusion") != "success":
+            return False
+        if not isinstance(item.get("workflow"), str) or not item["workflow"].strip():
+            return False
+        workflow_path = item.get("workflow_path")
+        if not isinstance(workflow_path, str) or not workflow_path.startswith(
+            ".github/workflows/"
+        ):
+            return False
+        if not isinstance(item.get("job"), str) or not item["job"].strip():
+            return False
+        if type(item.get("run_id")) is not int or item["run_id"] < 1:
+            return False
+        if type(item.get("check_run_id")) is not int or item["check_run_id"] < 1:
+            return False
+        if not isinstance(item.get("completed_at"), str) or not item[
+            "completed_at"
+        ].strip():
+            return False
+    return True
+
+
 def evaluate(gates: dict[str, Any]) -> dict[str, Any]:
-    """Return the candidate evaluation for a gate report.
-
-    ``gates`` uses the shape produced by the CI upload step::
-
-        {
-          "sha": "0123...",
-          "workflow_run_id": 123,
-          "gates": {
-            "pytest-3.11": {"status": "success"},
-            "pytest-3.12": {"status": "success"},
-            ...
-          }
-        }
-
-    A gate is ``success`` when present and green; anything else (missing,
-    ``failure``, ``skipped``, ``pending``) blocks the candidate.
-    """
+    """Return a fail-closed candidate evaluation for authoritative gate evidence."""
     sha = gates.get("sha", "unknown")
     run_id = gates.get("workflow_run_id", "unknown")
     reported = gates.get("gates", {})
-    missing = [gate for gate in REQUIRED_GATES if gate not in reported]
-    failed = [
-        gate
-        for gate, state in reported.items()
-        if gate in REQUIRED_GATES and state.get("status") != "success"
-    ]
+    evidence_envelope_valid = (
+        gates.get("schema") == "release_gate_evidence.v1"
+        and gates.get("source") == "github_check_runs"
+        and isinstance(sha, str)
+        and len(sha) == 40
+        and isinstance(reported, dict)
+    )
+    if not evidence_envelope_valid:
+        reported = reported if isinstance(reported, dict) else {}
 
-    green = [
-        gate for gate in REQUIRED_GATES if gate not in missing and gate not in failed
-    ]
-    blocked = missing + failed
-    ready = not blocked
+    missing = [gate for gate in REQUIRED_GATES if gate not in reported]
+    failed: list[str] = []
+    invalid_provenance: list[str] = []
+    for gate in REQUIRED_GATES:
+        if gate not in reported:
+            continue
+        state = reported[gate]
+        if not isinstance(state, dict) or state.get("status") != "success":
+            failed.append(gate)
+            continue
+        if not evidence_envelope_valid or not _valid_gate_evidence(state, sha=sha):
+            invalid_provenance.append(gate)
+
+    blocked = list(dict.fromkeys(missing + failed + invalid_provenance))
+    green = [gate for gate in REQUIRED_GATES if gate not in blocked]
+    ready = not blocked and evidence_envelope_valid
 
     return {
         "schema": "release_candidate.v1",
@@ -76,9 +105,11 @@ def evaluate(gates: dict[str, Any]) -> dict[str, Any]:
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "version": CANDIDATE_VERSION,
         "ready": ready,
+        "evidence_source": gates.get("source"),
         "required_gates": REQUIRED_GATES,
         "green_gates": green,
         "blocking_gates": blocked,
+        "invalid_provenance_gates": invalid_provenance,
     }
 
 
@@ -106,7 +137,7 @@ def main(argv: list[str]) -> int:
         return 0
     print(f"::error::release candidate BLOCKED for {candidate['sha']}")
     for gate in candidate["blocking_gates"]:
-        print(f"  - missing/failed gate: {gate}")
+        print(f"  - missing/failed/unverified gate: {gate}")
     return 1
 
 
