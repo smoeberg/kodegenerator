@@ -6,7 +6,6 @@ from pathlib import Path
 
 from ci.release_evidence import GATE_REQUIREMENTS, build_report, collect_until_terminal
 
-
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
