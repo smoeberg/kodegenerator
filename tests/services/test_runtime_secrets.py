@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
+from services.runtime_configuration import validate_runtime_configuration
 from services.runtime_secrets import RuntimeSecretError, materialize_runtime_secrets
 
 
@@ -115,3 +118,36 @@ def test_secret_error_never_contains_file_payload(tmp_path: Path) -> None:
         materialize_runtime_secrets(environment)
 
     assert secret not in str(error.value)
+
+
+def test_file_backed_api_configuration_passes_hardened_validation(
+    tmp_path: Path,
+) -> None:
+    environment = {
+        "ARTIFACT_BUCKET": "dor-artifacts",
+        "ARTIFACT_STORE_URL": "http://minio:9000",
+        "AWS_ACCESS_KEY_ID_FILE": _secret(tmp_path, "minio-user", "minio-user"),
+        "AWS_SECRET_ACCESS_KEY_FILE": _secret(tmp_path, "minio-secret", "s" * 32),
+        "DOR_ADMIN_ORGANIZATION_ID": "org-1",
+        "DOR_ADMIN_PASSWORD_FILE": _secret(tmp_path, "admin", "a" * 32),
+        "DOR_ADMIN_USERNAME": "admin",
+        "DOR_AUTHORITY_SIGNING_KEY_FILE": _secret(tmp_path, "authority", "h" * 32),
+        "DOR_ENCRYPTION_KEY_FILE": _secret(
+            tmp_path, "encryption", Fernet.generate_key().decode("ascii")
+        ),
+        "DOR_ENV": "production",
+        "DOR_JWT_ACTIVE_KEY_ID": "key-1",
+        "DOR_JWT_SIGNING_KEYS_FILE": _secret(
+            tmp_path, "jwt", json.dumps({"key-1": "j" * 32})
+        ),
+        "DOR_PIPELINE_STATE_ORGANIZATION_ID": "org-1",
+        "DOR_QUEUE_BACKEND": "database",
+        "DOR_RUNTIME_ROLE": "api",
+        "POSTGRES_DB": "dor",
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PASSWORD_FILE": _secret(tmp_path, "postgres", "p" * 32),
+        "POSTGRES_USER": "dor",
+    }
+
+    materialize_runtime_secrets(environment)
+    validate_runtime_configuration(environment)
