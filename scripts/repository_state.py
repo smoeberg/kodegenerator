@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,29 @@ def _literal_assignment(path: Path, name: str) -> Any:
                 return None
             return ast.literal_eval(value)
     raise RepositoryStateError(f"{path} does not declare {name}")
+
+
+def _readme_version(root: Path) -> str:
+    text = (root / "README.md").read_text(encoding="utf-8")
+    match = re.search(r"^\*\*Version:\*\*\s*([^\s]+)\s*$", text, re.MULTILINE)
+    if match is None:
+        raise RepositoryStateError("README.md does not declare **Version:**")
+    return match.group(1)
+
+
+def _api_version(root: Path) -> str:
+    path = root / "api" / "main.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "FastAPI":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "version" and isinstance(keyword.value, ast.Constant):
+                if isinstance(keyword.value.value, str):
+                    return keyword.value.value
+    raise RepositoryStateError("api/main.py FastAPI() does not declare a literal version")
 
 
 def migration_heads(root: Path) -> list[str]:
@@ -126,16 +150,69 @@ def validate_contract(root: Path, contract: dict[str, Any], report: dict[str, An
             "canonical Alembic head mismatch: "
             f"expected {[expected_head]!r}, got {report['alembic_heads']!r}"
         )
+
     required_paths = [
         *contract.get("canonical_runtime_paths", []),
         *contract.get("required_workflows", []),
+        contract.get("canonical_runtime_dockerfile", ""),
         contract.get("agent_protocol", ""),
     ]
     for relative_path in required_paths:
         if not relative_path or not (root / relative_path).is_file():
             errors.append(f"required canonical path is missing: {relative_path!r}")
+
     if contract.get("canonical_branch") != "main":
         errors.append("canonical_branch must remain 'main'")
+
+    canonical_version = contract.get("canonical_version")
+    if not isinstance(canonical_version, str) or not canonical_version:
+        errors.append("canonical_version must be a non-empty string")
+    else:
+        try:
+            readme_version = _readme_version(root)
+            api_version = _api_version(root)
+        except (OSError, SyntaxError, RepositoryStateError) as exc:
+            errors.append(str(exc))
+        else:
+            if readme_version != canonical_version:
+                errors.append(
+                    f"README version mismatch: expected {canonical_version!r}, got {readme_version!r}"
+                )
+            if api_version != canonical_version:
+                errors.append(
+                    f"API version mismatch: expected {canonical_version!r}, got {api_version!r}"
+                )
+
+    canonical_dockerfile = contract.get("canonical_runtime_dockerfile")
+    if isinstance(canonical_dockerfile, str) and canonical_dockerfile:
+        compose_path = root / "compose.yml"
+        publish_path = root / ".github" / "workflows" / "docker-publish.yml"
+        try:
+            compose = compose_path.read_text(encoding="utf-8")
+            publish = publish_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"cannot validate canonical Docker wiring: {exc}")
+        else:
+            if f"dockerfile: {canonical_dockerfile}" not in compose:
+                errors.append("compose.yml does not build the canonical runtime Dockerfile")
+            if f"file: {canonical_dockerfile}" not in publish:
+                errors.append("docker-publish.yml does not publish the canonical runtime Dockerfile")
+            if "DOR_BUILD_REVISION=${{ github.sha }}" not in publish:
+                errors.append("docker-publish.yml does not bind image identity to github.sha")
+            if "Verify published image digest" not in publish or "sha256:*" not in publish:
+                errors.append("docker-publish.yml does not verify an immutable sha256 digest")
+
+    architecture_path = root / "phase4" / "implementation_agent" / "ARCHITECTURE.md"
+    try:
+        architecture = architecture_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot validate Implementation Agent documentation: {exc}")
+    else:
+        if "`BubblewrapToolRunner` by default" not in architecture:
+            errors.append("Implementation Agent architecture does not describe the Phase 6 sandbox default")
+        if "not an OS\nsecurity sandbox" in architecture:
+            errors.append("Implementation Agent architecture still contains the retired pre-Phase-6 sandbox claim")
+
     return errors
 
 
