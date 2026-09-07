@@ -2,27 +2,23 @@ name: dor
 
 x-runtime-environment: &runtime-environment
   DOR_ENV: production
-  # PostgreSQL credentials - single source of truth for all services
-  POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
-  POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+  # Non-secret PostgreSQL connection components. The password is file-backed and
+  # the runtime constructs the canonical SQLAlchemy URLs after process start.
+  POSTGRES_DB: ${POSTGRES_DB:-dor}
+  POSTGRES_USER: ${POSTGRES_USER:-dor}
   POSTGRES_HOST: postgres
-  # Database URLs built from POSTGRES_* variables
-  DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-  DOR_IDENTITY_DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-  DOR_PIPELINE_DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+  POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
   DOR_PIPELINE_STATE_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
   DOR_QUEUE_BACKEND: database
   ARTIFACT_STORE_URL: http://minio:9000
   ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
-  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
-  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+  AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+  AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
   AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}
-  DOR_JWT_SIGNING_KEYS: ${DOR_JWT_SIGNING_KEYS:?DOR_JWT_SIGNING_KEYS must be set}
+  DOR_JWT_SIGNING_KEYS_FILE: /run/secrets/dor_jwt_signing_keys
   DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:?DOR_JWT_ACTIVE_KEY_ID must be set}
-  DOR_AUTHORITY_SIGNING_KEY: ${DOR_AUTHORITY_SIGNING_KEY:?DOR_AUTHORITY_SIGNING_KEY must be set}
-  DOR_ENCRYPTION_KEY: ${DOR_ENCRYPTION_KEY:?DOR_ENCRYPTION_KEY must be set}
-  DOR_JWT_SECRET_KEY: ${DOR_JWT_SECRET_KEY:-}
+  DOR_AUTHORITY_SIGNING_KEY_FILE: /run/secrets/dor_authority_signing_key
+  DOR_ENCRYPTION_KEY_FILE: /run/secrets/dor_encryption_key
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
 
 x-runtime-service: &runtime-service
@@ -44,13 +40,15 @@ services:
     image: postgres:16.10-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-dor}
+      POSTGRES_USER: ${POSTGRES_USER:-dor}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dor} -d ${POSTGRES_DB:-dor}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -65,8 +63,11 @@ services:
     command: server /data
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets:
+      - minio_root_user
+      - minio_root_password
     volumes:
       - object-data:/data
     healthcheck:
@@ -91,8 +92,16 @@ services:
       DOR_BOOTSTRAP_WORKER_IDENTITY: "1"
       DOR_WORKER_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
       DOR_WORKER_SERVICE_ID: ${DOR_WORKER_SERVICE_ID:-factory-worker}
-      DOR_WORKER_CREDENTIAL: ${DOR_WORKER_CREDENTIAL:?DOR_WORKER_CREDENTIAL must be set}
+      DOR_WORKER_CREDENTIAL_FILE: /run/secrets/dor_worker_credential
       DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
+    secrets:
+      - postgres_password
+      - minio_root_user
+      - minio_root_password
+      - dor_jwt_signing_keys
+      - dor_authority_signing_key
+      - dor_encryption_key
+      - dor_worker_credential
     command: ["/bin/true"]
     depends_on:
       postgres:
@@ -109,10 +118,17 @@ services:
       DOR_API_PORT: "8000"
       DOR_ADMIN_USERNAME: ${DOR_ADMIN_USERNAME:-admin}
       DOR_ADMIN_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
-      DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
+      DOR_ADMIN_PASSWORD_FILE: /run/secrets/dor_admin_password
       REDMINE_URL: ${REDMINE_URL:-}
-      REDMINE_API_KEY: ${REDMINE_API_KEY:-}
       REDMINE_PROJECT_ID: ${REDMINE_PROJECT_ID:-}
+    secrets:
+      - postgres_password
+      - minio_root_user
+      - minio_root_password
+      - dor_jwt_signing_keys
+      - dor_authority_signing_key
+      - dor_encryption_key
+      - dor_admin_password
     ports:
       - "${DOR_API_PORT:-8000}:8000"
     healthcheck:
@@ -149,7 +165,15 @@ services:
       DOR_WORKER_CAPABILITIES: ${DOR_WORKER_CAPABILITIES:?DOR_WORKER_CAPABILITIES must be set}
       DOR_WORKER_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
       DOR_WORKER_SERVICE_ID: ${DOR_WORKER_SERVICE_ID:-factory-worker}
-      DOR_WORKER_CREDENTIAL: ${DOR_WORKER_CREDENTIAL:?DOR_WORKER_CREDENTIAL must be set}
+      DOR_WORKER_CREDENTIAL_FILE: /run/secrets/dor_worker_credential
+    secrets:
+      - postgres_password
+      - minio_root_user
+      - minio_root_password
+      - dor_jwt_signing_keys
+      - dor_authority_signing_key
+      - dor_encryption_key
+      - dor_worker_credential
     healthcheck:
       test: ["CMD", "python", "scripts/worker_healthcheck.py"]
       interval: 15s
@@ -188,7 +212,15 @@ services:
       DOR_RUNTIME_ROLE: dashboard
       HOME: /tmp/dashboard-home
       DOR_API_URL: http://api:8000
-      DOR_ADMIN_PASSWORD: ${DOR_ADMIN_PASSWORD:?DOR_ADMIN_PASSWORD must be set}
+      DOR_ADMIN_PASSWORD_FILE: /run/secrets/dor_admin_password
+    secrets:
+      - postgres_password
+      - minio_root_user
+      - minio_root_password
+      - dor_jwt_signing_keys
+      - dor_authority_signing_key
+      - dor_encryption_key
+      - dor_admin_password
     ports:
       - "${DOR_DASHBOARD_PORT:-8501}:8501"
     healthcheck:
@@ -226,6 +258,24 @@ services:
         limits:
           cpus: "0.5"
           memory: 512M
+
+secrets:
+  postgres_password:
+    file: ${DOR_SECRET_POSTGRES_PASSWORD_FILE:?DOR_SECRET_POSTGRES_PASSWORD_FILE must point to a secret file}
+  minio_root_user:
+    file: ${DOR_SECRET_MINIO_ROOT_USER_FILE:?DOR_SECRET_MINIO_ROOT_USER_FILE must point to a secret file}
+  minio_root_password:
+    file: ${DOR_SECRET_MINIO_ROOT_PASSWORD_FILE:?DOR_SECRET_MINIO_ROOT_PASSWORD_FILE must point to a secret file}
+  dor_jwt_signing_keys:
+    file: ${DOR_SECRET_JWT_SIGNING_KEYS_FILE:?DOR_SECRET_JWT_SIGNING_KEYS_FILE must point to a secret file}
+  dor_authority_signing_key:
+    file: ${DOR_SECRET_AUTHORITY_SIGNING_KEY_FILE:?DOR_SECRET_AUTHORITY_SIGNING_KEY_FILE must point to a secret file}
+  dor_encryption_key:
+    file: ${DOR_SECRET_ENCRYPTION_KEY_FILE:?DOR_SECRET_ENCRYPTION_KEY_FILE must point to a secret file}
+  dor_admin_password:
+    file: ${DOR_SECRET_ADMIN_PASSWORD_FILE:?DOR_SECRET_ADMIN_PASSWORD_FILE must point to a secret file}
+  dor_worker_credential:
+    file: ${DOR_SECRET_WORKER_CREDENTIAL_FILE:?DOR_SECRET_WORKER_CREDENTIAL_FILE must point to a secret file}
 
 volumes:
   postgres-data:
