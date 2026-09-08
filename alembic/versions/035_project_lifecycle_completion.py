@@ -12,6 +12,7 @@ revision = "035_project_lifecycle_completion"
 down_revision = "034_project_active_scope"
 branch_labels = None
 depends_on = None
+POLICY = "dor_tenant_isolation"
 
 
 def upgrade() -> None:
@@ -44,8 +45,8 @@ def upgrade() -> None:
         "fk_project_continuation_org",
         "projects",
         "projects",
-        ["continued_from_project_id", "organization_id"],
-        ["id", "organization_id"],
+        ["organization_id", "continued_from_project_id"],
+        ["organization_id", "id"],
     )
 
     op.create_table(
@@ -63,8 +64,8 @@ def upgrade() -> None:
         sa.Column("completed_by", sa.String(128), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
-            ["project_id", "organization_id"],
-            ["projects.id", "projects.organization_id"],
+            ["organization_id", "project_id"],
+            ["projects.organization_id", "projects.id"],
             name="fk_project_completion_project_org",
         ),
         sa.UniqueConstraint(
@@ -86,6 +87,21 @@ def upgrade() -> None:
         unique=False,
     )
 
+    if op.get_bind().dialect.name == "postgresql":
+        predicate = (
+            "organization_id = nullif(current_setting('dor.organization_id', true), '')"
+        )
+        op.execute(
+            'ALTER TABLE "project_completion_records" ENABLE ROW LEVEL SECURITY'
+        )
+        op.execute(
+            'ALTER TABLE "project_completion_records" FORCE ROW LEVEL SECURITY'
+        )
+        op.execute(
+            f'CREATE POLICY "{POLICY}" ON "project_completion_records" '
+            f"USING ({predicate}) WITH CHECK ({predicate})"
+        )
+
 
 def downgrade() -> None:
     bind = op.get_bind()
@@ -104,6 +120,16 @@ def downgrade() -> None:
             "cannot downgrade: PC-101 lifecycle/completion provenance would be lost"
         )
 
+    if bind.dialect.name == "postgresql":
+        op.execute(
+            f'DROP POLICY IF EXISTS "{POLICY}" ON "project_completion_records"'
+        )
+        op.execute(
+            'ALTER TABLE "project_completion_records" NO FORCE ROW LEVEL SECURITY'
+        )
+        op.execute(
+            'ALTER TABLE "project_completion_records" DISABLE ROW LEVEL SECURITY'
+        )
     op.drop_index(
         "ix_project_completion_records_project_id",
         table_name="project_completion_records",
