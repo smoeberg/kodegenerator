@@ -307,6 +307,12 @@ class ImplementationProposalRequest(BaseModel):
     """Authenticated command for one governed patch proposal."""
 
     organization_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1, max_length=128)
+    plan_request_fingerprint: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     command_id: str = Field(min_length=1)
     resource: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
@@ -470,6 +476,22 @@ class ControlPlaneLaunchProjectRequest(BaseModel):
     )
 
 
+class ControlPlaneActivateProjectScopeRequest(BaseModel):
+    """API v1 command for atomically replacing one project's active plan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1.0"] = "1.0"
+    organization_id: str = Field(min_length=1, max_length=128)
+    command_id: str = Field(min_length=1, max_length=128)
+    plan_request_fingerprint: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    expected_revision: int = Field(ge=1)
+
+
 class ControlPlaneIntentResponse(BaseModel):
     goal: str
     description: str
@@ -485,7 +507,7 @@ class ControlPlaneProjectResponse(BaseModel):
     organization_id: str
     name: str
     description: str
-    status: Literal["created", "launch_requested"]
+    status: Literal["created", "launch_requested", "active"]
     project_fingerprint: str
     intent: ControlPlaneIntentResponse
     created_by: str
@@ -495,6 +517,10 @@ class ControlPlaneProjectResponse(BaseModel):
     launched_at: Optional[datetime]
     launch_request_fingerprint: Optional[str]
     launch_command_id: Optional[str]
+    active_plan_request_fingerprint: Optional[str] = None
+    active_scope_activated_by: Optional[str] = None
+    active_scope_activated_at: Optional[datetime] = None
+    active_scope_command_id: Optional[str] = None
     revision: int
 
 
