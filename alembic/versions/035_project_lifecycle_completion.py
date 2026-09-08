@@ -41,13 +41,23 @@ def upgrade() -> None:
         ["continued_from_project_id"],
         unique=False,
     )
-    op.create_foreign_key(
-        "fk_project_continuation_org",
-        "projects",
-        "projects",
-        ["organization_id", "continued_from_project_id"],
-        ["organization_id", "id"],
-    )
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("projects") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_project_continuation_org",
+                "projects",
+                ["organization_id", "continued_from_project_id"],
+                ["organization_id", "id"],
+            )
+    else:
+        op.create_foreign_key(
+            "fk_project_continuation_org",
+            "projects",
+            "projects",
+            ["organization_id", "continued_from_project_id"],
+            ["organization_id", "id"],
+        )
 
     op.create_table(
         "project_completion_records",
@@ -87,7 +97,7 @@ def upgrade() -> None:
         unique=False,
     )
 
-    if op.get_bind().dialect.name == "postgresql":
+    if bind.dialect.name == "postgresql":
         predicate = (
             "organization_id = nullif(current_setting('dor.organization_id', true), '')"
         )
@@ -139,7 +149,18 @@ def downgrade() -> None:
         table_name="project_completion_records",
     )
     op.drop_table("project_completion_records")
-    op.drop_constraint("fk_project_continuation_org", "projects", type_="foreignkey")
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("projects") as batch_op:
+            batch_op.drop_constraint(
+                "fk_project_continuation_org",
+                type_="foreignkey",
+            )
+    else:
+        op.drop_constraint(
+            "fk_project_continuation_org",
+            "projects",
+            type_="foreignkey",
+        )
     op.drop_index("ix_projects_continued_from_project_id", table_name="projects")
     for column in (
         "continued_from_project_id",
