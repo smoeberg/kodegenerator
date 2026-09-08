@@ -2,8 +2,6 @@ name: dor
 
 x-runtime-environment: &runtime-environment
   DOR_ENV: production
-  # Non-secret PostgreSQL connection components. The password is file-backed and
-  # the runtime constructs the canonical SQLAlchemy URLs after process start.
   POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
   POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
   POSTGRES_HOST: postgres
@@ -203,7 +201,7 @@ services:
       - -m
       - streamlit
       - run
-      - dashboard/app.py
+      - dashboard/operator_center.py
       - --server.address=0.0.0.0
       - --server.port=8501
       - --server.headless=true
