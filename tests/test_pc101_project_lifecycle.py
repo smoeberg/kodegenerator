@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from api.endpoints.control_plane import _project_response
 from domain.project import (
     Project,
     ProjectCompletionRecord,
@@ -136,6 +137,25 @@ def test_successful_completion_is_terminal_and_content_addressed() -> None:
             expected_plan_request_fingerprint=PLAN,
             timestamp=NOW,
         )
+
+
+def test_completed_project_serializes_terminal_provenance() -> None:
+    pending = active_project().request_completion(
+        actor_id="owner",
+        command_id="complete-request-1",
+        expected_revision=2,
+        expected_plan_request_fingerprint=PLAN,
+        timestamp=NOW,
+    )
+    record = completion_record(pending)
+    completed = pending.complete(record=record, expected_revision=pending.revision)
+
+    response = _project_response(completed)
+
+    assert response.status == "completed"
+    assert response.completion_record_id == record.record_id
+    assert response.completed_by == "owner"
+    assert response.active_plan_request_fingerprint == PLAN
 
 
 def test_cancelled_project_never_has_completion_record() -> None:
