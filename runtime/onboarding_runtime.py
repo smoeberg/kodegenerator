@@ -41,21 +41,27 @@ class OnboardingIntentNotFoundError(OnboardingIntentRuntimeError):
     """A referenced prior intent is unavailable in the active organization."""
 
 
+class OnboardingProjectNotFoundError(OnboardingIntentRuntimeError):
+    """The requested project is unavailable in the authenticated organization."""
+
+
 class OnboardingIntentConflictError(OnboardingIntentRuntimeError):
     """The requested declaration conflicts with immutable onboarding history."""
 
 
 @dataclass(frozen=True)
 class DeclareOnboardingIntentCommand:
-    """Client command containing semantic intent, never trusted actor metadata."""
+    """Client command containing semantic intent plus exact trusted project target."""
 
     command_id: str
     organization_id: str
+    project_id: str
     draft: OnboardingIntentDraft
 
     def __post_init__(self) -> None:
         _command_text("command_id", self.command_id)
         _command_text("organization_id", self.organization_id)
+        _command_text("project_id", self.project_id)
         if not isinstance(self.draft, OnboardingIntentDraft):
             raise OnboardingContractError("draft must be an OnboardingIntentDraft")
         _command_text("source_repository", self.draft.source_repository)
@@ -66,6 +72,7 @@ class DeclareOnboardingIntentCommand:
             "contract_version": "1.0",
             "command_type": type(self).__name__,
             "organization_id": self.organization_id,
+            "project_id": self.project_id,
             "draft": self.draft.semantic_payload(),
             "supersedes_intent_id": self.draft.supersedes_intent_id,
             "content_fingerprint": self.draft.content_fingerprint,
@@ -177,6 +184,15 @@ class OnboardingRuntime:
         result: OnboardingIntentCommandResult | None = None
         with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
+                project = uow.projects.get_for_organization(
+                    command.project_id,
+                    context.organization_id,
+                )
+                if project is None:
+                    raise OnboardingProjectNotFoundError(
+                        "project is not available in the authenticated organization"
+                    )
+
                 decision = AuthorizationService(uow).authorize(
                     principal=context.principal,
                     actor_id=context.actor_id,
@@ -203,6 +219,10 @@ class OnboardingRuntime:
                             raise OnboardingIntentPersistenceError(
                                 "completed onboarding command has no persisted intent"
                             )
+                        if intent.project_id != command.project_id:
+                            raise CommandConflictError(
+                                "completed onboarding command is bound to a different project"
+                            )
                         result = OnboardingIntentCommandResult(
                             command_id=command.command_id,
                             intent=intent,
@@ -215,6 +235,7 @@ class OnboardingRuntime:
                             command.draft,
                             declared_by=context.actor_id,
                             organization_id=context.organization_id,
+                            project_id=command.project_id,
                             declared_at=declared_at,
                         )
                         equivalent = uow.onboarding_intents.get_for_organization(
@@ -248,6 +269,7 @@ class OnboardingRuntime:
                                     "contract_version": "1.0",
                                     "intent_id": intent.intent_id,
                                     "content_fingerprint": intent.content_fingerprint,
+                                    "project_id": intent.project_id,
                                     "source_repository": intent.source_repository,
                                     "purpose": intent.purpose.value,
                                     "supersedes_intent_id": intent.supersedes_intent_id,
@@ -286,10 +308,11 @@ class OnboardingRuntime:
             existing_root = uow.onboarding_intents.get_root_for_repository(
                 command.draft.source_repository,
                 context.organization_id,
+                project_id=command.project_id,
             )
             if existing_root is not None:
                 raise OnboardingIntentConflictError(
-                    "repository already has an onboarding root intent; corrections must supersede it"
+                    "project already has an onboarding root intent for this repository; corrections must supersede it"
                 )
             return
 
@@ -304,6 +327,10 @@ class OnboardingRuntime:
         if previous.source_repository != command.draft.source_repository:
             raise OnboardingIntentConflictError(
                 "successor intent must target the same source repository"
+            )
+        if previous.project_id is not None and previous.project_id != command.project_id:
+            raise OnboardingIntentConflictError(
+                "successor intent cannot cross project boundaries"
             )
         if previous.content_fingerprint == command.draft.content_fingerprint:
             raise OnboardingIntentConflictError(

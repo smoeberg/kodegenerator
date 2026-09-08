@@ -19,6 +19,7 @@ from runtime.onboarding_runtime import (
     DeclareOnboardingIntentCommand,
     OnboardingIntentConflictError,
     OnboardingIntentNotFoundError,
+    OnboardingProjectNotFoundError,
     OnboardingRuntime,
 )
 
@@ -33,6 +34,7 @@ def _intent_response(intent: OnboardingIntent) -> OnboardingIntentResponse:
         intent_id=intent.intent_id,
         content_fingerprint=intent.content_fingerprint,
         organization_id=intent.organization_id,
+        project_id=intent.project_id,
         source_repository=intent.source_repository,
         purpose=intent.purpose,
         rationale=intent.rationale,
@@ -88,6 +90,7 @@ def declare_onboarding_intent(
             DeclareOnboardingIntentCommand(
                 command_id=request.command_id,
                 organization_id=context.organization_id,
+                project_id=request.project_id,
                 draft=draft,
             ),
         )
@@ -99,6 +102,11 @@ def declare_onboarding_intent(
                 "reason_code": exc.decision.reason_code,
                 "capability_id": exc.decision.capability_id,
             },
+        ) from exc
+    except OnboardingProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "project_not_found"},
         ) from exc
     except OnboardingIntentNotFoundError as exc:
         raise HTTPException(

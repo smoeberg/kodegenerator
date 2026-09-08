@@ -10,11 +10,12 @@ from phase4.onboarding import OnboardingPurpose
 
 
 class OnboardingIntentDeclareRequest(BaseModel):
-    """Client-owned semantic input; trusted identity/tenant fields are forbidden."""
+    """Client semantic input plus exact project target; actor/tenant stay trusted."""
 
     model_config = ConfigDict(extra="forbid")
 
     command_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(min_length=1, max_length=128)
     source_repository: str = Field(min_length=1, max_length=128)
     purpose: OnboardingPurpose
     rationale: str = Field(min_length=1)
@@ -29,6 +30,7 @@ class OnboardingIntentResponse(BaseModel):
     intent_id: str
     content_fingerprint: str
     organization_id: str
+    project_id: str | None = None
     source_repository: str
     purpose: OnboardingPurpose
     rationale: str

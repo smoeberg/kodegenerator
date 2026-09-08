@@ -5,8 +5,9 @@ closed enum, target-stack intent is explicit, and corrections create a new
 record linked to the previous intent rather than mutating history.
 
 This module does not authorize or persist declarations. The canonical command
-boundary will derive ``declared_by``, ``organization_id`` and ``declared_at``
-from trusted server context when it records an :class:`OnboardingIntent`.
+boundary will derive ``declared_by``, ``organization_id``, ``project_id`` and
+``declared_at`` from trusted server context when it records an
+:class:`OnboardingIntent`.
 """
 from __future__ import annotations
 
@@ -41,9 +42,10 @@ class OnboardingPurpose(StrEnum):
 class OnboardingIntentDraft:
     """Human-supplied semantic intent before trusted identity is attached.
 
-    ``declared_by``, organization ownership and declaration time deliberately do
-    not belong here. A client can propose the semantic intent, but it cannot
-    claim who authenticated the declaration or which organization owns it.
+    ``declared_by``, organization/project ownership and declaration time
+    deliberately do not belong here. A client can propose the semantic intent,
+    but it cannot claim who authenticated the declaration or which project owns
+    it.
     """
 
     source_repository: str
@@ -109,12 +111,16 @@ class OnboardingIntentDraft:
 
 @dataclass(frozen=True)
 class OnboardingIntent:
-    """Recorded onboarding intent with trusted actor and organization binding.
+    """Recorded onboarding intent with trusted actor, tenant and project binding.
+
+    ``project_id`` is nullable only so pre-SC-101A legacy records can still be
+    reconstructed without rewriting their immutable identity. New governed
+    declarations are required to supply an exact project at the runtime boundary.
 
     ``intent_id`` is deterministic for the exact semantic declaration, actor,
-    organization and supersession edge. ``declared_at`` is provenance metadata
-    and is intentionally excluded from identity so command retries do not create
-    new logical intents merely because wall-clock time changed.
+    organization, project and supersession edge. ``declared_at`` is provenance
+    metadata and is intentionally excluded from identity so command retries do
+    not create new logical intents merely because wall-clock time changed.
     """
 
     source_repository: str
@@ -124,6 +130,7 @@ class OnboardingIntent:
     organization_id: str
     target_stack: ProjectDefinition | None = None
     supersedes_intent_id: str | None = None
+    project_id: str | None = None
     declared_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -140,6 +147,8 @@ class OnboardingIntent:
         )
         _canonical_text(self.declared_by, "declared_by")
         _canonical_text(self.organization_id, "organization_id")
+        if self.project_id is not None:
+            _canonical_text(self.project_id, "project_id")
         declared_at = _utc_datetime(self.declared_at, "declared_at")
         object.__setattr__(self, "declared_at", declared_at)
         object.__setattr__(self, "content_fingerprint", draft.content_fingerprint)
@@ -150,6 +159,10 @@ class OnboardingIntent:
             "organization_id": self.organization_id,
             "supersedes_intent_id": self.supersedes_intent_id,
         }
+        # Preserve the exact identity of legacy unbound rows. SC-101A-bound
+        # records include project_id as trusted provenance in their identity.
+        if self.project_id is not None:
+            identity_payload["project_id"] = self.project_id
         object.__setattr__(self, "intent_id", _fingerprint(identity_payload))
 
         if self.supersedes_intent_id == self.intent_id:
@@ -164,6 +177,7 @@ class OnboardingIntent:
         *,
         declared_by: str,
         organization_id: str,
+        project_id: str | None = None,
         declared_at: datetime | None = None,
     ) -> "OnboardingIntent":
         """Attach trusted server-owned declaration metadata to a validated draft."""
@@ -178,6 +192,7 @@ class OnboardingIntent:
             organization_id=organization_id,
             target_stack=draft.target_stack,
             supersedes_intent_id=draft.supersedes_intent_id,
+            project_id=project_id,
             declared_at=declared_at or datetime.now(timezone.utc),
         )
 
@@ -192,6 +207,7 @@ class OnboardingIntent:
             "rationale": self.rationale,
             "declared_by": self.declared_by,
             "organization_id": self.organization_id,
+            "project_id": self.project_id,
             "target_stack": _target_stack_payload(self.target_stack),
             "supersedes_intent_id": self.supersedes_intent_id,
             "declared_at": self.declared_at.isoformat(),
