@@ -5,10 +5,12 @@ store is **process-local** (in-memory): it is intentionally limited to a
 bootstrap admin configured via environment variables so the token endpoint is
 usable without embedding credentials in source control.
 
-Production must set ``DOR_JWT_SECRET_KEY`` and ``DOR_ADMIN_PASSWORD`` (enforced
-at import of ``api.main``). Multi-instance or durable identity requires an
-external IdP or a future persistent principal store — do not treat this module
-as a multi-tenant user directory.
+Production JWT configuration is validated through ``services.jwt_keyring``.
+The named ``DOR_JWT_SIGNING_KEYS`` keyring is the canonical production source;
+``DOR_JWT_SECRET_KEY`` remains only as a backwards-compatible legacy input to
+``JWTKeyRing``. Multi-instance or durable identity requires the persistent
+identity store — do not treat the process-local bootstrap map as a multi-tenant
+user directory.
 """
 
 import hashlib
@@ -28,16 +30,8 @@ from services.identity_store import IdentityStore
 from services.jwt_keyring import JWTKeyRejectedError, JWTKeyRing
 
 IS_PRODUCTION = os.getenv("DOR_ENV", "development").lower() == "production"
-SECRET_KEY = os.getenv("DOR_JWT_SECRET_KEY") or (
-    "" if IS_PRODUCTION else "dev-insecure-secret-key-32-chars-long-xxx"
-)
 ALGORITHM = os.getenv("DOR_JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("DOR_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-
-if IS_PRODUCTION and not SECRET_KEY:
-    raise RuntimeError(
-        "DOR_JWT_SECRET_KEY must be configured in production before starting the API"
-    )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 # Process-local bootstrap store. Not durable across restarts or instances.
