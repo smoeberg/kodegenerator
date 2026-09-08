@@ -24,6 +24,8 @@ from phase4.implementation_agent import (
 from runtime.core import DORRuntime
 
 RESOURCE = "repository:smoeberg/kodegenerator"
+PROJECT_ID = "project-a"
+PLAN_REQUEST_FINGERPRINT = "a" * 64
 VALID_DIFF = """diff --git a/src/app.py b/src/app.py
 --- a/src/app.py
 +++ b/src/app.py
@@ -79,6 +81,8 @@ def _request(**overrides) -> ImplementationProposalRequest:
     values = {
         "organization_id": "org-a",
         "command_id": "api-implementation-1",
+        "project_id": PROJECT_ID,
+        "plan_request_fingerprint": PLAN_REQUEST_FINGERPRINT,
         "resource": RESOURCE,
         "instruction": "Set VALUE to 2.",
         "allowed_paths": ["src/app.py"],
