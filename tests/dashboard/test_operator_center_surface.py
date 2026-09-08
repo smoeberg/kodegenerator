@@ -3,11 +3,17 @@ from pathlib import Path
 
 APP = Path("dashboard/operator_center.py")
 COMPOSE = Path("compose.yml")
+CONFIG = Path(".streamlit/config.toml")
 
 
 def test_operator_center_is_canonical_dashboard_entrypoint():
     compose = COMPOSE.read_text(encoding="utf-8")
     assert "dashboard/operator_center.py" in compose
+
+
+def test_operator_center_hides_legacy_streamlit_multipage_chrome():
+    config = CONFIG.read_text(encoding="utf-8")
+    assert "showSidebarNavigation = false" in config
 
 
 def test_operator_center_uses_authenticated_api_client_only():
@@ -41,6 +47,15 @@ def test_operator_center_has_no_local_workflow_transition_engine():
     assert "transition_workflow(" not in source
     assert "current_state =" not in source
     assert "advance_pipeline(" not in source
+
+
+def test_operator_center_has_time_aware_danish_greeting():
+    source = APP.read_text(encoding="utf-8")
+    assert "Europe/Copenhagen" in source
+    assert 'return "Godmorgen"' in source
+    assert 'return "Goddag"' in source
+    assert 'return "Godaften"' in source
+    assert "_greeting()" in source
 
 
 def test_operator_center_has_required_surfaces():
