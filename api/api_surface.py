@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.control_plane",
+    "api.endpoints.project_lifecycle",
     "api.endpoints.control_plane_organizations",
     "api.endpoints.delivery_certificates",
     "api.endpoints.requirements_traceability",
