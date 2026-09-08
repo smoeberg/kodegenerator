@@ -3,41 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from phase4.authority import (
-    AuthorityDecision,
-    AuthorityEngine,
-    AuthorityPolicy,
-    AuthorityRule,
-    Decision,
-)
+from phase4.authority import AuthorityDecision, AuthorityEngine, AuthorityPolicy, AuthorityRule, Decision
 from phase4.authority.grants import VerifiedAuthorityGrant
-from phase4.execution import (
-    ExecutionEngine,
-    ExecutionReplayLedger,
-    ExecutionResult,
-    ExecutionStatus,
-)
+from phase4.execution import ExecutionEngine, ExecutionReplayLedger, ExecutionResult, ExecutionStatus
 from phase4.execution.models import ExecutionRequest, GovernedDispatch
 from phase4.outcome.engine import OutcomeEngine
 from phase4.outcome.models import OutcomeRecord, OutcomeStatus
 
 from .adapter import PatchProposalNotFoundError
-from .patch_adapter import (
-    PatchExecutionAdapter,
-    PatchExecutionRequestNotFoundError,
-    ToolRunner,
-    WorkspacePatchExecutor,
-)
-from .patch_models import (
-    IMPLEMENTATION_APPLY_ACTION,
-    PatchExecutionRecord,
-    PatchExecutionRequest,
-    TrustedToolSpec,
-)
+from .patch_adapter import PatchExecutionAdapter, PatchExecutionRequestNotFoundError, ToolRunner, WorkspacePatchExecutor
+from .patch_models import IMPLEMENTATION_APPLY_ACTION, PatchExecutionRecord, PatchExecutionRequest, TrustedToolSpec
 from .runtime import ImplementationAgentRuntime
 from .sandbox_tool_runner import BubblewrapToolRunner
 
@@ -47,8 +27,6 @@ class GovernedPatchRuntimeError(RuntimeError):
 
 
 class GovernedPatchAuthorityError(GovernedPatchRuntimeError):
-    """AI-3 denied the exact authority-bound patch application."""
-
     def __init__(self, decision: AuthorityDecision) -> None:
         self.decision = decision
         super().__init__("AI-3 denied the governed patch-execution request")
@@ -59,8 +37,6 @@ class GovernedPatchCommandConflictError(GovernedPatchRuntimeError):
 
 
 class GovernedPatchExecutionError(GovernedPatchRuntimeError):
-    """AI-4/AI-5 did not produce a retrievable patch-execution record."""
-
     def __init__(self, execution: ExecutionResult, outcome: OutcomeRecord) -> None:
         self.execution = execution
         self.outcome = outcome
@@ -70,8 +46,6 @@ class GovernedPatchExecutionError(GovernedPatchRuntimeError):
 
 @dataclass(frozen=True)
 class GovernedPatchRun:
-    """Patch attempt plus exact AI-3, AI-4 and AI-5 provenance."""
-
     agent_identity: str
     request: PatchExecutionRequest
     authority: AuthorityDecision
@@ -85,8 +59,6 @@ class GovernedPatchRun:
 
 
 class _GovernedPatchAdapter:
-    """Execution seam that makes the patch adapter dispatch-bound."""
-
     def __init__(self, adapter: PatchExecutionAdapter) -> None:
         self._adapter = adapter
         self._requests: dict[str, PatchExecutionRequest] = {}
@@ -131,17 +103,20 @@ class _GovernedPatchAdapter:
 
 
 class GovernedPatchExecutionRuntime:
-    """Apply only stored proposals through operator-fixed tools and AI-3 authority."""
+    """Apply only stored proposals that still belong to the current active project scope."""
 
-    def __init__(self, *, proposal_runtime: ImplementationAgentRuntime, workspace_root: Path, tools: tuple[TrustedToolSpec, ...], tool_runner: ToolRunner | None = None, max_file_bytes: int = 16 * 1024 * 1024, max_workspace_files: int = 20_000, max_workspace_bytes: int = 256 * 1024 * 1024, patch_timeout_seconds: int = 30, replay_ledger: ExecutionReplayLedger | None = None) -> None:
+    def __init__(self, *, proposal_runtime: ImplementationAgentRuntime, workspace_root: Path, tools: tuple[TrustedToolSpec, ...], tool_runner: ToolRunner | None = None, max_file_bytes: int = 16 * 1024 * 1024, max_workspace_files: int = 20_000, max_workspace_bytes: int = 256 * 1024 * 1024, patch_timeout_seconds: int = 30, replay_ledger: ExecutionReplayLedger | None = None, active_scope_resolver: Callable[[str, str, str], object] | None = None) -> None:
         if not isinstance(proposal_runtime, ImplementationAgentRuntime):
             raise TypeError("proposal_runtime must be an ImplementationAgentRuntime")
         if not isinstance(tools, tuple) or any(not isinstance(tool, TrustedToolSpec) for tool in tools):
             raise TypeError("tools must be a tuple of TrustedToolSpec values")
         if not tools:
             raise ValueError("governed patch execution requires trusted tools")
+        if active_scope_resolver is not None and not callable(active_scope_resolver):
+            raise TypeError("active_scope_resolver must be callable")
         self._proposal_runtime = proposal_runtime
         self._tools = tools
+        self._active_scope_resolver = active_scope_resolver
         effective_tool_runner = tool_runner if tool_runner is not None else BubblewrapToolRunner()
         self._workspace = WorkspacePatchExecutor(workspace_root, tool_runner=effective_tool_runner, max_file_bytes=max_file_bytes, max_workspace_files=max_workspace_files, max_workspace_bytes=max_workspace_bytes, patch_timeout_seconds=patch_timeout_seconds)
         self._authority = AuthorityEngine(self._policy_for())
@@ -174,6 +149,21 @@ class GovernedPatchExecutionRuntime:
         agent_identity = str(self._proposal_runtime.agent.identity)
         if proposal.request.agent_identity != agent_identity:
             raise GovernedPatchRuntimeError("proposal agent identity does not match the registered runtime agent")
+        if self._active_scope_resolver is not None:
+            project_id = proposal.request.project_id
+            plan_fingerprint = proposal.request.plan_request_fingerprint
+            if not isinstance(project_id, str) or not isinstance(plan_fingerprint, str):
+                raise GovernedPatchRuntimeError("proposal is missing active project scope binding")
+            try:
+                self._active_scope_resolver(
+                    proposal.request.organization_id,
+                    project_id,
+                    plan_fingerprint,
+                )
+            except Exception as exc:
+                raise GovernedPatchRuntimeError(
+                    "proposal is outside the current active project scope"
+                ) from exc
         with self._lock:
             bound = self._commands.get(idempotency_key)
             if bound is not None:
