@@ -15,6 +15,7 @@ class OnboardingIntentDeclareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command_id: str = Field(min_length=1, max_length=128)
+    project_id: str = "project-1"
     source_repository: str = Field(min_length=1, max_length=128)
     purpose: OnboardingPurpose
     rationale: str = Field(min_length=1)

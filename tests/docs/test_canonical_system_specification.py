@@ -66,4 +66,4 @@ def test_current_state_points_to_canonical_system_spec_and_closes_roadmap_item()
 
     assert state["canonical_system_specification"] == str(SPEC_PATH)
     assert "canonical_system_specification" not in state["open_work"]
-    assert state["canonical_alembic_head"] == "030_artifact_acceptances"
+    assert state["canonical_alembic_head"] == "033_onboarding_project_identity"

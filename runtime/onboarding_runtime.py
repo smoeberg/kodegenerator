@@ -52,10 +52,12 @@ class DeclareOnboardingIntentCommand:
     command_id: str
     organization_id: str
     draft: OnboardingIntentDraft
+    project_id: str = "project-1"
 
     def __post_init__(self) -> None:
         _command_text("command_id", self.command_id)
         _command_text("organization_id", self.organization_id)
+        _command_text("project_id", self.project_id)
         if not isinstance(self.draft, OnboardingIntentDraft):
             raise OnboardingContractError("draft must be an OnboardingIntentDraft")
         _command_text("source_repository", self.draft.source_repository)

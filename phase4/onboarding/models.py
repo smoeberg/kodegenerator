@@ -49,12 +49,14 @@ class OnboardingIntentDraft:
     source_repository: str
     purpose: OnboardingPurpose
     rationale: str
+    project_id: str = "project-1"
     target_stack: ProjectDefinition | None = None
     supersedes_intent_id: str | None = None
 
     def __post_init__(self) -> None:
         _canonical_text(self.source_repository, "source_repository")
         _canonical_text(self.rationale, "rationale")
+        _canonical_text(self.project_id, "project_id")
         if any(
             character in self.source_repository
             for character in _AUTHORITY_GLOB_CHARS
@@ -122,6 +124,7 @@ class OnboardingIntent:
     rationale: str
     declared_by: str
     organization_id: str
+    project_id: str = "project-1"
     target_stack: ProjectDefinition | None = None
     supersedes_intent_id: str | None = None
     declared_at: datetime = field(
@@ -135,6 +138,7 @@ class OnboardingIntent:
             source_repository=self.source_repository,
             purpose=self.purpose,
             rationale=self.rationale,
+            project_id=self.project_id,
             target_stack=self.target_stack,
             supersedes_intent_id=self.supersedes_intent_id,
         )
