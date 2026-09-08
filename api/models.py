@@ -507,7 +507,15 @@ class ControlPlaneProjectResponse(BaseModel):
     organization_id: str
     name: str
     description: str
-    status: Literal["created", "launch_requested", "active"]
+    status: Literal[
+        "created",
+        "launch_requested",
+        "active",
+        "completion_pending",
+        "completed",
+        "cancelled",
+        "archived",
+    ]
     project_fingerprint: str
     intent: ControlPlaneIntentResponse
     created_by: str
@@ -521,6 +529,21 @@ class ControlPlaneProjectResponse(BaseModel):
     active_scope_activated_by: Optional[str] = None
     active_scope_activated_at: Optional[datetime] = None
     active_scope_command_id: Optional[str] = None
+    completion_requested_by: Optional[str] = None
+    completion_requested_at: Optional[datetime] = None
+    completion_request_command_id: Optional[str] = None
+    completion_record_id: Optional[str] = None
+    completed_by: Optional[str] = None
+    completed_at: Optional[datetime] = None
+    cancelled_by: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    cancel_command_id: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+    archived_by: Optional[str] = None
+    archived_at: Optional[datetime] = None
+    archive_command_id: Optional[str] = None
+    archived_from_status: Optional[Literal["completed", "cancelled"]] = None
+    continued_from_project_id: Optional[str] = None
     revision: int
 
 
