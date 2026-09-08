@@ -28,6 +28,45 @@ st.set_page_config(page_title="DOR Control Plane", page_icon="⚡", layout="wide
 init_state()
 
 
+def inject_dor_theme() -> None:
+    st.markdown(
+        """
+        <style>
+        /* Global Background & Font */
+        .stApp {
+            background-color: #F8F6F0;
+            color: #1A1A1A;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        
+        /* Sidebar Styling (Dark Teal matching Operatørcenter) */
+        [data-testid="stSidebar"] {
+            background-color: #162B32;
+            color: #E2E8F0;
+        }
+        [data-testid="stSidebar"] * {
+            color: #E2E8F0 !important;
+        }
+        
+        /* Card Containers */
+        div.stMarkdownContainer {
+            color: #1A1A1A;
+        }
+        
+        /* Buttons */
+        .stButton button {
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_dor_theme()
+
+
 def api() -> DORAPIClient:
     return DORAPIClient(token=st.session_state.get("access_token"))
 
