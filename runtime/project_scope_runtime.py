@@ -13,6 +13,7 @@ from domain.event import Event, EventType
 from domain.project import Project, ProjectContractError, ProjectStateError, ProjectStatus
 from infrastructure.persistence.repositories import RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
+from infrastructure.runtime.work_queue_scope import request_superseded_scope_cancellation
 from runtime.commands import CommandConflictError
 from services.authorization_service import AuthorizationService
 
@@ -191,6 +192,7 @@ class ProjectScopeRuntime:
 
         denied = None
         result = None
+        superseded_scope = None
         with self.runtime.database.session(context.organization_id) as session:
             with UnitOfWork(session) as uow:
                 resource_organization_id = uow.projects.get_organization_id(command.project_id)
@@ -237,6 +239,7 @@ class ProjectScopeRuntime:
                         if project.revision != command.expected_revision:
                             raise ProjectStateError("project revision conflict")
                         superseded = project.active_plan_request_fingerprint
+                        superseded_scope = superseded
                         activated = project.activate_scope(
                             actor_id=context.actor_id,
                             command_id=command.command_id,
@@ -303,6 +306,25 @@ class ProjectScopeRuntime:
             raise CommandAuthorizationError(denied)
         if result is None:
             raise RuntimeError("scope activation completed without a result")
+        if (
+            not result.replayed
+            and superseded_scope is not None
+            and superseded_scope != result.project.active_plan_request_fingerprint
+        ):
+            # SC-101C: cancellation is deliberately best-effort. The active-scope
+            # mutation above is already authoritative; a cancellation failure must
+            # never roll it back or weaken the SC-101B downstream stale gates.
+            try:
+                request_superseded_scope_cancellation(
+                    self.runtime.database,
+                    organization_id=context.organization_id,
+                    project_id=result.project.id,
+                    active_plan_request_fingerprint=(
+                        result.project.active_plan_request_fingerprint or ""
+                    ),
+                )
+            except Exception:
+                pass
         return result
 
 
