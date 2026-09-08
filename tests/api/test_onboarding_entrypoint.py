@@ -13,9 +13,13 @@ from api.onboarding_contracts import OnboardingIntentDeclareRequest
 from domain.actor import Actor, ActorType
 from domain.authority import RoleAssignment, RoleDefinition
 from domain.organization import Organization
+from domain.project import Project, ProjectIntent
 from infrastructure.persistence.uow import UnitOfWork
 from runtime.core import DORRuntime
 from runtime.onboarding_runtime import ONBOARDING_INTENT_DECLARE_ACTION
+
+
+PROJECT_ID = "project-a"
 
 
 def _runtime(tmp_path, *, grant: bool) -> DORRuntime:
@@ -26,6 +30,18 @@ def _runtime(tmp_path, *, grant: bool) -> DORRuntime:
         Actor(id="alice", type=ActorType.HUMAN, identity="Alice"),
         "org-a",
     )
+    with runtime.database.session("org-a") as session:
+        with UnitOfWork(session) as uow:
+            uow.projects.add(
+                Project.create(
+                    project_id=PROJECT_ID,
+                    organization_id="org-a",
+                    name="Onboarding Test Project",
+                    description="Project fixture for onboarding API tests.",
+                    intent=ProjectIntent(goal="Exercise governed onboarding."),
+                    actor_id="alice",
+                )
+            )
     if grant:
         role = RoleDefinition(
             id="role:onboarding-operator",
@@ -49,6 +65,7 @@ def _runtime(tmp_path, *, grant: bool) -> DORRuntime:
 def _request(command_id: str = "cmd-1") -> OnboardingIntentDeclareRequest:
     return OnboardingIntentDeclareRequest(
         command_id=command_id,
+        project_id=PROJECT_ID,
         source_repository="repository:external/example",
         purpose="extend",
         rationale="Extend the existing repository without replacing its stack.",
@@ -58,6 +75,7 @@ def _request(command_id: str = "cmd-1") -> OnboardingIntentDeclareRequest:
 def test_http_contract_forbids_client_owned_identity_and_tenant_fields() -> None:
     payload = {
         "command_id": "cmd-1",
+        "project_id": PROJECT_ID,
         "source_repository": "repository:external/example",
         "purpose": "extend",
         "rationale": "Extend it.",
@@ -86,6 +104,7 @@ def test_declaration_derives_actor_and_organization_from_authenticated_user(tmp_
     assert replay.replayed is True
     assert replay.intent.intent_id == first.intent.intent_id
     assert first.intent.organization_id == "org-a"
+    assert first.intent.project_id == PROJECT_ID
     assert first.intent.declared_by == "alice"
     assert first.intent.source_repository == "repository:external/example"
 
@@ -107,6 +126,7 @@ def test_rewrite_without_target_stack_is_rejected_at_domain_boundary(tmp_path) -
     user = User(username="alice", organization_id="org-a")
     request = OnboardingIntentDeclareRequest(
         command_id="rewrite",
+        project_id=PROJECT_ID,
         source_repository="repository:external/rewrite",
         purpose="modernize_rewrite",
         rationale="Preserve behavior on a new stack.",
