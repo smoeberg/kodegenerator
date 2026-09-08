@@ -12,6 +12,7 @@ import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.context_navigation import render_sidebar_organization_switcher, sync_organization_context
+from dashboard.cockpit_lifecycle import render_cockpit_lifecycle
 from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
 from dashboard.redmine_integration import render_redmine_integration
 from dashboard.state import authenticated, clear_auth, init_state
@@ -284,9 +285,11 @@ def execution(client: DORAPIClient) -> None:
         return
     workflow_id = workflow_id.strip()
     st.session_state["selected_workflow_id"] = workflow_id
+    render_cockpit_lifecycle(client, workflow_id)
     try:
         status = client.get(f"/api/v1/execution/{workflow_id}")
-        st.json(status)
+        with st.expander("Teknisk execution snapshot"):
+            st.json(status)
         gates_payload = client.get(f"/api/v1/execution/{workflow_id}/gates")
         gates = gates_payload if isinstance(gates_payload, list) else gates_payload.get("gates", []) if isinstance(gates_payload, Mapping) else []
         st.subheader("Quality Gates")
@@ -316,6 +319,9 @@ def execution(client: DORAPIClient) -> None:
                                 st.rerun()
                             except DORAPIError as exc:
                                 st.error(f"Gate afvist ({exc.status_code}): {exc}")
+        proposals = client.get(f"/api/v1/execution/{workflow_id}/proposals")
+        with st.expander("Implementation proposals"):
+            st.json(proposals)
         if st.button("Advance workflow", type="primary"):
             try:
                 client.post(f"/api/v1/execution/{workflow_id}/advance", json={"reason": "operator-center"})
