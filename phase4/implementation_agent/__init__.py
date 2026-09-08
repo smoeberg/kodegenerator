@@ -70,6 +70,7 @@ from .runtime import (
     ImplementationAgentRuntimeError,
     ImplementationCommandConflictError,
     ImplementationContextLimitError,
+    ImplementationScopeStaleError,
 )
 
 __all__ = [
@@ -92,6 +93,7 @@ __all__ = [
     "ImplementationAgentRuntimeError",
     "ImplementationCommandConflictError",
     "ImplementationContextLimitError",
+    "ImplementationScopeStaleError",
     "ImplementationContractError",
     "ImplementationExecutionAdapter",
     "ImplementationProvider",

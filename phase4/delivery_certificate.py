@@ -13,19 +13,11 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class DeliveryVerificationStatus(str, Enum):
-    """Lifecycle exposed by the candidate artifact itself.
-
-    This status deliberately cannot express PASS/FAIL. An authoritative delivery
-    gate must consume the candidate and publish its own result separately.
-    """
-
     PENDING_AUTHORITATIVE_VERIFICATION = "pending_authoritative_verification"
 
 
 @dataclass(frozen=True, order=True)
 class DeliveryArtifactFile:
-    """Exact committed file state bound into a delivery candidate."""
-
     path: str
     exists: bool
     sha256: str | None
@@ -63,11 +55,7 @@ class DeliveryArtifactFile:
 
 @dataclass(frozen=True)
 class DeliveryVerificationCandidate:
-    """Content-addressed proof that one governed apply is ready for a real gate.
-
-    The candidate is provenance only. It never claims that delivery verification
-    has passed, and it cannot grant execution or release authority.
-    """
+    """Content-addressed proof that one governed apply is ready for a real gate."""
 
     organization_id: str
     repository: str
@@ -90,6 +78,7 @@ class DeliveryVerificationCandidate:
     toolchain_fingerprint: str
     files: tuple[DeliveryArtifactFile, ...]
     evidence_ids: tuple[str, ...]
+    project_id: str | None = None
     status: DeliveryVerificationStatus = DeliveryVerificationStatus.PENDING_AUTHORITATIVE_VERIFICATION
     candidate_id: str = field(init=False)
 
@@ -103,6 +92,8 @@ class DeliveryVerificationCandidate:
             "plan_id",
         ):
             _require_text(getattr(self, name), name)
+        if self.project_id is not None:
+            _require_text(self.project_id, "project_id")
         for name in (
             "onboarding_content_fingerprint",
             "audit_request_fingerprint",
@@ -145,7 +136,7 @@ class DeliveryVerificationCandidate:
 
     def canonical(self, *, include_id: bool = True) -> dict[str, object]:
         payload: dict[str, object] = {
-            "schema_version": 1,
+            "schema_version": 2 if self.project_id is not None else 1,
             "status": self.status.value,
             "authoritative": False,
             "verification_result": None,
@@ -171,6 +162,8 @@ class DeliveryVerificationCandidate:
             "files": [item.canonical() for item in self.files],
             "evidence_ids": list(self.evidence_ids),
         }
+        if self.project_id is not None:
+            payload["project_id"] = self.project_id
         if include_id:
             payload["candidate_id"] = self.candidate_id
         return payload

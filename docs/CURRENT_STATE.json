@@ -2,7 +2,7 @@
   "schema_version": 1,
   "canonical_branch": "main",
   "canonical_version": "1.4.0",
-  "canonical_alembic_head": "033_onboarding_project_identity",
+  "canonical_alembic_head": "034_project_active_scope",
   "canonical_system_specification": "docs/CANONICAL_SYSTEM_SPECIFICATION.md",
   "canonical_demo_installation": "docs/DEMO_INSTALLATION.md",
   "canonical_runtime_dockerfile": "docker/Dockerfile.runtime",
@@ -29,6 +29,7 @@
     "phase_6": 156
   },
   "open_work": [
-    "requirement_steward_multi_agent_function_deliberation"
+    "requirement_steward_multi_agent_function_deliberation",
+    "SC-101B"
   ]
 }

@@ -20,6 +20,7 @@ from phase4.execution.models import ExecutionRequest
 IMPLEMENTATION_ACTION = "implementation.propose_patch"
 _DIFF_HEADER = re.compile(r"^diff --git a/([^\s]+) b/([^\s]+)$")
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ImplementationContractError(ValueError):
@@ -82,6 +83,8 @@ class ImplementationRequest:
     instruction: str
     allowed_paths: tuple[str, ...]
     budget: ChangeBudget = field(default_factory=ChangeBudget)
+    project_id: str | None = None
+    plan_request_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("organization_id", "agent_identity", "agent_role", "resource", "instruction"):
@@ -106,6 +109,16 @@ class ImplementationRequest:
             raise ImplementationContractError("max_files cannot exceed the explicit allowed path count")
         object.__setattr__(self, "allowed_paths", paths)
 
+        if (self.project_id is None) != (self.plan_request_fingerprint is None):
+            raise ImplementationContractError(
+                "project_id and plan_request_fingerprint must be supplied together"
+            )
+        if self.project_id is not None:
+            if not self.project_id.strip() or self.project_id != self.project_id.strip():
+                raise ImplementationContractError("project_id must be canonical non-empty text")
+            if not isinstance(self.plan_request_fingerprint, str) or not _HEX64.fullmatch(self.plan_request_fingerprint):
+                raise ImplementationContractError("plan_request_fingerprint must be lowercase SHA-256")
+
     @property
     def context_packet_id(self) -> str:
         return self.context_packet.packet_id
@@ -116,7 +129,7 @@ class ImplementationRequest:
 
     @property
     def request_fingerprint(self) -> str:
-        return _canonical_digest({
+        payload = {
             "action": IMPLEMENTATION_ACTION,
             "organization_id": self.organization_id,
             "agent_identity": self.agent_identity,
@@ -126,15 +139,23 @@ class ImplementationRequest:
             "instruction": self.instruction,
             "allowed_paths": list(self.allowed_paths),
             "budget": {"max_files": self.budget.max_files, "max_changed_lines": self.budget.max_changed_lines},
-        })
+        }
+        if self.project_id is not None:
+            payload["project_id"] = self.project_id
+            payload["plan_request_fingerprint"] = self.plan_request_fingerprint
+        return _canonical_digest(payload)
 
     def authority_context(self) -> Mapping[str, str]:
-        return {
+        context = {
             "organization_id": self.organization_id,
             "scope_fingerprint": self.scope_fingerprint,
             "max_files": str(self.budget.max_files),
             "max_changed_lines": str(self.budget.max_changed_lines),
         }
+        if self.project_id is not None:
+            context["project_id"] = self.project_id
+            context["plan_request_fingerprint"] = self.plan_request_fingerprint or ""
+        return context
 
     def authority_request(self) -> AuthorityRequest:
         return AuthorityRequest.create(
@@ -149,10 +170,14 @@ class ImplementationRequest:
         )
 
     def execution_parameters(self) -> Mapping[str, str]:
-        return {
+        parameters = {
             "implementation_request_fingerprint": self.request_fingerprint,
             "organization_id": self.organization_id,
         }
+        if self.project_id is not None:
+            parameters["project_id"] = self.project_id
+            parameters["plan_request_fingerprint"] = self.plan_request_fingerprint or ""
+        return parameters
 
     def execution_request(self, *, idempotency_key: str | None = None) -> ExecutionRequest:
         authority_request = self.authority_request()

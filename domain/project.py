@@ -30,6 +30,7 @@ class ProjectFingerprintError(RuntimeError):
 class ProjectStatus(str, Enum):
     CREATED = "created"
     LAUNCH_REQUESTED = "launch_requested"
+    ACTIVE = "active"
 
 
 def _normalize_json(value: Any, *, path: str = "constraints") -> Any:
@@ -93,6 +94,14 @@ def _require_text(name: str, value: str, *, max_length: int) -> str:
         raise ProjectContractError(f"{name} must be a non-empty trimmed string")
     if len(value) > max_length:
         raise ProjectContractError(f"{name} exceeds {max_length} characters")
+    return value
+
+
+def _require_sha256(name: str, value: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(
+        character not in "0123456789abcdef" for character in value
+    ):
+        raise ProjectContractError(f"{name} must be lowercase SHA-256")
     return value
 
 
@@ -165,6 +174,10 @@ class Project:
     launched_at: datetime | None = None
     launch_request_fingerprint: str | None = None
     launch_command_id: str | None = None
+    active_plan_request_fingerprint: str | None = None
+    active_scope_activated_by: str | None = None
+    active_scope_activated_at: datetime | None = None
+    active_scope_command_id: str | None = None
     revision: int = 0
     contract_version: str = CONTROL_PLANE_CONTRACT_VERSION
 
@@ -189,49 +202,86 @@ class Project:
             raise ProjectContractError("unsupported project contract version")
         if self.revision < 0:
             raise ProjectContractError("project revision cannot be negative")
+
         launch_fields = (
             self.launched_by,
             self.launched_at,
             self.launch_request_fingerprint,
             self.launch_command_id,
         )
-        if self.status is ProjectStatus.CREATED and any(launch_fields):
-            raise ProjectContractError(
-                "created projects cannot contain launch metadata"
-            )
-        if self.status is ProjectStatus.CREATED and self.revision != 0:
-            raise ProjectContractError("created projects must have revision zero")
-        if self.status is ProjectStatus.LAUNCH_REQUESTED:
-            if any(item is None for item in launch_fields):
+        scope_fields = (
+            self.active_plan_request_fingerprint,
+            self.active_scope_activated_by,
+            self.active_scope_activated_at,
+            self.active_scope_command_id,
+        )
+        if self.status is ProjectStatus.CREATED:
+            if any(launch_fields) or any(scope_fields):
                 raise ProjectContractError(
-                    "launch-requested projects require complete launch metadata"
+                    "created projects cannot contain launch or active-scope metadata"
+                )
+            if self.revision != 0:
+                raise ProjectContractError("created projects must have revision zero")
+            return
+
+        if any(item is None for item in launch_fields):
+            raise ProjectContractError(
+                "launched projects require complete launch metadata"
+            )
+        if not isinstance(self.launched_at, datetime):
+            raise ProjectContractError("launched_at must be a datetime")
+        _require_text("launched_by", self.launched_by or "", max_length=128)
+        fingerprint = self.launch_request_fingerprint or ""
+        _require_sha256("launch_request_fingerprint", fingerprint)
+        _require_text(
+            "launch_command_id",
+            self.launch_command_id or "",
+            max_length=128,
+        )
+        expected = self._launch_fingerprint(
+            actor_id=self.launched_by or "",
+            command_id=self.launch_command_id or "",
+        )
+        if fingerprint != expected:
+            raise ProjectContractError(
+                "launch request fingerprint does not match project provenance"
+            )
+
+        if self.status is ProjectStatus.LAUNCH_REQUESTED:
+            if any(scope_fields):
+                raise ProjectContractError(
+                    "launch-requested projects cannot contain active-scope metadata"
                 )
             if self.revision != 1:
                 raise ProjectContractError(
                     "launch-requested projects must have revision one"
                 )
-            if not isinstance(self.launched_at, datetime):
-                raise ProjectContractError("launched_at must be a datetime")
-            _require_text("launched_by", self.launched_by or "", max_length=128)
-            fingerprint = self.launch_request_fingerprint or ""
-            if len(fingerprint) != 64 or any(
-                character not in "0123456789abcdef" for character in fingerprint
-            ):
+            return
+
+        if self.status is ProjectStatus.ACTIVE:
+            if any(item is None for item in scope_fields):
                 raise ProjectContractError(
-                    "launch_request_fingerprint must be lowercase SHA-256"
+                    "active projects require complete active-scope metadata"
                 )
+            if self.revision < 2:
+                raise ProjectContractError("active projects require revision two or greater")
+            _require_sha256(
+                "active_plan_request_fingerprint",
+                self.active_plan_request_fingerprint or "",
+            )
             _require_text(
-                "launch_command_id",
-                self.launch_command_id or "",
+                "active_scope_activated_by",
+                self.active_scope_activated_by or "",
                 max_length=128,
             )
-            expected = self._launch_fingerprint(
-                actor_id=self.launched_by or "",
-                command_id=self.launch_command_id or "",
+            _require_text(
+                "active_scope_command_id",
+                self.active_scope_command_id or "",
+                max_length=128,
             )
-            if fingerprint != expected:
+            if not isinstance(self.active_scope_activated_at, datetime):
                 raise ProjectContractError(
-                    "launch request fingerprint does not match project provenance"
+                    "active_scope_activated_at must be a datetime"
                 )
 
     @classmethod
@@ -319,6 +369,35 @@ class Project:
             launch_request_fingerprint=launch_fingerprint,
             launch_command_id=command_id,
             updated_at=launched_at,
+            revision=self.revision + 1,
+        )
+
+    def activate_scope(
+        self,
+        *,
+        actor_id: str,
+        command_id: str,
+        plan_request_fingerprint: str,
+        expected_revision: int,
+        timestamp: datetime | None = None,
+    ) -> "Project":
+        """Atomically replace the exact active plan identity at one project revision."""
+        if self.status not in {ProjectStatus.LAUNCH_REQUESTED, ProjectStatus.ACTIVE}:
+            raise ProjectStateError("project cannot activate scope in its current state")
+        if expected_revision != self.revision:
+            raise ProjectStateError("project revision conflict")
+        _require_text("actor_id", actor_id, max_length=128)
+        _require_text("command_id", command_id, max_length=128)
+        _require_sha256("plan_request_fingerprint", plan_request_fingerprint)
+        activated_at = timestamp or datetime.now(timezone.utc)
+        return replace(
+            self,
+            status=ProjectStatus.ACTIVE,
+            active_plan_request_fingerprint=plan_request_fingerprint,
+            active_scope_activated_by=actor_id,
+            active_scope_activated_at=activated_at,
+            active_scope_command_id=command_id,
+            updated_at=activated_at,
             revision=self.revision + 1,
         )
 
