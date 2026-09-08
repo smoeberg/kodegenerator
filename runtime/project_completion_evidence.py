@@ -1,6 +1,7 @@
 """PC-101 fail-closed verification of exact server-owned completion evidence."""
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -72,19 +73,29 @@ class ProjectCompletionEvidenceVerifier:
             raise ProjectCompletionEvidenceError(
                 "integration receipt does not bind the expected final repository commit"
             )
+        if len(integration_head) != 40 or any(c not in "0123456789abcdef" for c in integration_head):
+            raise ProjectCompletionEvidenceError("final repository commit is not an exact Git SHA-1")
         candidate = dict(certificate.candidate_payload)
         if candidate.get("intent_id") != evidence.onboarding_intent_id:
             raise ProjectCompletionEvidenceError(
                 "delivery candidate does not bind the final onboarding intent"
             )
 
+        # ProjectCompletionRecord is uniformly content-addressed with SHA-256 fields.
+        # Preserve the exact Git SHA-1 in the immutable integration receipt and bind
+        # its canonical SHA-256 identity here; the record also binds receipt_id, so
+        # the exact final Git head is recoverable and tamper-evident without weakening
+        # the existing SHA-256 record contract.
+        repository_commit_identity = hashlib.sha256(
+            integration_head.encode("ascii")
+        ).hexdigest()
         return ProjectCompletionRecord(
             organization_id=project.organization_id,
             project_id=project.id,
             final_project_revision=project.revision,
             onboarding_intent_id=evidence.onboarding_intent_id,
             plan_request_fingerprint=plan,
-            repository_commit_sha=evidence.repository_commit_sha,
+            repository_commit_sha=repository_commit_identity,
             delivery_certificate_ids=(certificate.certificate_id,),
             traceability_manifest_ids=(manifest.manifest_id,),
             integration_evidence_ids=(receipt.receipt_id,),
