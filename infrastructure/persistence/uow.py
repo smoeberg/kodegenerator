@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .authority_repositories import AuthorityRepository
 from .command_repository import CommandRepository
 from .onboarding_intent_repository import OnboardingIntentRepository
-from .project_scope_repository import ProjectRepository
+from .project_scope_repository import ProjectCompletionRecordRepository, ProjectRepository
 from .repositories import (
     ActorRepository,
     EventStore,
@@ -27,6 +27,7 @@ class UnitOfWork(AbstractContextManager["UnitOfWork"]):
         self.actors = ActorRepository(session)
         self.workflows = WorkflowRepository(session)
         self.projects = ProjectRepository(session)
+        self.project_completion_records = ProjectCompletionRecordRepository(session)
         self.onboarding_intents = OnboardingIntentRepository(session)
         self.events = EventStore(session)
         self.commands = CommandRepository(session)
