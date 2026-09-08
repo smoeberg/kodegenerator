@@ -4,17 +4,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from uuid import NAMESPACE_URL, uuid5
 
 from domain.authorization_audit import create_authorization_audit_event
 from domain.event import Event, EventType
-from domain.project import Project, ProjectContractError
+from domain.project import Project, ProjectContractError, ProjectIntent, ProjectStatus
 from infrastructure.persistence.uow import UnitOfWork
 from runtime.commands import CommandConflictError
 from runtime.project_completion_evidence import (
     ProjectCompletionEvidence,
     ProjectCompletionEvidenceVerifier,
 )
-from runtime.project_runtime import ProjectCommandResult, ProjectNotFoundError
+from runtime.project_runtime import (
+    PROJECT_CREATE_ACTION,
+    ProjectCommandResult,
+    ProjectNotFoundError,
+)
 from services.authorization_service import AuthorizationService
 
 if TYPE_CHECKING:
@@ -126,6 +131,50 @@ class ArchiveProjectCommand:
         return dict(self.__dict__)
 
 
+@dataclass(frozen=True)
+class ContinueProjectCommand:
+    command_id: str
+    organization_id: str
+    source_project_id: str
+    expected_source_revision: int
+    name: str
+    description: str
+    intent: ProjectIntent
+
+    def __post_init__(self) -> None:
+        for name in ("command_id", "organization_id", "source_project_id"):
+            _text(name, getattr(self, name))
+        _text("name", self.name, 255)
+        if not isinstance(self.description, str) or len(self.description) > 20_000:
+            raise ProjectContractError("description exceeds 20000 characters")
+        if type(self.expected_source_revision) is not int or self.expected_source_revision < 0:
+            raise ProjectContractError("expected_source_revision must be non-negative")
+        if not isinstance(self.intent, ProjectIntent):
+            raise ProjectContractError("intent must be a ProjectIntent")
+
+    @property
+    def project_id(self) -> str:
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                f"dor:{self.organization_id}:project:{self.command_id}",
+            )
+        )
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "organization_id": self.organization_id,
+            "source_project_id": self.source_project_id,
+            "expected_source_revision": self.expected_source_revision,
+            "name": self.name,
+            "description": self.description,
+            "intent": self.intent.canonical_dict(),
+            "intent_fingerprint": self.intent.fingerprint,
+        }
+
+
 LifecycleCommand = (
     RequestProjectCompletionCommand
     | CompleteProjectCommand
@@ -151,6 +200,121 @@ class ProjectLifecycleRuntime:
 
     def archive_project(self, context: "OrganizationContext", command: ArchiveProjectCommand) -> ProjectCommandResult:
         return self._execute(context, command, PROJECT_ARCHIVE_ACTION)
+
+    def continue_project(self, context: "OrganizationContext", command: ContinueProjectCommand) -> ProjectCommandResult:
+        """Create a distinct new project lineage from an immutable completed source."""
+        self.runtime._require_ready()
+        if command.organization_id != context.organization_id:
+            raise PermissionError("command organization does not match runtime context")
+        now = datetime.now(timezone.utc)
+        with self.runtime.database.session(context.organization_id) as session:
+            with UnitOfWork(session) as uow:
+                source_org = uow.projects.get_organization_id(command.source_project_id)
+                decision = AuthorizationService(uow).authorize(
+                    principal=context.principal,
+                    actor_id=context.actor_id,
+                    organization_id=context.organization_id,
+                    capability_id=PROJECT_CREATE_ACTION,
+                    resource_id=command.source_project_id,
+                    resource_organization_id=source_org,
+                )
+                if not decision.allowed:
+                    from runtime.core import CommandAuthorizationError
+                    raise CommandAuthorizationError(decision)
+
+                existing = uow.commands.get(command.command_id)
+                if existing is not None:
+                    if (
+                        existing.organization_id != context.organization_id
+                        or existing.actor_id != context.actor_id
+                        or existing.command_type != type(command).__name__
+                        or existing.payload != command.payload
+                    ):
+                        raise CommandConflictError("command_id replay changed continuation semantics")
+                    project = uow.projects.get_for_organization(
+                        existing.aggregate_id or "",
+                        context.organization_id,
+                    )
+                    if project is None:
+                        raise ProjectNotFoundError("completed continuation command has no project")
+                    return ProjectCommandResult(command.command_id, project, True)
+
+                source = uow.projects.get_for_organization(
+                    command.source_project_id,
+                    context.organization_id,
+                )
+                if source is None:
+                    raise ProjectNotFoundError(
+                        f"Project not found: {command.source_project_id}"
+                    )
+                source_completed = source.status is ProjectStatus.COMPLETED or (
+                    source.status is ProjectStatus.ARCHIVED
+                    and source.archived_from_status is ProjectStatus.COMPLETED
+                )
+                if not source_completed:
+                    raise ProjectContractError(
+                        "continuation requires an immutable completed source project"
+                    )
+                if source.revision != command.expected_source_revision:
+                    raise ProjectContractError("source project revision conflict")
+                if uow.projects.get_for_organization(command.project_id, context.organization_id) is not None:
+                    raise CommandConflictError("continuation project identity already exists")
+
+                project = Project.create(
+                    project_id=command.project_id,
+                    organization_id=context.organization_id,
+                    name=command.name,
+                    description=command.description,
+                    intent=command.intent,
+                    actor_id=context.actor_id,
+                    timestamp=now,
+                    continued_from_project_id=source.id,
+                )
+                uow.projects.add(project)
+                uow.events.append(create_authorization_audit_event(
+                    decision,
+                    command_id=command.command_id,
+                    command_type=type(command).__name__,
+                    allowed=True,
+                    aggregate_type="project",
+                ))
+                uow.events.append(Event(
+                    event_type=EventType.PROJECT_CREATED,
+                    aggregate_id=project.id,
+                    aggregate_type="project",
+                    organization_id=project.organization_id,
+                    actor_id=context.actor_id,
+                    correlation_id=command.command_id,
+                    metadata={
+                        "project_id": project.id,
+                        "project_fingerprint": project.fingerprint,
+                        "status": project.status.value,
+                    },
+                ))
+                uow.events.append(Event(
+                    event_type=EventType.PROJECT_CONTINUED,
+                    aggregate_id=project.id,
+                    aggregate_type="project",
+                    organization_id=project.organization_id,
+                    actor_id=context.actor_id,
+                    correlation_id=command.command_id,
+                    metadata={
+                        "project_id": project.id,
+                        "continued_from_project_id": source.id,
+                        "source_completion_record_id": source.completion_record_id,
+                        "source_revision": source.revision,
+                    },
+                ))
+                uow.commands.add(
+                    command_id=command.command_id,
+                    organization_id=context.organization_id,
+                    actor_id=context.actor_id,
+                    command_type=type(command).__name__,
+                    payload=command.payload,
+                    aggregate_id=project.id,
+                    created_at=now,
+                )
+                return ProjectCommandResult(command.command_id, project, False)
 
     def _execute(self, context: "OrganizationContext", command: LifecycleCommand, capability: str) -> ProjectCommandResult:
         self.runtime._require_ready()
@@ -215,8 +379,6 @@ class ProjectLifecycleRuntime:
                         completed_by=context.actor_id,
                         completed_at=now,
                     )
-                    # Re-resolve authoritative project state after evidence lookup and
-                    # before attaching proof. OCC update below is the final race fence.
                     current = uow.projects.get_for_organization(command.project_id, context.organization_id)
                     if current is None or current.revision != command.expected_revision or current.active_plan_request_fingerprint != command.expected_plan_request_fingerprint:
                         raise ProjectContractError("project changed during completion verification")
@@ -282,6 +444,7 @@ __all__ = [
     "ArchiveProjectCommand",
     "CancelProjectCommand",
     "CompleteProjectCommand",
+    "ContinueProjectCommand",
     "ProjectLifecycleRuntime",
     "RequestProjectCompletionCommand",
 ]
