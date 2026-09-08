@@ -2,13 +2,20 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from domain.capability import Capability, CapabilityLevel
-from domain.work_queue import ImmutableVersionRef, WorkUnit, WorkUnitContractError, WorkUnitState
+from domain.work_queue import (
+    ImmutableVersionRef,
+    WorkerLease,
+    WorkUnit,
+    WorkUnitContractError,
+    WorkUnitState,
+)
 from infrastructure.persistence.models import Base
 from infrastructure.persistence.work_queue_repository import WorkUnitRepository
 from infrastructure.runtime.work_queue_scope import (
@@ -200,6 +207,61 @@ def test_inflight_p1_is_cooperatively_fenced_when_p2_supersedes(session_factory)
     assert stored.claimed_by is None
     assert stored.lease is None
     assert stored.previous_worker == "worker-p1"
+
+
+def test_scoped_recovery_never_steals_expired_work_from_other_plan(session_factory) -> None:
+    now = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
+
+    def validator(organization_id: str, project_id: str, plan: str) -> bool:
+        return organization_id == ORG and project_id == PROJECT and plan == P1
+
+    def expired(work_unit_id: str, plan: str, offset: int) -> WorkUnit:
+        claimed_at = now - timedelta(minutes=2)
+        unit = WorkUnit(
+            id=work_unit_id,
+            title=work_unit_id,
+            required_capability=capability(),
+            state=WorkUnitState.CLAIMED,
+            claimed_by=f"old-{work_unit_id}",
+            lease=WorkerLease(
+                lease_id=f"lease-{work_unit_id}",
+                worker_id=f"old-{work_unit_id}",
+                claimed_at=claimed_at,
+                expires_at=now - timedelta(minutes=1),
+            ),
+            created_at=now - timedelta(minutes=3),
+            updated_at=now - timedelta(seconds=offset),
+        )
+        return bind_work_unit_scope(
+            unit,
+            project_id=PROJECT,
+            plan_request_fingerprint=plan,
+        )
+
+    # The stale P2 row sorts first. A tenant-global recovery implementation
+    # would incorrectly mutate it before noticing the scope mismatch.
+    with session_factory() as session:
+        repository = WorkUnitRepository(session)
+        repository.add(ORG, expired("p2-expired", P2, 20))
+        repository.add(ORG, expired("p1-expired", P1, 10))
+        session.commit()
+
+    service = ProjectScopedWorkQueueLeaseService(
+        session_factory,
+        organization_id=ORG,
+        project_id=PROJECT,
+        plan_request_fingerprint=P1,
+        scope_validator=validator,
+        clock=lambda: now,
+    )
+    recovered = service.recover_next_expired("worker-new", [capability()])
+    assert recovered is not None and recovered.id == "p1-expired"
+    assert recovered.claimed_by == "worker-new"
+
+    untouched = get_unit(session_factory, "p2-expired")
+    assert untouched.claimed_by == "old-p2-expired"
+    assert untouched.lease is not None
+    assert untouched.lease.lease_id == "lease-p2-expired"
 
 
 def test_scope_validator_failure_is_fail_closed(session_factory) -> None:
