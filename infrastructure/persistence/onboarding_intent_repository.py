@@ -27,6 +27,7 @@ class OnboardingIntentRepository:
             OnboardingIntentModel(
                 intent_id=intent.intent_id,
                 organization_id=intent.organization_id,
+                project_id=intent.project_id,
                 source_repository=intent.source_repository,
                 purpose=intent.purpose.value,
                 rationale=intent.rationale,
@@ -60,14 +61,19 @@ class OnboardingIntentRepository:
         self,
         source_repository: str,
         organization_id: str,
+        *,
+        project_id: str | None = None,
     ) -> OnboardingIntent | None:
-        row = self.session.execute(
-            select(OnboardingIntentModel).where(
-                OnboardingIntentModel.organization_id == organization_id,
-                OnboardingIntentModel.source_repository == source_repository,
-                OnboardingIntentModel.supersedes_intent_id.is_(None),
-            )
-        ).scalar_one_or_none()
+        query = select(OnboardingIntentModel).where(
+            OnboardingIntentModel.organization_id == organization_id,
+            OnboardingIntentModel.source_repository == source_repository,
+            OnboardingIntentModel.supersedes_intent_id.is_(None),
+        )
+        if project_id is None:
+            query = query.where(OnboardingIntentModel.project_id.is_(None))
+        else:
+            query = query.where(OnboardingIntentModel.project_id == project_id)
+        row = self.session.execute(query).scalar_one_or_none()
         return self._restore(row) if row is not None else None
 
     def get_successor(
@@ -87,8 +93,6 @@ class OnboardingIntentRepository:
     def _restore(row: OnboardingIntentModel) -> OnboardingIntent:
         declared_at = row.declared_at
         if declared_at.tzinfo is None or declared_at.utcoffset() is None:
-            # SQLite drops timezone offsets from DateTime values. Database writes
-            # are canonical UTC, so restore that transport detail explicitly.
             declared_at = declared_at.replace(tzinfo=timezone.utc)
         else:
             declared_at = declared_at.astimezone(timezone.utc)
@@ -107,6 +111,7 @@ class OnboardingIntentRepository:
                 organization_id=row.organization_id,
                 target_stack=target_stack,
                 supersedes_intent_id=row.supersedes_intent_id,
+                project_id=row.project_id,
                 declared_at=declared_at,
             )
         except Exception as exc:

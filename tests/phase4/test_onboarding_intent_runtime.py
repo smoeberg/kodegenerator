@@ -11,6 +11,7 @@ from domain.authority import RoleAssignment, RoleDefinition
 from domain.event import EventType
 from domain.organization import Organization
 from domain.principal import Principal
+from domain.project import Project, ProjectIntent
 from generation.project_spec import ProjectDefinition
 from infrastructure.persistence.command_repository import CommandRepository
 from infrastructure.persistence.models import CommandExecutionModel, EventModel
@@ -29,6 +30,7 @@ from runtime.onboarding_runtime import (
 
 
 REPOSITORY = "repository:external/example"
+PROJECT_IDS = {"org-a": "project-a", "org-b": "project-b"}
 
 
 def _runtime(tmp_path: Path) -> DORRuntime:
@@ -40,6 +42,18 @@ def _runtime(tmp_path: Path) -> DORRuntime:
             Actor(id=actor_id, type=ActorType.HUMAN, identity=actor_id),
             organization_id,
         )
+        with runtime.database.session(organization_id) as session:
+            with UnitOfWork(session) as uow:
+                uow.projects.add(
+                    Project.create(
+                        project_id=PROJECT_IDS[organization_id],
+                        organization_id=organization_id,
+                        name=f"Onboarding Test Project {organization_id}",
+                        description="Project fixture for onboarding runtime tests.",
+                        intent=ProjectIntent(goal="Exercise governed onboarding."),
+                        actor_id=actor_id,
+                    )
+                )
     return runtime
 
 
@@ -98,11 +112,13 @@ def _command(
     command_id: str = "onboarding-declare-1",
     *,
     organization_id: str = "org-a",
+    project_id: str | None = None,
     draft: OnboardingIntentDraft | None = None,
 ) -> DeclareOnboardingIntentCommand:
     return DeclareOnboardingIntentCommand(
         command_id=command_id,
         organization_id=organization_id,
+        project_id=project_id or PROJECT_IDS[organization_id],
         draft=draft or _draft(),
     )
 
@@ -148,6 +164,7 @@ def test_external_role_grant_records_trusted_actor_org_and_atomic_evidence(
     assert result.replayed is False
     assert result.intent.declared_by == "actor-a"
     assert result.intent.organization_id == "org-a"
+    assert result.intent.project_id == PROJECT_IDS["org-a"]
     assert result.intent.source_repository == REPOSITORY
     assert result.intent.purpose is OnboardingPurpose.EXTEND
     assert _counts(runtime, command.command_id) == (1, 1, 2)

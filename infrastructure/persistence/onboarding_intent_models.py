@@ -26,6 +26,7 @@ class OnboardingIntentModel(Base):
 
     intent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    project_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     source_repository: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     purpose: Mapped[str] = mapped_column(String(32), nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
@@ -52,16 +53,38 @@ class OnboardingIntentModel(Base):
             name="fk_onboarding_intent_actor_org",
         ),
         ForeignKeyConstraint(
+            ["organization_id", "project_id"],
+            ["projects.organization_id", "projects.id"],
+            name="fk_onboarding_intent_project_org",
+        ),
+        ForeignKeyConstraint(
             ["organization_id", "supersedes_intent_id"],
             ["onboarding_intents.organization_id", "onboarding_intents.intent_id"],
             name="fk_onboarding_intent_supersedes_org",
         ),
         Index(
-            "uq_onboarding_intent_root_repository",
+            "uq_onboarding_intent_root_project_repository",
+            "organization_id",
+            "project_id",
+            "source_repository",
+            unique=True,
+            postgresql_where=text(
+                "supersedes_intent_id IS NULL AND project_id IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "supersedes_intent_id IS NULL AND project_id IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_onboarding_intent_legacy_root_repository",
             "organization_id",
             "source_repository",
             unique=True,
-            postgresql_where=text("supersedes_intent_id IS NULL"),
-            sqlite_where=text("supersedes_intent_id IS NULL"),
+            postgresql_where=text(
+                "supersedes_intent_id IS NULL AND project_id IS NULL"
+            ),
+            sqlite_where=text(
+                "supersedes_intent_id IS NULL AND project_id IS NULL"
+            ),
         ),
     )
