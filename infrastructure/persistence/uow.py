@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from .authority_repositories import AuthorityRepository
 from .command_repository import CommandRepository
 from .onboarding_intent_repository import OnboardingIntentRepository
+from .project_scope_repository import ProjectRepository
 from .repositories import (
     ActorRepository,
     EventStore,
     OrganizationRepository,
-    ProjectRepository,
     WorkflowRepository,
 )
 from .task_execution_repository import TaskExecutionRepository
