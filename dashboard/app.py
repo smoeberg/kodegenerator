@@ -6,6 +6,7 @@ state transitions are owned by the authenticated FastAPI API.
 from __future__ import annotations
 
 from typing import Any, Mapping
+from uuid import uuid4
 
 import streamlit as st
 
@@ -174,7 +175,8 @@ def overview(client: DORAPIClient, projects: list[dict[str, Any]], executions: l
             with b1:
                 if st.button("Åbn projekt →", type="primary", use_container_width=True):
                     st.session_state["selected_project_id"] = selected.get("project_id")
-                    st.switch_page("pages/03_Requirements_And_Plan.py")
+                    st.session_state["active_nav"] = "Projekter"
+                    st.rerun()
             with b2:
                 if st.button("Åbn execution", use_container_width=True):
                     st.session_state["selected_workflow_id"] = execution.get("workflow_id")
@@ -248,7 +250,7 @@ def projects(client: DORAPIClient, projects: list[dict[str, Any]]) -> None:
             st.warning("Organisation, navn og mål er påkrævet.")
             return
         try:
-            result = client.post("/api/v1/control-plane/projects", json={"organization_id": org, "name": name.strip(), "command_id": f"gui-{__import__('uuid').uuid4()}", "intent": {"goal": goal.strip(), "description": description.strip(), "priority": priority, "constraints": {}, "required_capabilities": []}})
+            result = client.post("/api/v1/control-plane/projects", json={"organization_id": org, "name": name.strip(), "command_id": f"gui-{uuid4()}", "intent": {"goal": goal.strip(), "description": description.strip(), "priority": priority, "constraints": {}, "required_capabilities": []}})
             project = result.get("project", result)
             st.session_state["selected_project_id"] = project.get("project_id")
             st.success("Projekt oprettet via Control Plane API.")
