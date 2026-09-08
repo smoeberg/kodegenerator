@@ -363,7 +363,7 @@ class ImplementationPatchExecutionRequest(BaseModel):
 class ImplementationPatchFileResponse(BaseModel):
     path: str
     exists: bool
-    sha256: str
+    sha256: Optional[str]
     byte_count: int
     mode: Optional[int]
 
