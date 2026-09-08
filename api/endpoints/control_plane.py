@@ -97,6 +97,25 @@ def _project_response(project: Project) -> ControlPlaneProjectResponse:
         active_scope_activated_by=project.active_scope_activated_by,
         active_scope_activated_at=project.active_scope_activated_at,
         active_scope_command_id=project.active_scope_command_id,
+        completion_requested_by=project.completion_requested_by,
+        completion_requested_at=project.completion_requested_at,
+        completion_request_command_id=project.completion_request_command_id,
+        completion_record_id=project.completion_record_id,
+        completed_by=project.completed_by,
+        completed_at=project.completed_at,
+        cancelled_by=project.cancelled_by,
+        cancelled_at=project.cancelled_at,
+        cancel_command_id=project.cancel_command_id,
+        cancellation_reason=project.cancellation_reason,
+        archived_by=project.archived_by,
+        archived_at=project.archived_at,
+        archive_command_id=project.archive_command_id,
+        archived_from_status=(
+            project.archived_from_status.value
+            if project.archived_from_status is not None
+            else None
+        ),
+        continued_from_project_id=project.continued_from_project_id,
         revision=project.revision,
     )
 
