@@ -63,7 +63,12 @@ class IdentityPrincipalModel(Base):
 
 
 class OrganizationMembershipModel(Base):
-    """Cross-tenant access index for authenticated control-plane principals."""
+    """Cross-tenant access index for authenticated control-plane principals.
+
+    This table is intentionally not protected by tenant RLS: callers must query
+    it by the authenticated username and then establish normal tenant context
+    before accessing tenant-owned runtime data.
+    """
 
     __tablename__ = "organization_memberships"
 
@@ -165,8 +170,8 @@ class ProjectModel(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_project_org_id"),
         ForeignKeyConstraint(
-            ["continued_from_project_id", "organization_id"],
-            ["projects.id", "projects.organization_id"],
+            ["organization_id", "continued_from_project_id"],
+            ["projects.organization_id", "projects.id"],
             name="fk_project_continuation_org",
         ),
     )
@@ -193,8 +198,8 @@ class ProjectCompletionRecordModel(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "project_id", name="uq_project_completion_org_project"),
         ForeignKeyConstraint(
-            ["project_id", "organization_id"],
-            ["projects.id", "projects.organization_id"],
+            ["organization_id", "project_id"],
+            ["projects.organization_id", "projects.id"],
             name="fk_project_completion_project_org",
         ),
     )
