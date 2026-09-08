@@ -7,8 +7,15 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
+from services.runtime_secrets import materialize_runtime_secrets
+
 
 def main() -> None:
+    # Docker healthchecks run as fresh container processes and therefore do not
+    # inherit environment values materialized inside PID 1 after startup.
+    # Re-materialize file-backed production secrets before probing DATABASE_URL.
+    materialize_runtime_secrets()
+
     command = Path("/proc/1/cmdline").read_bytes().replace(b"\x00", b" ")
     if b"services.worker_agent" not in command:
         raise RuntimeError("worker process is not PID 1")
