@@ -28,34 +28,22 @@ class OrganizationModel(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ActorModel(Base):
     __tablename__ = "actors"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), primary_key=True, nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True, nullable=False, index=True)
     actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
     identity: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("organization_id", "id", name="uq_actor_org_id"),
-    )
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_actor_org_id"),)
 
 
 class IdentityPrincipalModel(Base):
@@ -64,29 +52,18 @@ class IdentityPrincipalModel(Base):
     __tablename__ = "identity_principals"
 
     username: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
+    organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
     disabled: Mapped[bool] = mapped_column(nullable=False, default=False)
     credential_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class OrganizationMembershipModel(Base):
-    """Cross-tenant access index for authenticated control-plane principals.
-
-    This table is intentionally not protected by tenant RLS: callers must query
-    it by the authenticated username and then establish normal tenant context
-    before accessing tenant-owned runtime data.
-    """
+    """Cross-tenant access index for authenticated control-plane principals."""
 
     __tablename__ = "organization_memberships"
 
@@ -101,17 +78,13 @@ class RoleDefinitionModel(Base):
     __tablename__ = "role_definitions"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
 
-    __table_args__ = (
-        UniqueConstraint("organization_id", "id", name="uq_role_definition_org_id"),
-    )
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_role_definition_org_id"),)
 
 
 class RoleAssignmentModel(Base):
@@ -121,27 +94,12 @@ class RoleAssignmentModel(Base):
     organization_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     role_definition_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "actor_id",
-            "organization_id",
-            "role_definition_id",
-            name="uq_role_assignment_actor_org_role",
-        ),
-        ForeignKeyConstraint(
-            ["actor_id", "organization_id"],
-            ["actors.id", "actors.organization_id"],
-            name="fk_role_assignment_actor_org",
-        ),
-        ForeignKeyConstraint(
-            ["organization_id", "role_definition_id"],
-            ["role_definitions.organization_id", "role_definitions.id"],
-            name="fk_role_assignment_role_org",
-        ),
+        UniqueConstraint("actor_id", "organization_id", "role_definition_id", name="uq_role_assignment_actor_org_role"),
+        ForeignKeyConstraint(["actor_id", "organization_id"], ["actors.id", "actors.organization_id"], name="fk_role_assignment_actor_org"),
+        ForeignKeyConstraint(["organization_id", "role_definition_id"], ["role_definitions.organization_id", "role_definitions.id"], name="fk_role_assignment_role_org"),
     )
 
 
@@ -149,26 +107,16 @@ class WorkflowModel(Base):
     __tablename__ = "workflows"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     current_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    definition: Mapped[dict[str, Any]] = mapped_column(
-        JSON, nullable=False, default=dict
-    )
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSON, nullable=False, default=dict
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    definition: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -178,9 +126,7 @@ class ProjectModel(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -190,23 +136,67 @@ class ProjectModel(Base):
     project_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     launched_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    launch_request_fingerprint: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    launch_request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     launch_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    launched_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    active_plan_request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    active_scope_activated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    active_scope_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    active_scope_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completion_requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completion_request_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completion_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    completed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    archived_from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    continued_from_project_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_project_org_id"),
+        ForeignKeyConstraint(
+            ["continued_from_project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_project_continuation_org",
+        ),
+    )
+
+
+class ProjectCompletionRecordModel(Base):
+    """Immutable content-addressed proof for one exact completed project."""
+
+    __tablename__ = "project_completion_records"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    final_project_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    onboarding_intent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    plan_request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    repository_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_certificate_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    traceability_manifest_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    integration_evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    completed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "project_id", name="uq_project_completion_org_project"),
+        ForeignKeyConstraint(
+            ["project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_project_completion_project_org",
+        ),
     )
 
 
@@ -215,36 +205,19 @@ class EventModel(Base):
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    aggregate_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
+    aggregate_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     aggregate_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    organization_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
+    organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     actor_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
-    correlation_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     causation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    event_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSON, nullable=False, default=dict
-    )
-    schema_version: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="1.0"
-    )
+    event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.0")
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "aggregate_id",
-            "organization_id",
-            "sequence",
-            name="uq_event_aggregate_org_sequence",
-        ),
+        UniqueConstraint("aggregate_id", "organization_id", "sequence", name="uq_event_aggregate_org_sequence"),
     )
 
 
@@ -252,16 +225,12 @@ class CommandExecutionModel(Base):
     __tablename__ = "command_executions"
 
     command_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
     command_type: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     aggregate_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class TaskExecutionModel(Base):
@@ -270,9 +239,7 @@ class TaskExecutionModel(Base):
     __tablename__ = "task_executions"
 
     execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     task_type: Mapped[str] = mapped_column(String(128), nullable=False)
     capability_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -282,21 +249,11 @@ class TaskExecutionModel(Base):
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    resource_organization_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    resource_organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint(
-            "execution_id", "organization_id", name="uq_task_execution_org_id"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("execution_id", "organization_id", name="uq_task_execution_org_id"),)
 
 
 class PipelineRuntimeStateModel(Base):
@@ -305,14 +262,10 @@ class PipelineRuntimeStateModel(Base):
     __tablename__ = "pipeline_runtime_states"
 
     store_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(
-        String(128), primary_key=True, index=True
-    )
+    organization_id: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class GovernedLLMCallModel(Base):
@@ -325,18 +278,12 @@ class GovernedLLMCallModel(Base):
     prompt_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     fencing_token: Mapped[str] = mapped_column(String(64), nullable=False)
-    lease_expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     value: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_class: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class TerminalSideEffectModel(Base):
@@ -350,14 +297,8 @@ class TerminalSideEffectModel(Base):
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     fencing_token: Mapped[str] = mapped_column(String(64), nullable=False)
-    lease_expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_class: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
