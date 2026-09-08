@@ -10,6 +10,7 @@ from sqlalchemy import select
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from api.models import (
+    ControlPlaneActivateProjectScopeRequest,
     ControlPlaneCreateProjectRequest,
     ControlPlaneIntentResponse,
     ControlPlaneLaunchProjectRequest,
@@ -37,6 +38,11 @@ from runtime.project_runtime import (
     CreateProjectCommand,
     LaunchProjectCommand,
     ProjectNotFoundError,
+)
+from runtime.project_scope_runtime import (
+    ActivateProjectScopeCommand,
+    ProjectScopeNotFoundError,
+    ProjectScopeRuntime,
 )
 
 router = APIRouter(
@@ -87,6 +93,10 @@ def _project_response(project: Project) -> ControlPlaneProjectResponse:
         launched_at=project.launched_at,
         launch_request_fingerprint=project.launch_request_fingerprint,
         launch_command_id=project.launch_command_id,
+        active_plan_request_fingerprint=project.active_plan_request_fingerprint,
+        active_scope_activated_by=project.active_scope_activated_by,
+        active_scope_activated_at=project.active_scope_activated_at,
+        active_scope_command_id=project.active_scope_command_id,
         revision=project.revision,
     )
 
@@ -140,12 +150,6 @@ def list_projects(
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ) -> dict[str, object]:
-    """Return the selected authenticated organization's readable project catalog.
-
-    Explicit organization selection is validated through the canonical runtime
-    context boundary. Omitting it preserves the identity principal's legacy
-    default organization for existing API clients.
-    """
     selected_organization_id = organization_id or current_user.organization_id
     if not selected_organization_id:
         return {"organization_id": None, "projects": []}
@@ -175,10 +179,7 @@ def list_projects(
             ) from exc
         projects.append(_project_response(project))
 
-    return {
-        "organization_id": selected_organization_id,
-        "projects": projects,
-    }
+    return {"organization_id": selected_organization_id, "projects": projects}
 
 
 @router.post(
@@ -191,7 +192,6 @@ def create_project(
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ) -> ControlPlaneProjectCommandResponse:
-    """Create an immutable project intent through authority and audit."""
     context = _context(dor, current_user, request.organization_id)
     try:
         result = dor.projects.create_project(
@@ -213,15 +213,9 @@ def create_project(
     except CommandAuthorizationError as exc:
         raise _authorization_error(exc) from exc
     except CommandConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"error": "command_conflict"},
-        ) from exc
+        raise HTTPException(status_code=409, detail={"error": "command_conflict"}) from exc
     except ProjectContractError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error": "invalid_project_contract", "reason": str(exc)},
-        ) from exc
+        raise HTTPException(status_code=422, detail={"error": "invalid_project_contract", "reason": str(exc)}) from exc
     return ControlPlaneProjectCommandResponse(
         command_id=result.command_id,
         replayed=result.replayed,
@@ -240,7 +234,6 @@ def launch_project(
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ) -> ControlPlaneProjectCommandResponse:
-    """Request launch of the exact project snapshot; do not self-start execution."""
     context = _context(dor, current_user, request.organization_id)
     try:
         result = dor.projects.launch_project(
@@ -249,31 +242,17 @@ def launch_project(
                 command_id=request.command_id,
                 organization_id=request.organization_id,
                 project_id=project_id,
-                expected_project_fingerprint=(request.expected_project_fingerprint),
+                expected_project_fingerprint=request.expected_project_fingerprint,
             ),
         )
     except CommandAuthorizationError as exc:
         raise _authorization_error(exc) from exc
     except ProjectNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "project_not_found"},
-        ) from exc
+        raise HTTPException(status_code=404, detail={"error": "project_not_found"}) from exc
     except ProjectContractError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error": "invalid_project_contract", "reason": str(exc)},
-        ) from exc
-    except (
-        CommandConflictError,
-        ProjectFingerprintError,
-        ProjectStateError,
-        RepositoryError,
-    ) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"error": "project_launch_conflict", "reason": str(exc)},
-        ) from exc
+        raise HTTPException(status_code=422, detail={"error": "invalid_project_contract", "reason": str(exc)}) from exc
+    except (CommandConflictError, ProjectFingerprintError, ProjectStateError, RepositoryError) as exc:
+        raise HTTPException(status_code=409, detail={"error": "project_launch_conflict", "reason": str(exc)}) from exc
     return ControlPlaneProjectCommandResponse(
         command_id=result.command_id,
         replayed=result.replayed,
@@ -281,10 +260,46 @@ def launch_project(
     )
 
 
-@router.get(
-    "/{project_id}",
-    response_model=ControlPlaneProjectResponse,
+@router.post(
+    "/{project_id}/scope/activate",
+    response_model=ControlPlaneProjectCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
+def activate_project_scope(
+    project_id: str,
+    request: ControlPlaneActivateProjectScopeRequest,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> ControlPlaneProjectCommandResponse:
+    """Atomically make one exact plan fingerprint the project's executable scope."""
+    context = _context(dor, current_user, request.organization_id)
+    try:
+        result = ProjectScopeRuntime(dor).activate(
+            context,
+            ActivateProjectScopeCommand(
+                command_id=request.command_id,
+                organization_id=request.organization_id,
+                project_id=project_id,
+                plan_request_fingerprint=request.plan_request_fingerprint,
+                expected_revision=request.expected_revision,
+            ),
+        )
+    except CommandAuthorizationError as exc:
+        raise _authorization_error(exc) from exc
+    except ProjectScopeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "project_not_found"}) from exc
+    except ProjectContractError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_project_scope", "reason": str(exc)}) from exc
+    except (CommandConflictError, ProjectStateError, RepositoryError) as exc:
+        raise HTTPException(status_code=409, detail={"error": "project_scope_conflict", "reason": str(exc)}) from exc
+    return ControlPlaneProjectCommandResponse(
+        command_id=result.command_id,
+        replayed=result.replayed,
+        project=_project_response(result.project),
+    )
+
+
+@router.get("/{project_id}", response_model=ControlPlaneProjectResponse)
 def get_project(
     project_id: str,
     organization_id: str = Query(..., min_length=1, max_length=128),
@@ -297,17 +312,11 @@ def get_project(
     except CommandAuthorizationError as exc:
         raise _authorization_error(exc) from exc
     except (ProjectNotFoundError, RepositoryError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "project_not_found"},
-        ) from exc
+        raise HTTPException(status_code=404, detail={"error": "project_not_found"}) from exc
     return _project_response(project)
 
 
-@router.get(
-    "/{project_id}/events",
-    response_model=ControlPlaneProjectEventsResponse,
-)
+@router.get("/{project_id}/events", response_model=ControlPlaneProjectEventsResponse)
 def get_project_events(
     project_id: str,
     organization_id: str = Query(..., min_length=1, max_length=128),
@@ -329,10 +338,7 @@ def get_project_events(
     except CommandAuthorizationError as exc:
         raise _authorization_error(exc) from exc
     except (ProjectNotFoundError, RepositoryError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "project_not_found"},
-        ) from exc
+        raise HTTPException(status_code=404, detail={"error": "project_not_found"}) from exc
     next_sequence = events[-1].sequence if events else after_sequence
     return ControlPlaneProjectEventsResponse(
         project_id=project_id,
