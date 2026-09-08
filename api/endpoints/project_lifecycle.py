@@ -9,7 +9,13 @@ from pydantic import BaseModel, Field
 from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from api.endpoints.control_plane import _context, _project_response
-from domain.project import ProjectContractError, ProjectFingerprintError, ProjectStateError
+from api.models import ControlPlaneIntentInput
+from domain.project import (
+    ProjectContractError,
+    ProjectFingerprintError,
+    ProjectIntent,
+    ProjectStateError,
+)
 from infrastructure.persistence.repositories import RepositoryError
 from runtime.commands import CommandConflictError
 from runtime.core import CommandAuthorizationError, DORRuntime
@@ -21,6 +27,7 @@ from runtime.project_lifecycle_runtime import (
     ArchiveProjectCommand,
     CancelProjectCommand,
     CompleteProjectCommand,
+    ContinueProjectCommand,
     ProjectLifecycleRuntime,
     RequestProjectCompletionCommand,
 )
@@ -64,11 +71,55 @@ class ArchiveProjectBody(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class ContinueProjectBody(BaseModel):
+    command_id: str = Field(min_length=1, max_length=128)
+    organization_id: str = Field(min_length=1, max_length=128)
+    expected_source_revision: int = Field(ge=0)
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=20_000)
+    intent: ControlPlaneIntentInput
+
+
 def _result_payload(result) -> dict[str, Any]:
+    project = result.project
+    public = _project_response(project).model_dump(mode="json")
+    public.update(
+        {
+            "completion_requested_by": project.completion_requested_by,
+            "completion_requested_at": (
+                project.completion_requested_at.isoformat()
+                if project.completion_requested_at is not None
+                else None
+            ),
+            "completion_request_command_id": project.completion_request_command_id,
+            "completion_record_id": project.completion_record_id,
+            "completed_by": project.completed_by,
+            "completed_at": (
+                project.completed_at.isoformat() if project.completed_at is not None else None
+            ),
+            "cancelled_by": project.cancelled_by,
+            "cancelled_at": (
+                project.cancelled_at.isoformat() if project.cancelled_at is not None else None
+            ),
+            "cancel_command_id": project.cancel_command_id,
+            "cancellation_reason": project.cancellation_reason,
+            "archived_by": project.archived_by,
+            "archived_at": (
+                project.archived_at.isoformat() if project.archived_at is not None else None
+            ),
+            "archive_command_id": project.archive_command_id,
+            "archived_from_status": (
+                project.archived_from_status.value
+                if project.archived_from_status is not None
+                else None
+            ),
+            "continued_from_project_id": project.continued_from_project_id,
+        }
+    )
     return {
         "command_id": result.command_id,
         "replayed": result.replayed,
-        "project": _project_response(result.project).model_dump(mode="json"),
+        "project": public,
     }
 
 
@@ -206,6 +257,39 @@ def archive_project(
                 organization_id=request.organization_id,
                 project_id=project_id,
                 expected_revision=request.expected_revision,
+            ),
+        )
+    except Exception as exc:
+        _raise_lifecycle_error(exc)
+        raise
+    return _result_payload(result)
+
+
+@router.post("/{project_id}/continue", status_code=status.HTTP_201_CREATED)
+def continue_project(
+    project_id: str,
+    request: ContinueProjectBody,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> dict[str, Any]:
+    context = _context(dor, current_user, request.organization_id)
+    try:
+        result = ProjectLifecycleRuntime(dor).continue_project(
+            context,
+            ContinueProjectCommand(
+                command_id=request.command_id,
+                organization_id=request.organization_id,
+                source_project_id=project_id,
+                expected_source_revision=request.expected_source_revision,
+                name=request.name,
+                description=request.description,
+                intent=ProjectIntent(
+                    goal=request.intent.goal,
+                    description=request.intent.description,
+                    priority=request.intent.priority,
+                    constraints=request.intent.constraints,
+                    required_capabilities=tuple(request.intent.required_capabilities),
+                ),
             ),
         )
     except Exception as exc:
