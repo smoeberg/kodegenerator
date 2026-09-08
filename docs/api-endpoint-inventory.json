@@ -1,5 +1,5 @@
 {
-  "count": 89,
+  "count": 94,
   "endpoints": [
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate_selection","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","tags":["bot-evidence"]},
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate","path":"/api/v1/bot-evidence/candidates/{candidate_id}","tags":["bot-evidence"]},
@@ -39,6 +39,11 @@
     {"method":"GET","module":"api.endpoints.control_plane","name":"list_projects","path":"/api/v1/control-plane/projects","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.control_plane","name":"create_project","path":"/api/v1/control-plane/projects","tags":["control-plane-v1"]},
     {"method":"GET","module":"api.endpoints.control_plane","name":"get_project","path":"/api/v1/control-plane/projects/{project_id}","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.project_lifecycle","name":"archive_project","path":"/api/v1/control-plane/projects/{project_id}/archive","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.project_lifecycle","name":"cancel_project","path":"/api/v1/control-plane/projects/{project_id}/cancel","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.project_lifecycle","name":"complete_project","path":"/api/v1/control-plane/projects/{project_id}/completion/complete","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.project_lifecycle","name":"request_project_completion","path":"/api/v1/control-plane/projects/{project_id}/completion/request","tags":["control-plane-v1"]},
+    {"method":"POST","module":"api.endpoints.project_lifecycle","name":"continue_project","path":"/api/v1/control-plane/projects/{project_id}/continue","tags":["control-plane-v1"]},
     {"method":"GET","module":"api.endpoints.control_plane","name":"get_project_events","path":"/api/v1/control-plane/projects/{project_id}/events","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.control_plane","name":"launch_project","path":"/api/v1/control-plane/projects/{project_id}/launch","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.control_plane","name":"activate_project_scope","path":"/api/v1/control-plane/projects/{project_id}/scope/activate","tags":["control-plane-v1"]},
