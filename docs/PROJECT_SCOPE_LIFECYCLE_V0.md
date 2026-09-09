@@ -1,6 +1,6 @@
 # Project Scope & Lifecycle v0
 
-Status: IMPLEMENTED THROUGH PC-101 / GUI-101 NEXT
+Status: IMPLEMENTED THROUGH GUI-101
 
 ## Purpose
 
@@ -145,9 +145,9 @@ Completion produces one immutable content-addressed record binding at least:
 
 ## Delivery plan
 
-SC-101A, SC-101B, SC-101C, and PC-101 are implemented on `main`. GUI-101 is the
-next lifecycle work item and remains subject to Development Governance v0 before
-semantic implementation.
+SC-101A, SC-101B, SC-101C, PC-101, and GUI-101 are implemented on `main`.
+SC-102 and SC-103 remain explicitly deferred and are not part of the completed
+PLSC-100 delivery scope.
 
 ### SC-101A — Project identity bridge
 
@@ -173,9 +173,10 @@ completion-pending/completed/cancelled/archive and immutable completion evidence
 
 ### GUI-101
 
-Backend preconditions are green. GUI-101 remains gated by Development Governance
-v0 solution approval before semantic coding. GUI must render backend truth and
-never become an authority boundary.
+Implemented via PR #255. Adds a dedicated lifecycle command surface over
+canonical backend project state, binds mutations to the displayed server-owned
+snapshot, surfaces fail-closed authorization/conflict responses, and preserves
+the rule that the GUI never becomes an authority boundary.
 
 ### SC-102 / SC-103
 
