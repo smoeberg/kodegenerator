@@ -1,8 +1,7 @@
 """DOR / Guide — canonical Streamlit shell.
 
-This is the single GUI entrypoint. User-facing work is organized around Overblik,
-Mit arbejde, Sager and Søg. Technical execution/evidence tools remain available
-contextually inside case/search views while backend APIs retain authority.
+The shell is situation-first: user work is organized around Overblik, Mit arbejde,
+Sager and Søg. Backend APIs remain authoritative for state and actions.
 """
 from __future__ import annotations
 
@@ -39,37 +38,110 @@ def _css() -> None:
     st.markdown(
         """
         <style>
-        :root { --ink:#17333c; --muted:#71878b; --nav:#15343d;
-                --paper:#f7f5ee; --card:#fffdf8; --line:#dbe2dc;
-                --teal:#2d8877; --coral:#df7867; }
+        :root {
+          --ink:#15343d; --muted:#71878b; --nav:#143943;
+          --paper:#f8f6ef; --card:#fffefa; --line:#dde5df;
+          --teal:#2d8877; --teal-soft:#e9f3ef; --coral:#df7867;
+          --coral-soft:#fff0eb; --shadow:0 10px 30px rgba(23,51,60,.05);
+        }
         .stApp { background:var(--paper); color:var(--ink); }
         [data-testid="stHeader"] { background:transparent; }
         [data-testid="stSidebar"] { background:var(--nav); }
         [data-testid="stSidebar"] * { color:#eef5f2 !important; }
-        .block-container { max-width:1240px; padding-top:2.5rem; padding-bottom:4rem; }
-        .eyebrow { color:var(--muted); font-size:.68rem; letter-spacing:.15em;
-                   text-transform:uppercase; font-weight:800; }
-        .subtitle { color:var(--muted); margin-top:-.35rem; margin-bottom:1.35rem; }
-        .card { background:var(--card); border:1px solid var(--line);
-                border-radius:18px; padding:1.2rem 1.25rem; }
-        .metric { min-height:112px; }
-        .metric-label { color:var(--muted); font-size:.73rem; font-weight:750; }
-        .metric-value { color:var(--ink); font-size:1.8rem; font-weight:800; margin:.45rem 0 .15rem; }
-        .metric-foot { color:#8a999b; font-size:.7rem; }
-        .attention { background:#eef5f0; border-radius:14px; padding:1rem 1.1rem; }
-        .warning { background:#fff1ec; border:1px solid #f0d2ca; border-radius:14px; padding:1rem 1.1rem; }
-        .status-pill { display:inline-block; background:#f5dfd9; color:#a95748;
-                       border-radius:999px; padding:.32rem .65rem; font-size:.68rem; font-weight:800; }
-        .lifecycle { display:grid; grid-template-columns:repeat(6,1fr); gap:.4rem; margin:1.2rem 0 1rem; }
-        .life { text-align:center; color:var(--muted); font-size:.7rem; font-weight:750; }
-        .life-dot { width:30px; height:30px; margin:0 auto .45rem; border-radius:50%;
-                     border:1px solid #cddbd6; display:flex; align-items:center;
-                     justify-content:center; background:#f8faf6; }
-        .life.done .life-dot { background:var(--teal); border-color:var(--teal); color:#fff; }
-        .life.current .life-dot { background:#f9e3de; border:2px solid var(--coral); color:var(--ink); }
-        .nav-brand { padding:.5rem 0 1.2rem; font-size:1.05rem; font-weight:800; }
-        .nav-section { color:#9eb5b8 !important; font-size:.62rem; letter-spacing:.14em;
-                       text-transform:uppercase; margin:.9rem 0 .35rem; }
+        .block-container {
+          max-width:1180px; padding-top:2.7rem; padding-bottom:5rem;
+        }
+        h1 { letter-spacing:-.035em; margin-bottom:.35rem !important; }
+        h2, h3 { letter-spacing:-.02em; }
+        .eyebrow, .section-label {
+          color:var(--muted); font-size:.66rem; letter-spacing:.16em;
+          text-transform:uppercase; font-weight:800;
+        }
+        .section-label { margin:1.25rem 0 .55rem; }
+        .subtitle {
+          color:var(--muted); max-width:780px; margin-top:-.15rem;
+          margin-bottom:1.55rem; font-size:1.02rem;
+        }
+        .hero-question {
+          font-size:1.55rem; font-weight:760; margin:.55rem 0 .2rem;
+          letter-spacing:-.025em;
+        }
+        .card, div[data-testid="stVerticalBlockBorderWrapper"] {
+          background:var(--card);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+          border-color:var(--line) !important;
+          border-radius:20px !important;
+          box-shadow:var(--shadow);
+        }
+        .attention {
+          background:var(--teal-soft); border:1px solid #d3e7df;
+          border-radius:18px; padding:1.15rem 1.2rem;
+        }
+        .attention-kicker {
+          color:#5f7f77; font-size:.62rem; letter-spacing:.13em;
+          font-weight:800; margin-bottom:.4rem;
+        }
+        .attention-title {
+          color:var(--ink); font-size:1.22rem; line-height:1.25;
+          font-weight:800; margin-bottom:.35rem;
+        }
+        .attention-copy { color:#526b70; line-height:1.5; }
+        .next-action {
+          margin-top:.65rem; border-left:4px solid var(--teal);
+          padding:.65rem .9rem; background:#fff;
+          border-radius:0 12px 12px 0;
+        }
+        .next-action-label {
+          font-size:1.03rem; font-weight:800; color:var(--ink);
+        }
+        .next-action-why {
+          color:var(--muted); font-size:.78rem; margin-top:.2rem;
+        }
+        .status-pill {
+          display:inline-block; background:var(--coral-soft); color:#9b5649;
+          border-radius:999px; padding:.32rem .65rem; font-size:.66rem;
+          font-weight:800; margin-bottom:.55rem;
+        }
+        .quiet-pill { background:var(--teal-soft); color:#397060; }
+        .lifecycle {
+          display:grid; grid-template-columns:repeat(6,1fr); gap:.45rem;
+          margin:1rem 0 1.35rem;
+        }
+        .life {
+          text-align:center; color:var(--muted); font-size:.68rem;
+          font-weight:750; line-height:1.25;
+        }
+        .life-dot {
+          width:31px; height:31px; margin:0 auto .45rem; border-radius:50%;
+          border:1px solid #ccd9d4; display:flex; align-items:center;
+          justify-content:center; background:#fbfcf8;
+        }
+        .life.done .life-dot {
+          background:var(--teal); border-color:var(--teal); color:#fff;
+        }
+        .life.current .life-dot {
+          background:var(--coral-soft); border:2px solid var(--coral);
+          color:var(--ink);
+        }
+        .nav-brand {
+          padding:.6rem 0 1.25rem; font-size:1.05rem; font-weight:800;
+        }
+        .nav-section {
+          color:#9eb5b8 !important; font-size:.61rem; letter-spacing:.14em;
+          text-transform:uppercase; margin:1rem 0 .35rem;
+        }
+        div[data-testid="stMetric"] {
+          background:transparent; border:0; padding:.35rem 0;
+        }
+        div[data-testid="stMetricValue"] { font-size:1.45rem; }
+        div[data-testid="stAlert"] { border-radius:14px; }
+        .stButton > button {
+          border-radius:12px; min-height:2.65rem; font-weight:700;
+        }
+        @media (max-width: 900px) {
+          .lifecycle { grid-template-columns:repeat(3,1fr); row-gap:1rem; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -95,7 +167,7 @@ def _get_executions(client: DORAPIClient) -> tuple[list[dict[str, Any]], str | N
         rows = payload if isinstance(payload, list) else []
         return [dict(row) for row in rows if isinstance(row, Mapping)], None
     except DORAPIError as exc:
-        return [], f"Execution-data er midlertidigt utilgængelige ({exc.status_code})."
+        return [], f"Live execution-status er midlertidigt utilgængelig ({exc.status_code})."
 
 
 def _sidebar(client: DORAPIClient) -> str:
@@ -147,7 +219,8 @@ def _login() -> None:
     )
     st.title("DOR / Guide")
     st.markdown(
-        '<div class="subtitle">Hvad kræver din opmærksomhed, og hvad er næste handling?</div>',
+        '<div class="hero-question">Hvad vil du have DOR til at hjælpe med?</div>'
+        '<div class="subtitle">Log ind for at se situationer, næste handlinger og evidens.</div>',
         unsafe_allow_html=True,
     )
     with st.form("login"):
@@ -165,9 +238,9 @@ def _login() -> None:
 
 def _governance_view(client: DORAPIClient) -> None:
     st.markdown(
-        '<div class="eyebrow">OPERATØRCENTER / GOVERNANCE</div>'
+        '<div class="eyebrow">DOR / ADMINISTRATION</div>'
         '<h1>Governance</h1>'
-        '<div class="subtitle">Organisationens bot-, rolle- og policyflader.</div>',
+        '<div class="subtitle">Styr organisationens bots, roller og policies.</div>',
         unsafe_allow_html=True,
     )
     render_multi_bot_control_plane(client, st.session_state.get("organization_id") or "")
@@ -175,9 +248,9 @@ def _governance_view(client: DORAPIClient) -> None:
 
 def _integration_view(client: DORAPIClient) -> None:
     st.markdown(
-        '<div class="eyebrow">OPERATØRCENTER / INTEGRATION</div>'
+        '<div class="eyebrow">DOR / ADMINISTRATION</div>'
         '<h1>Integration</h1>'
-        '<div class="subtitle">Eksterne systemer håndteres gennem API-backed integration surfaces.</div>',
+        '<div class="subtitle">Kontrollér forbindelser til eksterne systemer.</div>',
         unsafe_allow_html=True,
     )
     render_redmine_integration(client)
