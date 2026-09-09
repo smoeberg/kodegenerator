@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -26,13 +27,33 @@ class SettingsSecretUnreadable(RuntimeError):
     """Raised when persisted ciphertext cannot be decrypted with the current root key."""
 
 
+def _root_secret() -> str:
+    """Reuse the deployment's existing DOR encryption root when available."""
+    direct = (
+        os.getenv("DOR_SETTINGS_ENCRYPTION_KEY", "").strip()
+        or os.getenv("DOR_ENCRYPTION_KEY", "").strip()
+    )
+    if direct:
+        return direct
+    path = os.getenv("DOR_ENCRYPTION_KEY_FILE", "").strip()
+    if path:
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise SettingsEncryptionUnavailable(
+                "DOR encryption key file cannot be read"
+            ) from exc
+        if value:
+            return value
+    raise SettingsEncryptionUnavailable(
+        "The deployment has no DOR encryption root for stored settings"
+    )
+
+
 def _fernet() -> Fernet:
-    raw = os.getenv("DOR_SETTINGS_ENCRYPTION_KEY", "").strip()
-    if not raw:
-        raise SettingsEncryptionUnavailable(
-            "DOR_SETTINGS_ENCRYPTION_KEY is required before secrets can be saved"
-        )
-    derived = base64.urlsafe_b64encode(hashlib.sha256(raw.encode("utf-8")).digest())
+    derived = base64.urlsafe_b64encode(
+        hashlib.sha256(_root_secret().encode("utf-8")).digest()
+    )
     return Fernet(derived)
 
 
