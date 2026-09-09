@@ -37,8 +37,46 @@ def _show_test_result(payload: Any) -> None:
         st.error("Redmine svarede, men forbindelsen kunne ikke verificeres.")
 
 
+def _render_legacy_health_only(client: DORAPIClient) -> None:
+    """Keep the retired dashboard usable while the canonical shell gains Settings.
+
+    Older dashboard test doubles and transitional clients expose only ``get``.
+    Real canonical clients expose ``put`` and therefore always use the Settings
+    flow below. This fallback preserves read-only health verification without
+    reintroducing environment editing as a user-facing configuration path.
+    """
+    st.subheader("Redmine Integration")
+    st.caption("Denne ældre visning kan kun kontrollere den serverkonfiguration, der allerede findes.")
+    if not st.button("Verificér Redmine-forbindelse", type="primary"):
+        st.info("Kør en backend-verifikation for at se den aktuelle integrationsstatus.")
+        return
+
+    try:
+        payload = client.get("/api/v1/integrations/redmine/health")
+    except DORAPIError as exc:
+        st.error(f"Redmine health-check fejlede ({exc.status_code}): {exc}")
+        return
+
+    status = normalize_redmine_health(payload)
+    cols = st.columns(3)
+    cols[0].metric("Konfigureret", "Ja" if status["configured"] else "Nej")
+    cols[1].metric("Reachable", "Ja" if status["reachable"] else "Nej")
+    cols[2].metric("Verificeret", "Ja" if status["verified"] else "Nej")
+
+    if status["level"] == "success":
+        st.success(status["message"])
+    elif status["level"] == "warning":
+        st.warning(status["message"])
+    else:
+        st.error(status["message"])
+
+
 def render_redmine_integration(client: DORAPIClient) -> None:
     """Configure, save and test Redmine without exposing the stored API key."""
+    if not hasattr(client, "put"):
+        _render_legacy_health_only(client)
+        return
+
     organization_id = str(st.session_state.get("organization_id") or "").strip()
     st.markdown("### Redmine")
     st.caption(
