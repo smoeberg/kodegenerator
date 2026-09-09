@@ -3,6 +3,7 @@ from pathlib import Path
 
 APP = Path("dashboard/operator_center.py")
 VIEWS = Path("dashboard/case_shell_views.py")
+SETTINGS = Path("dashboard/settings_view.py")
 
 
 def test_overview_is_situation_first_not_system_dashboard_first():
@@ -48,9 +49,18 @@ def test_case_actions_still_delegate_to_backend_authority():
     assert "advance_pipeline(" not in source
 
 
-def test_operator_shell_keeps_case_first_navigation_while_changing_experience():
+def test_operator_shell_keeps_case_first_navigation_and_unified_settings():
     source = APP.read_text(encoding="utf-8")
 
     assert 'WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")' in source
-    assert 'ADMIN_NAV = ("Ingen", "Governance", "Integration")' in source
+    assert 'ADMIN_NAV = ("Ingen", "Indstillinger")' in source
     assert "situation-first" in source
+    assert "render_settings(client)" in source
+
+
+def test_settings_rejects_terminal_first_ordinary_configuration():
+    source = SETTINGS.read_text(encoding="utf-8")
+    assert "uden terminal eller serverfiler" in source
+    assert "Brugere" in source
+    assert "Integrationer" in source
+    assert "System" in source
