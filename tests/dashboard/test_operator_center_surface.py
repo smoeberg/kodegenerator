@@ -6,6 +6,7 @@ ACTIONS = Path("dashboard/case_shell_actions.py")
 VIEWS = Path("dashboard/case_shell_views.py")
 WORKBENCH = Path("dashboard/case_workbench.py")
 PROJECT_LIFECYCLE = Path("dashboard/project_lifecycle.py")
+SETTINGS = Path("dashboard/settings_view.py")
 COMPOSE = Path("compose.yml")
 CONFIG = Path(".streamlit/config.toml")
 
@@ -77,10 +78,20 @@ def test_operator_center_builds_shared_case_workbench():
     assert "search_view(client, snapshot)" in source
 
 
-def test_operator_center_has_case_first_navigation():
+def test_operator_center_has_case_first_navigation_and_one_settings_entry():
     source = APP.read_text(encoding="utf-8")
     assert 'WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")' in source
-    assert 'ADMIN_NAV = ("Ingen", "Governance", "Integration")' in source
+    assert 'ADMIN_NAV = ("Ingen", "Indstillinger")' in source
+    assert "render_settings(client)" in source
+    assert 'ADMIN_NAV = ("Ingen", "Governance", "Integration")' not in source
+
+
+def test_settings_unifies_ordinary_administration_surfaces():
+    source = SETTINGS.read_text(encoding="utf-8")
+    for label in ("Organisation", "Brugere", "Integrationer", "System", "AI & Governance"):
+        assert label in source
+    assert "render_redmine_integration(client)" in source
+    assert "render_multi_bot_control_plane(client, organization_id)" in source
 
 
 def test_legacy_capabilities_are_contextual_not_top_level():
