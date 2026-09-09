@@ -41,7 +41,11 @@ def _execution_summary(
     orchestrator: PipelineOrchestrator,
     workflow: Any,
 ) -> dict[str, Any]:
-    """Project one workflow into the minimal operator-facing execution contract."""
+    """Project one workflow into the minimal operator-facing execution contract.
+
+    `allowed_actions` is a read-only affordance projection. Mutation endpoints
+    remain authoritative and revalidate every action when it is submitted.
+    """
     snapshot = orchestrator.get_pipeline_status(workflow.id)
     tasks = snapshot.get("tasks") if isinstance(snapshot.get("tasks"), list) else []
     task_open = sum(
@@ -57,6 +61,7 @@ def _execution_summary(
     blocker = orchestrator.get_blocking_gate(workflow.id)
     blocking_gate: dict[str, Any] | None = None
     rework: dict[str, Any] | None = None
+    allowed_actions: list[str] = []
     action_required = "terminal" if terminal else "none"
 
     if blocker is not None:
@@ -65,14 +70,23 @@ def _execution_summary(
         blocking_gate = {"gate_id": gate_id, "decision": decision}
         if decision == "pending":
             action_required = "human_decision"
+            allowed_actions = ["approve", "reject"]
         elif decision == "rejected":
             rework_status = orchestrator.get_gate_rework_status(workflow.id, gate_id)
+            rework_active = bool(rework_status.get("active"))
+            rework_supported = bool(rework_status.get("supported"))
             rework = {
-                "active": bool(rework_status.get("active")),
+                "active": rework_active,
                 "task_id": rework_status.get("task_id"),
                 "task_type": rework_status.get("task_type"),
             }
-            action_required = "rework_active" if rework["active"] else "rejected"
+            if rework_active:
+                action_required = "rework_active"
+            else:
+                action_required = "rejected"
+                if rework_supported:
+                    allowed_actions.append("rework")
+                allowed_actions.append("retry")
     elif not terminal and task_open:
         action_required = "work_in_progress"
 
@@ -89,6 +103,7 @@ def _execution_summary(
         "terminal": terminal,
         "blocking_gate": blocking_gate,
         "rework": rework,
+        "allowed_actions": allowed_actions,
         "action_required": action_required,
     }
 

@@ -36,7 +36,13 @@ def _workflow(workflow_id: str, organization_id: str):
     )
 
 
-def _snapshot(workflow_id: str, *, state: str = "implementation", updated: str = "2026-09-05T10:00:00+00:00"):
+def _snapshot(
+    workflow_id: str,
+    *,
+    state: str = "implementation",
+    updated: str = "2026-09-05T10:00:00+00:00",
+    task_status: str = "running",
+):
     return {
         "workflow_id": workflow_id,
         "project_name": f"Project {workflow_id}",
@@ -44,14 +50,44 @@ def _snapshot(workflow_id: str, *, state: str = "implementation", updated: str =
         "created_at": "2026-09-05T09:00:00+00:00",
         "updated_at": updated,
         "tasks": [
-            {"id": f"task-{workflow_id}", "task_type": "implementation", "status": "running"}
+            {
+                "id": f"task-{workflow_id}",
+                "task_type": "implementation",
+                "status": task_status,
+            }
         ],
     }
 
 
 def test_execution_overview_router_exposes_tenant_scoped_list_route() -> None:
-    routes = {(route.path, frozenset(getattr(route, "methods", ()) or ())) for route in router.routes}
+    routes = {
+        (route.path, frozenset(getattr(route, "methods", ()) or ()))
+        for route in router.routes
+    }
     assert ("/api/v1/execution", frozenset({"GET"})) in routes
+
+
+def test_pending_gate_exposes_only_decision_affordances() -> None:
+    workflow = _workflow("wf-1", "org-1")
+    orch = FakeOrchestrator(
+        [workflow],
+        {"wf-1": _snapshot("wf-1")},
+        blockers={
+            "wf-1": {
+                "gate_id": "gate_requirements_approval",
+                "decision": "pending",
+            }
+        },
+    )
+
+    summary = _execution_summary(orch, workflow)
+
+    assert summary["action_required"] == "human_decision"
+    assert summary["allowed_actions"] == ["approve", "reject"]
+    assert summary["blocking_gate"] == {
+        "gate_id": "gate_requirements_approval",
+        "decision": "pending",
+    }
 
 
 def test_execution_summary_surfaces_human_decision_and_rework_state() -> None:
@@ -63,6 +99,7 @@ def test_execution_summary_surfaces_human_decision_and_rework_state() -> None:
         reworks={
             ("wf-1", "gate-1"): {
                 "active": True,
+                "supported": True,
                 "task_id": "task-rework-1",
                 "task_type": "generate_architecture",
             }
@@ -78,7 +115,92 @@ def test_execution_summary_surfaces_human_decision_and_rework_state() -> None:
         "task_type": "generate_architecture",
     }
     assert summary["action_required"] == "rework_active"
+    assert summary["allowed_actions"] == []
     assert summary["terminal"] is False
+
+
+def test_rejected_gate_prefers_supported_rework_before_retry() -> None:
+    workflow = _workflow("wf-1", "org-1")
+    orch = FakeOrchestrator(
+        [workflow],
+        {"wf-1": _snapshot("wf-1")},
+        blockers={
+            "wf-1": {
+                "gate_id": "gate_architecture_approval",
+                "decision": "rejected",
+            }
+        },
+        reworks={
+            ("wf-1", "gate_architecture_approval"): {
+                "active": False,
+                "supported": True,
+                "task_id": None,
+                "task_type": None,
+            }
+        },
+    )
+
+    summary = _execution_summary(orch, workflow)
+
+    assert summary["action_required"] == "rejected"
+    assert summary["allowed_actions"] == ["rework", "retry"]
+
+
+def test_rejected_gate_without_rework_support_exposes_retry_only() -> None:
+    workflow = _workflow("wf-1", "org-1")
+    orch = FakeOrchestrator(
+        [workflow],
+        {"wf-1": _snapshot("wf-1")},
+        blockers={
+            "wf-1": {
+                "gate_id": "gate_contracts_approval",
+                "decision": "rejected",
+            }
+        },
+        reworks={
+            ("wf-1", "gate_contracts_approval"): {
+                "active": False,
+                "supported": False,
+                "task_id": None,
+                "task_type": None,
+            }
+        },
+    )
+
+    summary = _execution_summary(orch, workflow)
+
+    assert summary["action_required"] == "rejected"
+    assert summary["allowed_actions"] == ["retry"]
+
+
+def test_background_work_exposes_no_mutation_affordance() -> None:
+    workflow = _workflow("wf-1", "org-1")
+    orch = FakeOrchestrator([workflow], {"wf-1": _snapshot("wf-1")})
+
+    summary = _execution_summary(orch, workflow)
+
+    assert summary["action_required"] == "work_in_progress"
+    assert summary["allowed_actions"] == []
+
+
+def test_terminal_execution_exposes_no_mutation_affordance() -> None:
+    workflow = _workflow("wf-1", "org-1")
+    orch = FakeOrchestrator(
+        [workflow],
+        {
+            "wf-1": _snapshot(
+                "wf-1",
+                state="released",
+                task_status="completed",
+            )
+        },
+    )
+
+    summary = _execution_summary(orch, workflow)
+
+    assert summary["terminal"] is True
+    assert summary["action_required"] == "terminal"
+    assert summary["allowed_actions"] == []
 
 
 def test_list_executions_filters_cross_tenant_and_sorts_latest_first(monkeypatch) -> None:
