@@ -24,12 +24,11 @@ from dashboard.context_navigation import (
     render_sidebar_organization_switcher,
     sync_organization_context,
 )
-from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
-from dashboard.redmine_integration import render_redmine_integration
+from dashboard.settings_view import render_settings
 from dashboard.state import authenticated, clear_auth, init_state
 
 WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")
-ADMIN_NAV = ("Ingen", "Governance", "Integration")
+ADMIN_NAV = ("Ingen", "Indstillinger")
 
 init_state()
 
@@ -236,26 +235,6 @@ def _login() -> None:
                 st.error(f"Login fejlede ({exc.status_code}): {exc}")
 
 
-def _governance_view(client: DORAPIClient) -> None:
-    st.markdown(
-        '<div class="eyebrow">DOR / ADMINISTRATION</div>'
-        '<h1>Governance</h1>'
-        '<div class="subtitle">Styr organisationens bots, roller og policies.</div>',
-        unsafe_allow_html=True,
-    )
-    render_multi_bot_control_plane(client, st.session_state.get("organization_id") or "")
-
-
-def _integration_view(client: DORAPIClient) -> None:
-    st.markdown(
-        '<div class="eyebrow">DOR / ADMINISTRATION</div>'
-        '<h1>Integration</h1>'
-        '<div class="subtitle">Kontrollér forbindelser til eksterne systemer.</div>',
-        unsafe_allow_html=True,
-    )
-    render_redmine_integration(client)
-
-
 def main() -> None:
     _css()
     if not authenticated():
@@ -287,10 +266,8 @@ def main() -> None:
         cases_view(client, snapshot)
     elif nav == "Søg":
         search_view(client, snapshot)
-    elif nav == "Governance":
-        _governance_view(client)
-    elif nav == "Integration":
-        _integration_view(client)
+    elif nav == "Indstillinger":
+        render_settings(client)
 
 
 if __name__ == "__main__":
