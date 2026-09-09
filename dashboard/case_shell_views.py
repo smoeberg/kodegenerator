@@ -36,19 +36,57 @@ def greeting() -> str:
     return "Godaften"
 
 
-def metric(label: str, value: object, foot: str) -> None:
-    st.markdown(
-        f'<div class="card metric"><div class="metric-label">{label}</div>'
-        f'<div class="metric-value">{value}</div><div class="metric-foot">{foot}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-
 def open_case(case_id: str) -> None:
     st.session_state["selected_project_id"] = case_id
     st.session_state["operator_nav"] = "Sager"
     st.session_state["operator_admin_nav"] = "Ingen"
     st.rerun()
+
+
+def _go_to(nav: str) -> None:
+    st.session_state["operator_nav"] = nav
+    st.session_state["operator_admin_nav"] = "Ingen"
+    st.rerun()
+
+
+def _owner_label(item: CaseWorkbenchItem) -> str:
+    return {
+        "human": "Dig",
+        "dor": "DOR",
+        "external": "En ekstern part",
+        "none": "Ingen",
+    }.get(item.projection.owner_type, "Ukendt")
+
+
+def _activity_copy(item: CaseWorkbenchItem) -> tuple[str, str]:
+    projection = item.projection
+    if projection.attention_state in {
+        AttentionState.COMPLETED,
+        AttentionState.CANCELLED,
+        AttentionState.ARCHIVED,
+    }:
+        return ("Arbejdet er afsluttet", "Der er ingen aktiv aktivitet på sagen.")
+    if projection.owner_type == "dor":
+        return (
+            "DOR arbejder videre",
+            projection.attention_explanation or "Du skal ikke gøre noget lige nu.",
+        )
+    if projection.owner_type == "external":
+        return (
+            "Sagen afventer andre",
+            projection.attention_explanation
+            or "DOR fortsætter, når den eksterne afhængighed er afklaret.",
+        )
+    if projection.attention_required:
+        return (
+            "Sagen afventer dig",
+            projection.attention_explanation
+            or "Din handling er nødvendig, før processen kan fortsætte.",
+        )
+    return (
+        "Klar til næste skridt",
+        projection.attention_explanation or "Backend har ikke markeret en aktiv blocker.",
+    )
 
 
 def render_process(item: CaseWorkbenchItem) -> None:
@@ -71,22 +109,68 @@ def render_attention(item: CaseWorkbenchItem) -> None:
     projection = item.projection
     if projection.attention_required:
         st.markdown(
-            '<span class="status-pill">Kræver opmærksomhed</span>',
+            '<span class="status-pill">Din handling er nødvendig</span>',
             unsafe_allow_html=True,
         )
+    elif projection.owner_type == "dor":
+        st.markdown(
+            '<span class="status-pill quiet-pill">DOR har bolden</span>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown(
-        f'<div class="attention"><b>{projection.attention_title}</b><br>'
-        f'{projection.attention_explanation}</div>',
+        f'<div class="attention"><div class="attention-kicker">NÆSTE SKRIDT</div>'
+        f'<div class="attention-title">{projection.attention_title}</div>'
+        f'<div class="attention-copy">{projection.attention_explanation}</div></div>',
         unsafe_allow_html=True,
     )
+
     if projection.next_action:
-        st.write("")
-        st.markdown(f"**Næste handling:** {projection.next_action.label}")
-        st.caption(projection.next_action.explanation)
+        st.markdown(
+            f'<div class="next-action"><div class="next-action-label">'
+            f'{projection.next_action.label}</div>'
+            f'<div class="next-action-why">Hvorfor dette er næste skridt: '
+            f'{projection.next_action.explanation}</div></div>',
+            unsafe_allow_html=True,
+        )
     elif projection.owner_type == "dor":
-        st.caption("DOR har bolden. Du skal ikke gøre noget lige nu.")
+        st.caption(
+            "Du skal ikke gøre noget nu. DOR genberegner næste handling, når arbejdet ændrer state."
+        )
     elif projection.attention_required:
-        st.caption("Åbn Handling nedenfor. Mutationen vises kun, når backend tillader den.")
+        st.caption("Handlingen vises nedenfor, når backend eksplicit tillader den.")
+
+
+def _render_quick_starts() -> None:
+    st.markdown(
+        '<div class="section-label">HVAD VIL DU GØRE?</div>', unsafe_allow_html=True
+    )
+    cols = st.columns(3)
+    with cols[0]:
+        if st.button("＋ Opret en sag", type="primary", use_container_width=True):
+            _go_to("Sager")
+        st.caption("Beskriv situationen og det ønskede resultat.")
+    with cols[1]:
+        if st.button("Se mit arbejde", use_container_width=True):
+            _go_to("Mit arbejde")
+        st.caption("Se kun det, der kræver dig eller afventer andre.")
+    with cols[2]:
+        if st.button("Find en sag", use_container_width=True):
+            _go_to("Søg")
+        st.caption("Søg på navn, status, fase eller reference.")
+
+
+def _render_system_details(client: DORAPIClient, execution_error: str | None) -> None:
+    with st.expander("Systemoplysninger"):
+        st.caption("Teknisk drift er sekundær i den normale arbejdsoplevelse.")
+        try:
+            ready = client.readiness()
+            state = ready.get("status", "unknown") if isinstance(ready, dict) else "unknown"
+            st.write(f"**API / database:** {str(state).upper()}")
+        except DORAPIError as exc:
+            st.write(f"**API / database:** utilgængelig ({exc.status_code})")
+        if execution_error:
+            st.warning(execution_error)
 
 
 def overview(
@@ -101,70 +185,77 @@ def overview(
     )
 
     st.markdown(
-        f'<div class="eyebrow">OPERATØRCENTER / OVERBLIK</div>'
+        f'<div class="eyebrow">DOR / GUIDE</div>'
         f'<h1>{greeting()}, {st.session_state.get("username") or "operatør"}</h1>'
-        '<div class="subtitle">Her er det, der kræver din opmærksomhed først.</div>',
+        '<div class="hero-question">Hvad vil du gøre?</div>'
+        '<div class="subtitle">DOR viser situationen og det vigtigste næste skridt — ikke backend-moduler.</div>',
         unsafe_allow_html=True,
     )
-    if execution_error:
+
+    _render_quick_starts()
+    st.write("")
+
+    if focus:
+        projection = focus.projection
         st.markdown(
-            f'<div class="warning"><b>Execution-data er midlertidigt utilgængelige.</b><br>'
-            f'{execution_error} Sager uden execution kan stadig vises.</div>',
-            unsafe_allow_html=True,
+            '<div class="section-label">DET VIGTIGSTE NU</div>', unsafe_allow_html=True
         )
-        st.write("")
+        with st.container(border=True):
+            top_left, top_right = st.columns([4, 1.2])
+            with top_left:
+                st.caption(f"{projection.phase.label} · {_owner_label(focus)} har bolden")
+                st.subheader(projection.title)
+                st.write(projection.human_status)
+            with top_right:
+                if projection.attention_required:
+                    st.markdown("**Kræver dig nu**")
+                elif projection.owner_type == "dor":
+                    st.markdown("**DOR arbejder**")
+                else:
+                    st.markdown("**Følg sagen**")
 
-    cols = st.columns(4)
-    with cols[0]:
-        metric("Kræver din handling", counts["requires_action"], "Prioriterede sager")
-    with cols[1]:
-        metric("Afventer DOR", counts["waiting_for_dor"], "DOR har bolden")
-    with cols[2]:
-        metric("Afventer andre", counts["waiting_external"], "Ekstern afhængighed")
-    with cols[3]:
-        metric("Færdige", counts["completed"], f'{counts["cases"]} sager i alt')
-
-    left, right = st.columns([2.1, 1])
-    with left:
-        if focus:
-            with st.container(border=True):
-                st.caption(focus.projection.phase.label)
-                st.subheader(focus.projection.title)
-                st.caption(focus.projection.human_status)
-                render_process(focus)
-                render_attention(focus)
-                if st.button("Åbn sag", type="primary", use_container_width=True):
-                    open_case(focus.projection.case_id)
-        else:
-            st.info("Der er ingen sager endnu.")
+            render_attention(focus)
+            render_process(focus)
+            if st.button(
+                "Åbn sagen og fortsæt",
+                key=f"overview-focus-{projection.case_id}",
+                type="primary",
+                use_container_width=True,
+            ):
+                open_case(projection.case_id)
+    else:
+        st.markdown('<div class="section-label">KOM I GANG</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.subheader("Fortæl DOR, hvad der skal ske")
+            st.write(
+                "Der er ingen sager endnu. Opret den første sag ud fra målet — "
+                "DOR holder styr på proces, handlinger og evidens."
+            )
             if st.button("Opret første sag", type="primary"):
-                st.session_state["operator_nav"] = "Sager"
-                st.rerun()
-
-    with right:
-        st.markdown(
-            '<div class="card"><div class="eyebrow">SYSTEMHELDBRED</div><h2>Systemstatus</h2>',
-            unsafe_allow_html=True,
-        )
-        try:
-            ready = client.readiness()
-            state = ready.get("status", "unknown") if isinstance(ready, dict) else "unknown"
-            st.metric("API / database", str(state).upper())
-        except DORAPIError as exc:
-            st.error(f"Readiness ({exc.status_code})")
-        st.caption("Systemstatus er sekundær; sagens situation og næste handling er primær.")
-        st.markdown("</div>", unsafe_allow_html=True)
+                _go_to("Sager")
 
     st.write("")
-    st.subheader("Kræver opmærksomhed")
+    st.markdown('<div class="section-label">DIT ARBEJDE</div>', unsafe_allow_html=True)
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Kræver dig", counts["requires_action"])
+    summary_cols[1].metric("DOR arbejder", counts["waiting_for_dor"])
+    summary_cols[2].metric("Afventer andre", counts["waiting_external"])
+    summary_cols[3].metric("Færdige", counts["completed"])
+
     if snapshot.requiring_action:
-        for item in snapshot.requiring_action[:6]:
-            cols = st.columns([4, 1])
+        st.subheader("Andre sager der kræver dig")
+        for item in snapshot.requiring_action:
+            if focus and item.projection.case_id == focus.projection.case_id:
+                continue
+            cols = st.columns([5, 1])
             with cols[0]:
                 st.markdown(f"**{item.projection.title}**")
-                st.caption(
-                    f"{item.projection.phase.label} · {item.projection.attention_title}"
+                next_label = (
+                    item.projection.next_action.label
+                    if item.projection.next_action
+                    else item.projection.attention_title
                 )
+                st.caption(f"{item.projection.phase.label} · Næste: {next_label}")
             with cols[1]:
                 if st.button(
                     "Åbn",
@@ -172,8 +263,9 @@ def overview(
                     use_container_width=True,
                 ):
                     open_case(item.projection.case_id)
-    else:
-        st.success("Ingen sager kræver din handling lige nu.")
+
+    st.write("")
+    _render_system_details(client, execution_error)
 
 
 def _work_group(
@@ -207,25 +299,45 @@ def _work_group(
 
 def work_view(snapshot: CaseWorkbenchSnapshot) -> None:
     st.markdown(
-        '<div class="eyebrow">OPERATØRCENTER / MIT ARBEJDE</div>'
+        '<div class="eyebrow">DOR / MIT ARBEJDE</div>'
         '<h1>Mit arbejde</h1>'
-        '<div class="subtitle">Sager sorteret efter hvem der har bolden — ikke efter backend-modul.</div>',
+        '<div class="subtitle">Hvem har bolden, og hvad kræver din opmærksomhed?</div>',
         unsafe_allow_html=True,
     )
     _work_group("Kræver din handling", snapshot.requiring_action, primary=True)
     st.write("")
-    _work_group("Afventer DOR", snapshot.waiting_for_dor, primary=False)
+    _work_group("DOR arbejder", snapshot.waiting_for_dor, primary=False)
     st.write("")
     _work_group("Afventer andre", snapshot.waiting_external, primary=False)
     st.write("")
     _work_group("Færdig", snapshot.completed, primary=False)
 
 
+def _render_case_action(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
+    projection = item.projection
+    if should_render_gate_actions(item):
+        render_gate_actions(client, item)
+    elif projection.owner_type == "dor":
+        st.info("DOR arbejder videre. Der kræves ingen handling fra dig lige nu.")
+    elif projection.attention_state in {
+        AttentionState.COMPLETED,
+        AttentionState.CANCELLED,
+        AttentionState.ARCHIVED,
+    }:
+        st.info(
+            "Sagen er afsluttet. Eventuelle administrative lifecycle-handlinger ligger under Flere muligheder."
+        )
+    elif projection.attention_required:
+        st.info("Backend har endnu ikke åbnet en konkret human handling for dette snapshot.")
+    else:
+        st.info("Der er ingen åben handling lige nu.")
+
+
 def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
     st.markdown(
-        '<div class="eyebrow">OPERATØRCENTER / SAGER</div>'
-        '<h1>Sager</h1>'
-        '<div class="subtitle">Status, proces, næste handling og evidens samlet i én kontekst.</div>',
+        '<div class="eyebrow">DOR / SAG</div>'
+        '<h1>Sag</h1>'
+        '<div class="subtitle">Forstå situationen, tag næste handling, og se hvorfor.</div>',
         unsafe_allow_html=True,
     )
     create_case_form(client)
@@ -257,31 +369,67 @@ def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
         return
 
     projection = item.projection
-    st.caption(projection.phase.label)
+    st.caption(f"{projection.phase.label} · {projection.human_status}")
     st.title(projection.title)
-    st.caption(projection.human_status)
+
+    main_col, context_col = st.columns([2.15, 1])
+    with main_col:
+        st.markdown(
+            '<div class="section-label">NÆSTE HANDLING</div>', unsafe_allow_html=True
+        )
+        render_attention(item)
+        st.write("")
+        _render_case_action(client, item)
+
+    with context_col:
+        st.markdown('<div class="section-label">SITUATION</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(f"**Bolden er hos:** {_owner_label(item)}")
+            st.write(projection.attention_title)
+            st.caption(projection.attention_explanation)
+            if projection.blockers:
+                st.markdown("**Det blokerer sagen:**")
+                for blocker in projection.blockers:
+                    label = (
+                        blocker.get("label")
+                        or blocker.get("reason")
+                        or blocker.get("id")
+                        or "Ukendt blocker"
+                    )
+                    st.write(f"- {label}")
+            elif projection.next_action:
+                st.markdown("**Hvorfor dette er næste skridt**")
+                st.caption(projection.next_action.explanation)
+
+    st.write("")
+    activity_title, activity_detail = _activity_copy(item)
+    st.markdown(
+        '<div class="section-label">AKTUEL AKTIVITET</div>', unsafe_allow_html=True
+    )
+    with st.container(border=True):
+        st.markdown(f"**{activity_title}**")
+        st.write(activity_detail)
+        if item.execution:
+            task_rows = item.execution.get("tasks")
+            if isinstance(task_rows, list) and task_rows:
+                completed = sum(
+                    1
+                    for task in task_rows
+                    if isinstance(task, dict)
+                    and str(task.get("status") or "").lower()
+                    in {"completed", "done", "success", "succeeded"}
+                )
+                st.caption(
+                    f"{completed} af {len(task_rows)} registrerede aktiviteter er færdige."
+                )
+
+    st.markdown('<div class="section-label">PROCES</div>', unsafe_allow_html=True)
     render_process(item)
 
-    st.subheader("Næste skridt")
-    render_attention(item)
-
-    st.subheader("Handling")
-    if should_render_gate_actions(item):
-        render_gate_actions(client, item)
-    elif projection.owner_type == "dor":
-        st.info("DOR arbejder. Der kræves ingen human handling lige nu.")
-    elif projection.attention_state in {
-        AttentionState.COMPLETED,
-        AttentionState.CANCELLED,
-        AttentionState.ARCHIVED,
-    }:
-        st.info("Sagen er terminal. Eventuelle lifecycle-handlinger vises kun som avancerede handlinger.")
-    else:
-        st.info("Backend har ikke åbnet en human gate for det aktuelle snapshot.")
-
-    st.subheader("Evidens")
+    st.markdown('<div class="section-label">EVIDENS</div>', unsafe_allow_html=True)
     render_evidence_summary(item)
 
+    st.write("")
     with st.expander("Tekniske detaljer"):
         render_technical_case_details(client, item)
 
@@ -303,9 +451,9 @@ def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
 
 def search_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
     st.markdown(
-        '<div class="eyebrow">OPERATØRCENTER / SØG</div>'
+        '<div class="eyebrow">DOR / SØG</div>'
         '<h1>Søg</h1>'
-        '<div class="subtitle">Find sag, status eller — ved behov — en teknisk reference.</div>',
+        '<div class="subtitle">Find en sag. Tekniske referencer er kun et specialistspor.</div>',
         unsafe_allow_html=True,
     )
     query = st.text_input("Søg i sager", placeholder="Navn, status, fase eller ID")
@@ -360,8 +508,12 @@ def search_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
                     continue
                 cols = st.columns([5, 1])
                 with cols[0]:
-                    st.markdown(f"**{execution.get('project_name') or 'Unlinked execution'}**")
-                    st.caption(f"{execution.get('current_state') or 'unknown'} · workflow {workflow_id}")
+                    st.markdown(
+                        f"**{execution.get('project_name') or 'Unlinked execution'}**"
+                    )
+                    st.caption(
+                        f"{execution.get('current_state') or 'unknown'} · workflow {workflow_id}"
+                    )
                 with cols[1]:
                     if st.button(
                         "Åbn teknisk",
