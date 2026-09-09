@@ -14,6 +14,7 @@ from dashboard.case_shell_actions import (
     render_evidence_summary,
     render_execution_detail,
     render_gate_actions,
+    render_project_lifecycle_tools,
     render_technical_case_details,
     should_render_gate_actions,
     stop_realtime,
@@ -274,7 +275,7 @@ def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
         AttentionState.CANCELLED,
         AttentionState.ARCHIVED,
     }:
-        st.info("Sagen er terminal. Eventuelle lifecycle-handlinger findes under Tekniske detaljer.")
+        st.info("Sagen er terminal. Eventuelle lifecycle-handlinger vises kun som avancerede handlinger.")
     else:
         st.info("Backend har ikke åbnet en human gate for det aktuelle snapshot.")
 
@@ -283,6 +284,8 @@ def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
 
     with st.expander("Tekniske detaljer"):
         render_technical_case_details(client, item)
+
+    render_project_lifecycle_tools(client, item)
 
     technical_workflow_id = str(st.session_state.get("technical_workflow_id") or "").strip()
     if technical_workflow_id:
