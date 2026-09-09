@@ -8,6 +8,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.control_plane",
     "api.endpoints.project_lifecycle",
     "api.endpoints.control_plane_organizations",
+    "api.endpoints.organization_users",
     "api.endpoints.delivery_certificates",
     "api.endpoints.requirements_traceability",
     "api.endpoints.artifact_acceptances",
