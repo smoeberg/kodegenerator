@@ -287,14 +287,20 @@ def render_technical_case_details(client: DORAPIClient, item: CaseWorkbenchItem)
         st.session_state["technical_workflow_id"] = workflow_id
         st.rerun()
 
-    organization_id = st.session_state.get("organization_id")
-    if organization_id:
-        st.divider()
-        st.caption("Governed project lifecycle — backend genvaliderer alle mutationer.")
-        render_project_lifecycle_console(client, organization_id, item.project)
-
-    with st.expander("Rå backend-snapshot"):
+    if st.checkbox("Vis rå backend-snapshot", key=f"raw-case-{projection.case_id}"):
         st.json(projection.raw_backend)
+
+
+def render_project_lifecycle_tools(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
+    organization_id = st.session_state.get("organization_id")
+    if not organization_id:
+        return
+    if st.toggle(
+        "Vis avancerede lifecycle-handlinger",
+        key=f"lifecycle-tools-{item.projection.case_id}",
+    ):
+        st.caption("Backend genvaliderer alle lifecycle-mutationer mod det aktuelle snapshot.")
+        render_project_lifecycle_console(client, organization_id, item.project)
 
 
 def evidence_lookup(client: DORAPIClient) -> None:
