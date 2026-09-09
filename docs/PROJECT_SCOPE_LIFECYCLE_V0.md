@@ -1,6 +1,6 @@
 # Project Scope & Lifecycle v0
 
-Status: APPROVED FOR DESIGN / SC-101 FIRST
+Status: IMPLEMENTED THROUGH PC-101 / GUI-101 NEXT
 
 ## Purpose
 
@@ -8,24 +8,25 @@ Define one canonical project identity and lifecycle boundary for scope changes,
 execution authority, completion, cancellation, archive, and continuation without
 rewriting provenance or introducing a persistent decision graph.
 
-## Problem
+## Original problem
 
-DOR currently has two partially separate project identities:
+Before SC-101, DOR had two partially separate project identities:
 
 - the first-party Control Plane `Project` aggregate (`project_id`); and
 - the Phase-4 delivery chain beginning at immutable `OnboardingIntent` and
   continuing through Project Audit, planning, Implementation Agent, governed
   patch apply, delivery certification, and traceability.
 
-The planning layer produces a content-addressed `plan_request_fingerprint`, but
-that fingerprint is not yet an authoritative server-side execution boundary all
-the way through proposal, authority, apply, and certification. A proposal made
-under one plan can therefore survive a later scope change unless downstream
-boundaries explicitly reject it.
+Before SC-101B, the planning layer produced a content-addressed
+`plan_request_fingerprint`, but that fingerprint was not yet an authoritative
+server-side execution boundary all the way through proposal, authority, apply,
+and certification. A proposal made under one plan could therefore survive a
+later scope change unless downstream boundaries explicitly rejected it.
 
-The `Project` aggregate also has no terminal project lifecycle beyond
-`created` and `launch_requested`; there is no governed definition of active,
-completion-pending, completed, cancelled, archived, or continuation semantics.
+Before PC-101, the `Project` aggregate also had no terminal project lifecycle
+beyond `created` and `launch_requested`; there was no governed definition of
+active, completion-pending, completed, cancelled, archived, or continuation
+semantics.
 
 ## Canonical identity hierarchy
 
@@ -144,33 +145,37 @@ Completion produces one immutable content-addressed record binding at least:
 
 ## Delivery plan
 
-Only SC-101 is approved for implementation now.
+SC-101A, SC-101B, SC-101C, and PC-101 are implemented on `main`. GUI-101 is the
+next lifecycle work item and remains subject to Development Governance v0 before
+semantic implementation.
 
 ### SC-101A — Project identity bridge
 
-Carry exact `project_id` through onboarding/audit/planning into Implementation
-Agent provenance and fail closed on cross-project/cross-tenant drift.
+Implemented. Carry exact `project_id` through onboarding/audit/planning into
+Implementation Agent provenance and fail closed on cross-project/cross-tenant
+drift.
 
 ### SC-101B — Active scope authority boundary
 
-Add exact active-plan current state to `Project`; hard-bind project + plan into
-Implementation Agent request identity, authority, apply and delivery
+Implemented. Add exact active-plan current state to `Project`; hard-bind project
++ plan into Implementation Agent request identity, authority, apply and delivery
 certification; stale scope must block.
 
 ### SC-101C — In-flight supersession
 
-Prevent new stale claims and attempt cooperative cancellation at natural
-checkpoints. Cancellation remains an optimization only.
+Implemented. Prevent new stale claims and attempt cooperative cancellation at
+natural checkpoints. Cancellation remains an optimization only.
 
 ### PC-101 — Project completion boundary
 
-Not approved for coding until SC-101 is green. Define and implement
+Implemented via PR #253. Define and implement
 completion-pending/completed/cancelled/archive and immutable completion evidence.
 
 ### GUI-101
 
-Not approved for coding until backend contracts are green. GUI must render
-backend truth and never become an authority boundary.
+Backend preconditions are green. GUI-101 remains gated by Development Governance
+v0 solution approval before semantic coding. GUI must render backend truth and
+never become an authority boundary.
 
 ### SC-102 / SC-103
 
