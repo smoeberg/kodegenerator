@@ -64,6 +64,26 @@ class IdentityStore:
             return existing
         return _as_dict(row)
 
+    def update_profile(
+        self,
+        username: str,
+        *,
+        email: str | None,
+        full_name: str | None,
+    ) -> dict[str, Any]:
+        normalized = _normalize_username(username)
+        with self._sessions() as session, session.begin():
+            row = session.get(IdentityPrincipalModel, normalized)
+            if row is None:
+                raise KeyError(normalized)
+            row.email = email
+            row.full_name = full_name
+            row.updated_at = datetime.now(timezone.utc)
+        value = self.get(normalized)
+        if value is None:  # pragma: no cover - defensive persistence guard
+            raise KeyError(normalized)
+        return value
+
     def rotate_password(self, username: str, hashed_password: str) -> None:
         normalized = _normalize_username(username)
         with self._sessions() as session, session.begin():
