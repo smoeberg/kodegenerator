@@ -11,6 +11,7 @@ from uuid import uuid4
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.case_evidence_projection import EvidenceStatus, build_case_evidence
 from dashboard.case_process_projection import AttentionState
 from dashboard.case_workbench import CaseWorkbenchItem
 from dashboard.cockpit_lifecycle import render_cockpit_lifecycle
@@ -233,12 +234,31 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
 
 
 def render_evidence_summary(item: CaseWorkbenchItem) -> None:
-    for value in item.projection.evidence_completed:
-        st.markdown(f"✓ {value}")
-    for value in item.projection.evidence_missing:
-        st.markdown(f"○ {value}")
-    if not item.projection.evidence_completed and not item.projection.evidence_missing:
-        st.caption("Der er endnu ingen projiceret evidensstatus for sagen.")
+    evidence = build_case_evidence(item.project, item.execution)
+
+    st.markdown("**Procesgrundlag**")
+    st.caption(
+        "Disse punkter er afledt af pipeline-status og forklarer fremdrift. "
+        "De er ikke i sig selv et autoritativt leveringsbevis."
+    )
+    for evidence_item in evidence.process_items:
+        if evidence_item.status is EvidenceStatus.COMPLETED:
+            st.markdown(f"✓ {evidence_item.label}")
+        elif evidence_item.status is EvidenceStatus.FAILED:
+            st.markdown(f"⚠ {evidence_item.label}")
+        else:
+            st.markdown(f"○ {evidence_item.label}")
+        st.caption(evidence_item.detail)
+
+    st.markdown("**Verificeret evidens**")
+    if evidence.verified_items:
+        for evidence_item in evidence.verified_items:
+            st.success(f"✓ {evidence_item.label}")
+            st.caption(evidence_item.detail)
+    else:
+        st.caption(
+            "Der er endnu ikke registreret et autoritativt afslutningsbevis for sagen."
+        )
 
 
 def render_execution_detail(client: DORAPIClient, workflow_id: str) -> None:
