@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -16,10 +17,7 @@ from api.auth import (
 )
 from api.dependencies import get_dor
 from domain.actor import Actor, ActorType
-from infrastructure.persistence.models import (
-    IdentityPrincipalModel,
-    OrganizationMembershipModel,
-)
+from infrastructure.persistence.models import OrganizationMembershipModel
 from infrastructure.persistence.repositories import RepositoryError
 from runtime.core import DORRuntime
 
@@ -74,18 +72,16 @@ def _require_admin(dor: DORRuntime, username: str, organization_id: str) -> None
         )
 
 
-def _identity_map(dor: DORRuntime, usernames: list[str]) -> dict[str, IdentityPrincipalModel]:
-    if not usernames:
+def _identity_map(usernames: list[str]) -> dict[str, dict[str, Any]]:
+    store = get_identity_store()
+    if store is None:
         return {}
-    with dor.database.session() as session:
-        rows = list(
-            session.scalars(
-                select(IdentityPrincipalModel).where(
-                    IdentityPrincipalModel.username.in_(usernames)
-                )
-            ).all()
-        )
-    return {row.username: row for row in rows}
+    result: dict[str, dict[str, Any]] = {}
+    for username in usernames:
+        value = store.get(username)
+        if value is not None:
+            result[username] = value
+    return result
 
 
 @router.get("", response_model=list[OrganizationUserResponse])
@@ -104,16 +100,16 @@ def list_organization_users(
                 .order_by(OrganizationMembershipModel.username)
             ).all()
         )
-    identities = _identity_map(dor, [item.username for item in memberships])
+    identities = _identity_map([item.username for item in memberships])
     result: list[OrganizationUserResponse] = []
     for membership in memberships:
-        identity = identities.get(membership.username)
+        identity = identities.get(membership.username, {})
         result.append(
             OrganizationUserResponse(
                 username=membership.username,
-                email=identity.email if identity is not None else None,
-                full_name=identity.full_name if identity is not None else None,
-                disabled=identity.disabled if identity is not None else False,
+                email=identity.get("email"),
+                full_name=identity.get("full_name"),
+                disabled=bool(identity.get("disabled", False)),
                 is_admin=membership.is_admin,
             )
         )
