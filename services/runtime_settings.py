@@ -131,7 +131,7 @@ class RuntimeSettingsStore:
             ciphertext = None
         now = datetime.now(timezone.utc)
         payload = json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
-        with self._database.session(organization_id) as session, session.begin():
+        with self._database.session(organization_id) as session:
             current = session.execute(
                 text(
                     "SELECT 1 FROM runtime_settings "
@@ -166,6 +166,7 @@ class RuntimeSettingsStore:
                     ),
                     params,
                 )
+            session.commit()
         result = self.get(organization_id, setting_key)
         if result is None:  # pragma: no cover - defensive persistence guard
             raise RuntimeError("runtime setting was not persisted")
