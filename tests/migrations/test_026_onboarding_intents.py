@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 
 from alembic import command
@@ -43,5 +45,7 @@ def test_onboarding_intent_migration_forces_postgres_rls() -> None:
 
 
 def test_current_state_tracks_latest_migration_head() -> None:
-    source = Path("docs/CURRENT_STATE.json").read_text()
-    assert '"canonical_alembic_head": "035_project_lifecycle_completion"' in source
+    cfg = Config("alembic.ini")
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    state = json.loads(Path("docs/CURRENT_STATE.json").read_text(encoding="utf-8"))
+    assert heads == [state["canonical_alembic_head"]]
