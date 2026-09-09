@@ -10,7 +10,7 @@
       "internal": "Backend/worker/diagnostic/legacy API with no direct canonical GUI surface."
     }
   },
-  "summary": {"total": 94, "covered": 49, "planned": 20, "internal": 25},
+  "summary": {"total": 100, "covered": 57, "planned": 18, "internal": 25},
   "endpoints": [
     {"method":"GET","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate selection"},
     {"method":"GET","path":"/api/v1/bot-evidence/candidates/{candidate_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate"},
@@ -45,8 +45,11 @@
     {"method":"GET","path":"/api/v1/control-plane/delivery-certificates/{certificate_id}","surface":"sag","status":"planned","capability":"Delivery certification"},
     {"method":"POST","path":"/api/v1/control-plane/onboarding-intents","surface":"sag","status":"planned","capability":"Onboarding intent"},
     {"method":"GET","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization context"},
-    {"method":"POST","path":"/api/v1/control-plane/organizations","surface":"administration","status":"planned","capability":"Organization management"},
-    {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}","surface":"administration","status":"planned","capability":"Organization management"},
+    {"method":"POST","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization management"},
+    {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}","surface":"administration","status":"covered","capability":"Organization management"},
+    {"method":"GET","path":"/api/v1/control-plane/organizations/{organization_id}/users","surface":"administration","status":"covered","capability":"Organization user management"},
+    {"method":"POST","path":"/api/v1/control-plane/organizations/{organization_id}/users","surface":"administration","status":"covered","capability":"Organization user management"},
+    {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}/users/{username}","surface":"administration","status":"covered","capability":"Organization user management"},
     {"method":"GET","path":"/api/v1/control-plane/projects","surface":"sag","status":"covered","capability":"Case catalog"},
     {"method":"POST","path":"/api/v1/control-plane/projects","surface":"sag","status":"covered","capability":"Case creation"},
     {"method":"GET","path":"/api/v1/control-plane/projects/{project_id}","surface":"sag","status":"planned","capability":"Case detail refresh"},
@@ -78,7 +81,10 @@
     {"method":"POST","path":"/api/v1/execution/{workflow_id}/gates/rework","surface":"sag","status":"covered","capability":"Execution gate rework"},
     {"method":"GET","path":"/api/v1/execution/{workflow_id}/proposals","surface":"sag","status":"covered","capability":"Implementation proposals"},
     {"method":"POST","path":"/api/v1/execution/{workflow_id}/proposals","surface":"sag","status":"planned","capability":"Implementation proposal creation"},
+    {"method":"GET","path":"/api/v1/integrations/redmine/config","surface":"administration","status":"covered","capability":"Redmine configuration"},
+    {"method":"PUT","path":"/api/v1/integrations/redmine/config","surface":"administration","status":"covered","capability":"Redmine configuration"},
     {"method":"GET","path":"/api/v1/integrations/redmine/health","surface":"administration","status":"covered","capability":"Redmine integration"},
+    {"method":"POST","path":"/api/v1/integrations/redmine/test","surface":"administration","status":"covered","capability":"Redmine configuration"},
     {"method":"POST","path":"/api/v1/pipeline-gates/approve","surface":"internal","status":"internal","capability":"Legacy pipeline gate command"},
     {"method":"GET","path":"/api/v1/pipeline-gates/{workflow_id}","surface":"internal","status":"internal","capability":"Legacy pipeline gate read"},
     {"method":"GET","path":"/api/v1/swarm/events/{project_id}","surface":"internal","status":"internal","capability":"Swarm realtime transport"},
