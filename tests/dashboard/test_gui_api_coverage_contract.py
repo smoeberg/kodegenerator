@@ -42,9 +42,9 @@ def test_coverage_summary_is_derived_from_classifications() -> None:
         "internal": counts["internal"],
     }
     assert coverage["summary"] == {
-        "total": 94,
-        "covered": 49,
-        "planned": 20,
+        "total": 100,
+        "covered": 57,
+        "planned": 18,
         "internal": 25,
     }
 
