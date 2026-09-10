@@ -1,0 +1,73 @@
+services:
+  customer-portal:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runtime
+    image: dor-runtime:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - python
+      - -m
+      - streamlit
+      - run
+      - customer_gui/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8502
+      - --server.headless=true
+    environment:
+      DOR_ENV: production
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      DOR_PIPELINE_STATE_ORGANIZATION_ID: ${DOR_ORGANIZATION_ID:-dor-org}
+      DOR_QUEUE_BACKEND: database
+      ARTIFACT_STORE_URL: http://minio:9000
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-dor-artifacts}
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}
+      DOR_JWT_SIGNING_KEYS_FILE: /run/secrets/dor_jwt_signing_keys
+      DOR_JWT_ACTIVE_KEY_ID: ${DOR_JWT_ACTIVE_KEY_ID:?DOR_JWT_ACTIVE_KEY_ID must be set}
+      DOR_AUTHORITY_SIGNING_KEY_FILE: /run/secrets/dor_authority_signing_key
+      DOR_ENCRYPTION_KEY_FILE: /run/secrets/dor_encryption_key
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      DOR_RUNTIME_ROLE: dashboard
+      HOME: /tmp/customer-portal-home
+      DOR_API_URL: http://api:8000
+      DOR_ADMIN_PASSWORD_FILE: /run/secrets/dor_admin_password
+    secrets:
+      - postgres_password
+      - minio_root_user
+      - minio_root_password
+      - dor_jwt_signing_keys
+      - dor_authority_signing_key
+      - dor_encryption_key
+      - dor_admin_password
+    ports:
+      - "${DOR_CUSTOMER_PORTAL_PORT:-8502}:8502"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8502/_stcore/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
