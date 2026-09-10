@@ -42,10 +42,10 @@ def test_coverage_summary_is_derived_from_classifications() -> None:
         "internal": counts["internal"],
     }
     assert coverage["summary"] == {
-        "total": 104,
-        "covered": 64,
-        "planned": 15,
-        "internal": 25,
+        "total": 106,
+        "covered": 67,
+        "planned": 13,
+        "internal": 26,
     }
 
 
@@ -74,7 +74,6 @@ def test_user_relevant_gaps_are_explicit_not_silently_internal() -> None:
         ("POST", "/api/v1/control-plane/requirement-traceability"),
         ("POST", "/api/v1/decisions"),
         ("GET", "/api/v1/decisions/{decision_id}"),
-        ("POST", "/api/v1/execution/start"),
     }
 
     for key in required_planned:
@@ -95,6 +94,33 @@ def test_case_clarification_and_decision_resolution_are_covered_in_sag() -> None
     for key in keys:
         assert by_key[key]["status"] == "covered"
         assert by_key[key]["surface"] == "sag"
+
+
+def test_case_execution_and_governed_proposal_are_covered_in_sag() -> None:
+    coverage = _load(COVERAGE_PATH)
+    by_key = {_key(item): item for item in coverage["endpoints"]}
+    keys = {
+        ("GET", "/api/v1/control-plane/projects/{project_id}/execution"),
+        ("POST", "/api/v1/control-plane/projects/{project_id}/execution"),
+        ("POST", "/implementation-agent/proposals"),
+    }
+
+    for key in keys:
+        assert by_key[key]["status"] == "covered"
+        assert by_key[key]["surface"] == "sag"
+
+
+def test_legacy_execution_mutations_are_not_canonical_gui_actions() -> None:
+    coverage = _load(COVERAGE_PATH)
+    by_key = {_key(item): item for item in coverage["endpoints"]}
+    keys = {
+        ("POST", "/api/v1/execution/start"),
+        ("POST", "/api/v1/execution/{workflow_id}/proposals"),
+    }
+
+    for key in keys:
+        assert by_key[key]["status"] == "internal"
+        assert by_key[key]["surface"] == "internal"
 
 
 def test_system_ai_settings_are_covered_in_administration() -> None:

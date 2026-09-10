@@ -13,6 +13,7 @@ CANONICAL_AUTHENTICATED_MODULES = (
     "api.endpoints.requirements_traceability",
     "api.endpoints.artifact_acceptances",
     "api.endpoints.onboarding",
+    "api.endpoints.case_execution",
     "api.endpoints.swarm",
     "api.endpoints.swarm_operations",
     "api.endpoints.workflows",
