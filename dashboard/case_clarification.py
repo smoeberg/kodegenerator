@@ -13,6 +13,7 @@ import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.case_audit_planning import render_case_audit_planning
+from dashboard.case_implementation import render_case_execution_implementation
 from dashboard.case_workbench import CaseWorkbenchItem
 from dashboard.user_feedback import render_api_error
 
@@ -323,3 +324,4 @@ def render_case_clarification(client: DORAPIClient, item: CaseWorkbenchItem) -> 
     render_case_decisions(client, item)
     st.write("")
     render_case_audit_planning(client, item)
+    render_case_execution_implementation(client, item)
