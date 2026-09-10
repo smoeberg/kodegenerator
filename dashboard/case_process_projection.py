@@ -19,6 +19,7 @@ class ProcessPhase(str, Enum):
     VERIFICATION = "verificering"
     DELIVERY = "levering"
     COMPLETED = "afsluttet"
+    UNKNOWN = "ukendt"
 
     @property
     def label(self) -> str:
@@ -29,7 +30,18 @@ class ProcessPhase(str, Enum):
             self.VERIFICATION: "Verificering",
             self.DELIVERY: "Levering",
             self.COMPLETED: "Afsluttet",
+            self.UNKNOWN: "Status ukendt",
         }[self]
+
+
+CANONICAL_PROCESS_PHASES: tuple[ProcessPhase, ...] = (
+    ProcessPhase.CLARIFICATION,
+    ProcessPhase.SOLUTION_DESIGN,
+    ProcessPhase.IMPLEMENTATION,
+    ProcessPhase.VERIFICATION,
+    ProcessPhase.DELIVERY,
+    ProcessPhase.COMPLETED,
+)
 
 
 class AttentionState(str, Enum):
@@ -45,6 +57,7 @@ class AttentionState(str, Enum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     ARCHIVED = "archived"
+    UNKNOWN = "unknown"
 
     @property
     def owner(self) -> str:
@@ -166,6 +179,12 @@ ACTION_COPY: dict[str, str] = {
     "advance": "Fortsæt",
 }
 
+UNKNOWN_STATUS = "Status kan ikke fastslås"
+UNKNOWN_EXPLANATION = (
+    "Backend execution-snapshot mangler en genkendelig runtime-state. "
+    "DOR viser derfor ingen næste handling."
+)
+
 
 @dataclass(frozen=True)
 class NextBestAction:
@@ -200,7 +219,7 @@ class CaseProcessProjection:
 
 
 def _state(execution: Mapping[str, Any] | None) -> str:
-    if not execution:
+    if execution is None:
         return ""
     return str(
         execution.get("current_state")
@@ -285,6 +304,9 @@ def _resolve_next_best_action(
     execution: Mapping[str, Any] | None,
 ) -> NextBestAction | None:
     """Choose one NBA strictly from backend-exposed allowed actions."""
+    if proj.attention_state is AttentionState.UNKNOWN:
+        return None
+
     allowed = proj.allowed_actions
     if not allowed:
         return None
@@ -356,7 +378,7 @@ def _attention(
         return AttentionState.CANCELLED, "Sagen er stoppet", "Der kræves ingen handling."
     if project_status == "archived":
         return AttentionState.ARCHIVED, "Sagen er arkiveret", "Der kræves ingen handling."
-    if not execution:
+    if execution is None:
         return AttentionState.READY, "Klar til at starte", "Sagen er oprettet og klar."
 
     action_required = str(execution.get("action_required") or "none").strip().lower()
@@ -396,21 +418,25 @@ def _attention(
 
 
 def _process_steps(phase: ProcessPhase) -> list[dict[str, str]]:
-    phases = list(ProcessPhase)
-    current = phases.index(phase)
+    if phase is ProcessPhase.UNKNOWN:
+        return []
+    current = CANONICAL_PROCESS_PHASES.index(phase)
     return [
         {
             "id": item.value,
             "label": item.label,
             "status": "completed" if index < current else "active" if index == current else "pending",
         }
-        for index, item in enumerate(phases)
+        for index, item in enumerate(CANONICAL_PROCESS_PHASES)
     ]
 
 
 def _evidence(
     phase: ProcessPhase, execution: Mapping[str, Any] | None
 ) -> tuple[list[str], list[str]]:
+    if phase is ProcessPhase.UNKNOWN:
+        return [], []
+
     state = _state(execution)
     milestones = [
         ("Krav", {"requirements_approved", "architecture_generating", "architecture_generated", "architecture_approved", "contracts_generating", "contracts_generated", "contracts_approved", "code_generating", "code_generated", "tests_generating", "tests_generated", "tests_running", "tests_passed", "tests_failed", "deploying", "deployed", "release_approved", "released"}),
@@ -441,20 +467,31 @@ def project_case(
 ) -> CaseProcessProjection:
     """Build the shared read-only projection for one DOR case."""
     state = _state(execution_data)
-    phase = PIPELINE_STATE_TO_PHASE.get(state, ProcessPhase.CLARIFICATION)
-    human_status = (
-        PIPELINE_STATE_COPY.get(state)
-        if state
-        else PROJECT_STATE_COPY.get(_project_status(project_data), "Klar til at starte")
-    ) or "Ukendt status"
+    unknown_execution_state = execution_data is not None and state not in PIPELINE_STATE_TO_PHASE
 
-    attention_state, attention_title, attention_explanation = _attention(
-        project_data, execution_data
-    )
-    allowed_actions = _collect_allowed_actions(project_data, execution_data)
-    completed, missing = _evidence(phase, execution_data)
+    if unknown_execution_state:
+        phase = ProcessPhase.UNKNOWN
+        human_status = UNKNOWN_STATUS
+        attention_state = AttentionState.UNKNOWN
+        attention_title = UNKNOWN_STATUS
+        attention_explanation = UNKNOWN_EXPLANATION
+        allowed_actions: tuple[str, ...] = ()
+        completed: list[str] = []
+        missing: list[str] = []
+    else:
+        phase = PIPELINE_STATE_TO_PHASE.get(state, ProcessPhase.CLARIFICATION)
+        human_status = (
+            PIPELINE_STATE_COPY.get(state)
+            if state
+            else PROJECT_STATE_COPY.get(_project_status(project_data), "Klar til at starte")
+        ) or "Ukendt status"
+        attention_state, attention_title, attention_explanation = _attention(
+            project_data, execution_data
+        )
+        allowed_actions = _collect_allowed_actions(project_data, execution_data)
+        completed, missing = _evidence(phase, execution_data)
+
     gate = _blocking_gate(execution_data)
-
     proj = CaseProcessProjection(
         case_id=str(case_id),
         title=str(project_data.get("name") or project_data.get("title") or f"Sag #{case_id}"),
@@ -479,7 +516,7 @@ def project_case(
         },
         raw_backend={
             "project": dict(project_data),
-            "execution": dict(execution_data) if execution_data else None,
+            "execution": dict(execution_data) if execution_data is not None else None,
             "delivery": dict(delivery_data) if delivery_data else None,
         },
     )

@@ -7,6 +7,7 @@ VIEWS = Path("dashboard/case_shell_views.py")
 WORKBENCH = Path("dashboard/case_workbench.py")
 PROJECT_LIFECYCLE = Path("dashboard/project_lifecycle.py")
 SETTINGS = Path("dashboard/settings_view.py")
+GREETING = Path("dashboard/copenhagen_greeting.py")
 COMPOSE = Path("compose.yml")
 CONFIG = Path(".streamlit/config.toml")
 
@@ -60,12 +61,14 @@ def test_operator_center_has_no_local_workflow_transition_engine():
 
 
 def test_case_views_keep_time_aware_danish_greeting():
-    source = VIEWS.read_text(encoding="utf-8")
-    assert "Europe/Copenhagen" in source
-    assert 'return "Godmorgen"' in source
-    assert 'return "Goddag"' in source
-    assert 'return "Godaften"' in source
-    assert "greeting()" in source
+    views = VIEWS.read_text(encoding="utf-8")
+    greeting = GREETING.read_text(encoding="utf-8")
+    assert "copenhagen_greeting()" in views
+    assert "Europe/Copenhagen" in greeting
+    assert 'return "Godmorgen"' in greeting
+    assert 'return "God eftermiddag"' in greeting
+    assert 'return "Godaften"' in greeting
+    assert "greeting()" in views
 
 
 def test_operator_center_builds_shared_case_workbench():
