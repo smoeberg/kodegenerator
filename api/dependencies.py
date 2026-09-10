@@ -27,7 +27,16 @@ from runtime.project_scope_runtime import ActiveProjectScopeResolver
 from services.bot_catalog import BotCatalogService
 from services.council_selection import CouncilSelectionService
 from services.governed_llm import GovernedLLMRuntime
+from services.implementation_ai_settings import (
+    DEFAULT_OPENAI_BASE_URL,
+    effective_implementation_ai_config,
+    normalize_openai_base_url,
+)
 from services.llm_adapters import OpenAIAdapter
+from services.runtime_settings import (
+    SettingsEncryptionUnavailable,
+    SettingsSecretUnreadable,
+)
 from services.swarm_control_store import SwarmControlStore
 
 
@@ -138,15 +147,51 @@ def _active_scope_resolver():
     return ActiveProjectScopeResolver(get_dor().database).require
 
 
-@lru_cache(maxsize=1)
+def _implementation_provider_config() -> tuple[str | None, str | None, str]:
+    """Resolve tenant settings only inside a tenant-pinned worker process.
+
+    The direct API dependency remains environment-backed because its requests can
+    span organizations. A worker is pinned to exactly one pipeline organization,
+    so it may safely resolve that organization's stored AI configuration before
+    each new implementation task.
+    """
+    runtime_role = os.getenv("DOR_RUNTIME_ROLE", "").strip().lower()
+    organization_id = os.getenv("DOR_PIPELINE_STATE_ORGANIZATION_ID", "").strip()
+    if runtime_role == "worker" and organization_id:
+        try:
+            config = effective_implementation_ai_config(
+                get_dor().database,
+                organization_id,
+            )
+        except (SettingsEncryptionUnavailable, SettingsSecretUnreadable, ValueError) as exc:
+            raise ImplementationAgentConfigurationError(
+                "Implementation Agent stored configuration is unavailable"
+            ) from exc
+        return (
+            str(config.get("api_key") or "").strip() or None,
+            str(config.get("model") or "").strip() or None,
+            str(config.get("base_url") or DEFAULT_OPENAI_BASE_URL),
+        )
+
+    base_url = normalize_openai_base_url(
+        os.getenv("DOR_IMPLEMENTATION_OPENAI_BASE_URL", "").strip()
+        or DEFAULT_OPENAI_BASE_URL
+    )
+    return (
+        os.getenv("OPENAI_API_KEY"),
+        os.getenv("DOR_IMPLEMENTATION_MODEL"),
+        base_url,
+    )
+
+
 def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
-    api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("DOR_IMPLEMENTATION_MODEL")
+    """Build a fresh runtime so newly saved worker settings apply to new tasks."""
+    api_key, model, base_url = _implementation_provider_config()
     configured_resources = os.getenv("DOR_IMPLEMENTATION_ALLOWED_RESOURCES")
     if not api_key:
-        raise ImplementationAgentConfigurationError("OPENAI_API_KEY is required for the Implementation Agent")
+        raise ImplementationAgentConfigurationError("OPENAI_API_KEY or a saved AI API key is required for the Implementation Agent")
     if not model:
-        raise ImplementationAgentConfigurationError("DOR_IMPLEMENTATION_MODEL is required for the Implementation Agent")
+        raise ImplementationAgentConfigurationError("DOR_IMPLEMENTATION_MODEL or a saved AI model is required for the Implementation Agent")
     if not configured_resources:
         raise ImplementationAgentConfigurationError("DOR_IMPLEMENTATION_ALLOWED_RESOURCES is required")
     resources = tuple(item.strip() for item in configured_resources.split(","))
@@ -156,6 +201,7 @@ def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
         provider = OpenAIImplementationProvider(
             api_key=api_key,
             model=model,
+            base_url=base_url,
             max_input_bytes=_positive_int_environment("DOR_IMPLEMENTATION_MAX_INPUT_BYTES", 512 * 1024),
             max_output_bytes=_positive_int_environment("DOR_IMPLEMENTATION_MAX_OUTPUT_BYTES", 512 * 1024),
         )
