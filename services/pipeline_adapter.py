@@ -132,6 +132,8 @@ class PipelineAdapter:
     ) -> dict[str, str] | None:
         if project_id is None and plan_request_fingerprint is None:
             return None
+        if project_id is None or plan_request_fingerprint is None:
+            raise ValueError("project_id and plan_request_fingerprint must be supplied together")
         if not isinstance(project_id, str) or not project_id.strip() or project_id != project_id.strip():
             raise ValueError("project_id and plan_request_fingerprint must be supplied together")
         if (
