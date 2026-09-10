@@ -1,7 +1,7 @@
 """Versioned Control Plane API for governed onboarding-intent declarations."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.auth import User, get_current_active_user, require_user_organization
 from api.dependencies import get_dor
@@ -11,6 +11,7 @@ from api.onboarding_contracts import (
     OnboardingIntentResponse,
 )
 from domain.principal import Principal
+from infrastructure.persistence.uow import UnitOfWork
 from phase4.onboarding import OnboardingContractError, OnboardingIntent, OnboardingIntentDraft
 from runtime.commands import CommandConflictError
 from runtime.context import ContextError
@@ -63,6 +64,32 @@ def _context(dor: DORRuntime, current_user: User):
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "organization_context_denied"},
         ) from exc
+
+
+@router.get("/current", response_model=list[OnboardingIntentResponse])
+def get_current_onboarding_intents(
+    project_id: str = Query(min_length=1, max_length=128),
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> list[OnboardingIntentResponse]:
+    """Return current immutable onboarding intent leaves for one accessible project."""
+    context = _context(dor, current_user)
+    with dor.database.session(context.organization_id) as session:
+        with UnitOfWork(session) as uow:
+            project = uow.projects.get_for_organization(
+                project_id,
+                context.organization_id,
+            )
+            if project is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": "project_not_found"},
+                )
+            intents = uow.onboarding_intents.get_current_for_project(
+                project_id,
+                context.organization_id,
+            )
+    return [_intent_response(intent) for intent in intents]
 
 
 @router.post(

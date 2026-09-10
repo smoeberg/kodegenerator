@@ -10,7 +10,7 @@
       "internal": "Backend/worker/diagnostic/legacy API with no direct canonical GUI surface."
     }
   },
-  "summary": {"total": 103, "covered": 60, "planned": 18, "internal": 25},
+  "summary": {"total": 104, "covered": 64, "planned": 15, "internal": 25},
   "endpoints": [
     {"method":"GET","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate selection"},
     {"method":"GET","path":"/api/v1/bot-evidence/candidates/{candidate_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate"},
@@ -43,7 +43,8 @@
     {"method":"GET","path":"/api/v1/control-plane/artifact-acceptances/{acceptance_id}","surface":"sag","status":"planned","capability":"Artifact acceptance"},
     {"method":"POST","path":"/api/v1/control-plane/delivery-certificates","surface":"sag","status":"planned","capability":"Delivery certification"},
     {"method":"GET","path":"/api/v1/control-plane/delivery-certificates/{certificate_id}","surface":"sag","status":"planned","capability":"Delivery certification"},
-    {"method":"POST","path":"/api/v1/control-plane/onboarding-intents","surface":"sag","status":"planned","capability":"Onboarding intent"},
+    {"method":"POST","path":"/api/v1/control-plane/onboarding-intents","surface":"sag","status":"covered","capability":"Onboarding intent"},
+    {"method":"GET","path":"/api/v1/control-plane/onboarding-intents/current","surface":"sag","status":"covered","capability":"Current onboarding intent"},
     {"method":"GET","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization context"},
     {"method":"POST","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization management"},
     {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}","surface":"administration","status":"covered","capability":"Organization management"},
@@ -64,9 +65,9 @@
     {"method":"POST","path":"/api/v1/control-plane/requirement-traceability","surface":"sag","status":"planned","capability":"Requirement traceability"},
     {"method":"GET","path":"/api/v1/control-plane/requirement-traceability/{manifest_id}","surface":"sag","status":"planned","capability":"Requirement traceability"},
     {"method":"POST","path":"/api/v1/decisions","surface":"sag","status":"planned","capability":"Decision record"},
-    {"method":"GET","path":"/api/v1/decisions/pending","surface":"sag","status":"planned","capability":"Decision inbox"},
+    {"method":"GET","path":"/api/v1/decisions/pending","surface":"sag","status":"covered","capability":"Decision inbox"},
     {"method":"GET","path":"/api/v1/decisions/{decision_id}","surface":"sag","status":"planned","capability":"Decision detail"},
-    {"method":"POST","path":"/api/v1/decisions/{decision_id}/resolve","surface":"sag","status":"planned","capability":"Decision resolution"},
+    {"method":"POST","path":"/api/v1/decisions/{decision_id}/resolve","surface":"sag","status":"covered","capability":"Decision resolution"},
     {"method":"GET","path":"/api/v1/execution","surface":"sag","status":"covered","capability":"Execution overview"},
     {"method":"GET","path":"/api/v1/execution/events/{workflow_id}","surface":"sag","status":"covered","capability":"Execution realtime SSE"},
     {"method":"POST","path":"/api/v1/execution/start","surface":"sag","status":"planned","capability":"Execution start"},

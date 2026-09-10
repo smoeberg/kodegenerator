@@ -42,9 +42,9 @@ def test_coverage_summary_is_derived_from_classifications() -> None:
         "internal": counts["internal"],
     }
     assert coverage["summary"] == {
-        "total": 103,
-        "covered": 60,
-        "planned": 18,
+        "total": 104,
+        "covered": 64,
+        "planned": 15,
         "internal": 25,
     }
 
@@ -69,16 +69,31 @@ def test_user_relevant_gaps_are_explicit_not_silently_internal() -> None:
     by_key = {_key(item): item for item in coverage["endpoints"]}
 
     required_planned = {
-        ("POST", "/api/v1/control-plane/onboarding-intents"),
         ("POST", "/api/v1/control-plane/artifact-acceptances"),
         ("POST", "/api/v1/control-plane/delivery-certificates"),
         ("POST", "/api/v1/control-plane/requirement-traceability"),
-        ("GET", "/api/v1/decisions/pending"),
+        ("POST", "/api/v1/decisions"),
+        ("GET", "/api/v1/decisions/{decision_id}"),
         ("POST", "/api/v1/execution/start"),
     }
 
     for key in required_planned:
         assert by_key[key]["status"] == "planned"
+        assert by_key[key]["surface"] == "sag"
+
+
+def test_case_clarification_and_decision_resolution_are_covered_in_sag() -> None:
+    coverage = _load(COVERAGE_PATH)
+    by_key = {_key(item): item for item in coverage["endpoints"]}
+    keys = {
+        ("POST", "/api/v1/control-plane/onboarding-intents"),
+        ("GET", "/api/v1/control-plane/onboarding-intents/current"),
+        ("GET", "/api/v1/decisions/pending"),
+        ("POST", "/api/v1/decisions/{decision_id}/resolve"),
+    }
+
+    for key in keys:
+        assert by_key[key]["status"] == "covered"
         assert by_key[key]["surface"] == "sag"
 
 
