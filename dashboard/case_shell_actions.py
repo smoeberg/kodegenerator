@@ -26,6 +26,7 @@ from dashboard.evidence_trace import render_evidence_trace
 from dashboard.project_lifecycle import render_project_lifecycle_console
 from dashboard.realtime import WorkflowRealtime
 from dashboard.ui_primitives import format_timestamp
+from dashboard.user_feedback import explain_api_error, render_api_error
 
 
 def stop_realtime() -> None:
@@ -69,8 +70,8 @@ def pump_realtime() -> None:
         )
 
 
-def create_case_form(client: DORAPIClient) -> None:
-    with st.expander("Opret ny sag"):
+def create_case_form(client: DORAPIClient, *, expanded: bool = False) -> None:
+    with st.expander("Opret ny sag", expanded=expanded):
         with st.form("create-case"):
             name = st.text_input("Navn")
             goal = st.text_area("Hvad skal sagen opnå?")
@@ -89,8 +90,11 @@ def create_case_form(client: DORAPIClient) -> None:
         if not submit:
             return
         organization_id = st.session_state.get("organization_id")
-        if not organization_id or not name.strip() or not goal.strip():
-            st.warning("Organisation, navn og mål er påkrævet.")
+        if not organization_id:
+            st.warning("Vælg eller opret en organisation, før du opretter en sag.")
+            return
+        if not name.strip() or not goal.strip():
+            st.warning("Giv sagen et navn og beskriv, hvad den skal opnå.")
             return
 
         constraint_map: dict[str, str] = {}
@@ -125,31 +129,36 @@ def create_case_form(client: DORAPIClient) -> None:
             )
             project = result.get("project", result) if isinstance(result, Mapping) else {}
             st.session_state["selected_project_id"] = project.get("project_id")
-            st.success("Sagen er oprettet gennem Control Plane API.")
+            st.success("Sagen er oprettet.")
             st.rerun()
         except DORAPIError as exc:
-            st.error(f"API-fejl ({exc.status_code}): {exc}")
+            render_api_error(
+                exc,
+                key="create-case",
+                operation="Sagen kunne ikke oprettes",
+                technical_details=False,
+            )
 
 
 def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
     execution = item.execution
     if not execution:
-        st.info("Der er endnu ingen tilknyttet execution for sagen.")
+        st.info("DOR har endnu ikke startet en arbejdsproces for sagen.")
         return
     workflow_id = str(execution.get("workflow_id") or "").strip()
     if not workflow_id:
-        st.info("Execution mangler workflow-identitet.")
+        st.info("DOR mangler en procesreference, så handlinger kan ikke vises endnu.")
         return
 
     try:
         gates = normalize_gates(client.get(f"/api/v1/execution/{workflow_id}/gates"))
     except DORAPIError as exc:
-        st.error(f"Handlinger kunne ikke hentes ({exc.status_code}).")
+        render_api_error(exc, key=f"gate-list-{workflow_id}", operation="Handlinger kunne ikke hentes")
         return
 
     actionable = [gate for gate in gates if gate["status"] in {"human_required", "rejected"}]
     if not actionable:
-        st.info("Backend har ikke åbnet en human gate på denne sag.")
+        st.info("Der er ingen beslutning, der kræver dig lige nu.")
         return
 
     for gate in actionable:
@@ -170,10 +179,14 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                                 f"/api/v1/execution/{workflow_id}/gates/decide",
                                 json=gate_decision_payload(gate["id"], "approved"),
                             )
-                            st.success("Beslutningen er registreret.")
+                            st.success("Beslutningen er registreret. DOR vurderer nu næste skridt.")
                             st.rerun()
                         except DORAPIError as exc:
-                            st.error(f"Afvist ({exc.status_code}): {exc}")
+                            render_api_error(
+                                exc,
+                                key=f"approve-error-{workflow_id}-{gate['id']}",
+                                operation="Godkendelsen blev ikke registreret",
+                            )
                 with reject_col:
                     if st.button(
                         "Bed om ændringer",
@@ -185,13 +198,17 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                                 f"/api/v1/execution/{workflow_id}/gates/decide",
                                 json=gate_decision_payload(gate["id"], "rejected"),
                             )
-                            st.warning("Ændringsønsket er registreret; workflowet er fail-closed.")
+                            st.warning("Ændringsønsket er registreret. Sagen fortsætter ikke, før ændringerne er håndteret.")
                             st.rerun()
                         except DORAPIError as exc:
-                            st.error(f"Afvist ({exc.status_code}): {exc}")
+                            render_api_error(
+                                exc,
+                                key=f"reject-error-{workflow_id}-{gate['id']}",
+                                operation="Ændringsønsket blev ikke registreret",
+                            )
                 continue
 
-            st.warning("Sagen er blokeret af en afvist gate.")
+            st.warning("Sagen er blokeret af en afvist beslutning.")
             if gate["can_rework"]:
                 reason = st.text_area(
                     "Hvad skal ændres?",
@@ -208,10 +225,14 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                             f"/api/v1/execution/{workflow_id}/gates/rework",
                             json=gate_rework_payload(gate["id"], reason),
                         )
-                        st.success("Governed rework er køet.")
+                        st.success("DOR arbejder nu på de ønskede ændringer.")
                         st.rerun()
                     except DORAPIError as exc:
-                        st.error(f"Rework afvist ({exc.status_code}): {exc}")
+                        render_api_error(
+                            exc,
+                            key=f"rework-error-{workflow_id}-{gate['id']}",
+                            operation="DOR kunne ikke starte ændringsarbejdet",
+                        )
             if gate["can_retry"]:
                 reason = st.text_area(
                     "Begrundelse for ny vurdering",
@@ -227,10 +248,14 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                             f"/api/v1/execution/{workflow_id}/gates/retry",
                             json=gate_retry_payload(gate["id"], reason),
                         )
-                        st.success("Ny decision-round er åbnet af backend.")
+                        st.success("Gaten er åbnet igen – workflowet venter på din nye beslutning.")
                         st.rerun()
                     except DORAPIError as exc:
-                        st.error(f"Retry afvist ({exc.status_code}): {exc}")
+                        render_api_error(
+                            exc,
+                            key=f"retry-error-{workflow_id}-{gate['id']}",
+                            operation="Ny vurdering kunne ikke åbnes",
+                        )
 
 
 def render_evidence_summary(item: CaseWorkbenchItem) -> None:
@@ -288,9 +313,10 @@ def render_execution_detail(client: DORAPIClient, workflow_id: str) -> None:
                 proposals = client.get(f"/api/v1/execution/{workflow_id}/proposals")
                 st.json(build_evidence_trace(payload, gates, proposals))
             except DORAPIError as exc:
-                st.warning(f"Evidence trace ikke komplet ({exc.status_code}).")
+                feedback = explain_api_error(exc)
+                st.warning(f"{feedback.title}. {feedback.next_step}")
     except DORAPIError as exc:
-        st.error(f"Execution kunne ikke hentes ({exc.status_code}): {exc}")
+        render_api_error(exc, key=f"execution-{workflow_id}", operation="Arbejdsprocessen kunne ikke hentes")
     render_evidence_trace(client, workflow_id)
 
 
@@ -348,7 +374,12 @@ def evidence_lookup(client: DORAPIClient) -> None:
         )
         st.json(result)
     except DORAPIError as exc:
-        st.error(f"Evidence API ({exc.status_code}): {exc}")
+        render_api_error(
+            exc,
+            key="technical-evidence",
+            operation="Evidensen kunne ikke hentes",
+            technical_details=False,
+        )
 
 
 def should_render_gate_actions(item: CaseWorkbenchItem) -> bool:

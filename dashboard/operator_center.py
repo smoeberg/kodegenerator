@@ -26,6 +26,7 @@ from dashboard.context_navigation import (
 )
 from dashboard.settings_view import render_settings
 from dashboard.state import authenticated, clear_auth, init_state
+from dashboard.user_feedback import explain_api_error, render_api_error
 
 WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")
 ADMIN_NAV = ("Ingen", "Indstillinger")
@@ -166,7 +167,8 @@ def _get_executions(client: DORAPIClient) -> tuple[list[dict[str, Any]], str | N
         rows = payload if isinstance(payload, list) else []
         return [dict(row) for row in rows if isinstance(row, Mapping)], None
     except DORAPIError as exc:
-        return [], f"Live execution-status er midlertidigt utilgængelig ({exc.status_code})."
+        feedback = explain_api_error(exc)
+        return [], f"{feedback.title}. {feedback.next_step}"
 
 
 def _sidebar(client: DORAPIClient) -> str:
@@ -190,7 +192,8 @@ def _sidebar(client: DORAPIClient) -> str:
             sync_organization_context(client)
             render_sidebar_organization_switcher(client)
         except DORAPIError as exc:
-            st.caption(f"Organisation kunne ikke hentes ({exc.status_code}).")
+            feedback = explain_api_error(exc)
+            st.caption(f"{feedback.title}. {feedback.next_step}")
 
         st.markdown('<div class="nav-section">Administration</div>', unsafe_allow_html=True)
         admin = st.radio(
@@ -232,7 +235,32 @@ def _login() -> None:
                 st.session_state["username"] = username
                 st.rerun()
             except DORAPIError as exc:
-                st.error(f"Login fejlede ({exc.status_code}): {exc}")
+                if exc.status_code == 401:
+                    st.error("Brugernavn eller adgangskode blev ikke godkendt. Prøv igen.")
+                else:
+                    render_api_error(
+                        exc,
+                        key="login",
+                        operation="Login kunne ikke gennemføres",
+                        technical_details=False,
+                    )
+
+
+def _render_no_organization_state() -> None:
+    st.markdown(
+        '<div class="eyebrow">DOR / KOM I GANG</div>'
+        '<h1>Vælg eller opret en organisation</h1>'
+        '<div class="subtitle">DOR skal kende din organisation, før sager, ansvar og evidens kan bindes korrekt.</div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True):
+        st.subheader("Organisationen er dit arbejdsrum")
+        st.write(
+            "Opret en organisation eller vælg en eksisterende. Du behøver ikke kende interne ID'er eller konfigurere noget i en terminal."
+        )
+        if st.button("Gå til Indstillinger", type="primary", use_container_width=True):
+            st.session_state["operator_admin_nav"] = "Indstillinger"
+            st.rerun()
 
 
 def main() -> None:
@@ -244,12 +272,18 @@ def main() -> None:
     client = api()
     nav = _sidebar(client)
     organization_id = st.session_state.get("organization_id")
+
+    if nav in WORK_NAV and not organization_id:
+        stop_realtime()
+        _render_no_organization_state()
+        return
+
     projects: list[dict[str, Any]] = []
     if organization_id:
         try:
             projects = _get_projects(client, organization_id)
         except DORAPIError as exc:
-            st.error(f"Sagsdata kunne ikke hentes ({exc.status_code}).")
+            render_api_error(exc, key="case-catalog", operation="Sagerne kunne ikke hentes")
 
     executions, execution_error = _get_executions(client)
     snapshot = build_case_workbench(projects, executions)
