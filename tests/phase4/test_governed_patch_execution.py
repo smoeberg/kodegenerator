@@ -584,8 +584,10 @@ def test_api_denies_human_before_patch_runtime_executes(tmp_path):
 
 
 def _clear_runtime_caches() -> None:
-    get_governed_patch_runtime.cache_clear()
-    get_implementation_agent_runtime.cache_clear()
+    if hasattr(get_governed_patch_runtime, "cache_clear"):
+        get_governed_patch_runtime.cache_clear()
+    if hasattr(get_implementation_agent_runtime, "cache_clear"):
+        get_implementation_agent_runtime.cache_clear()
 
 
 def test_patch_dependency_is_fail_closed_without_workspace_or_tools(monkeypatch):
