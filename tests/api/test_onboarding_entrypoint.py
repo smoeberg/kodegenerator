@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from api.auth import User
-from api.endpoints.onboarding import declare_onboarding_intent
+from api.endpoints.onboarding import declare_onboarding_intent, get_current_onboarding_intents
 from api.onboarding_contracts import OnboardingIntentDeclareRequest
 from domain.actor import Actor, ActorType
 from domain.authority import RoleAssignment, RoleDefinition
@@ -107,6 +107,63 @@ def test_declaration_derives_actor_and_organization_from_authenticated_user(tmp_
     assert first.intent.project_id == PROJECT_ID
     assert first.intent.declared_by == "alice"
     assert first.intent.source_repository == "repository:external/example"
+
+
+def test_current_read_returns_only_leaf_of_each_project_repository_chain(tmp_path) -> None:
+    runtime = _runtime(tmp_path, grant=True)
+    user = User(username="alice", organization_id="org-a")
+
+    first = declare_onboarding_intent(_request("cmd-root"), current_user=user, dor=runtime)
+    declare_onboarding_intent(
+        OnboardingIntentDeclareRequest(
+            command_id="cmd-successor",
+            project_id=PROJECT_ID,
+            source_repository="repository:external/example",
+            purpose="extend",
+            rationale="Extend the repository, but preserve the public API.",
+            supersedes_intent_id=first.intent.intent_id,
+        ),
+        current_user=user,
+        dor=runtime,
+    )
+    declare_onboarding_intent(
+        OnboardingIntentDeclareRequest(
+            command_id="cmd-second-repo",
+            project_id=PROJECT_ID,
+            source_repository="repository:external/companion",
+            purpose="audit_only",
+            rationale="Inspect the companion repository without changing it.",
+        ),
+        current_user=user,
+        dor=runtime,
+    )
+
+    current = get_current_onboarding_intents(
+        project_id=PROJECT_ID,
+        current_user=user,
+        dor=runtime,
+    )
+
+    assert len(current) == 2
+    by_repository = {item.source_repository: item for item in current}
+    assert by_repository["repository:external/example"].rationale.endswith("public API.")
+    assert by_repository["repository:external/example"].supersedes_intent_id == first.intent.intent_id
+    assert by_repository["repository:external/companion"].purpose.value == "audit_only"
+
+
+def test_current_read_fails_closed_for_unknown_project(tmp_path) -> None:
+    runtime = _runtime(tmp_path, grant=True)
+    user = User(username="alice", organization_id="org-a")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_onboarding_intents(
+            project_id="not-visible",
+            current_user=user,
+            dor=runtime,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["error"] == "project_not_found"
 
 
 def test_declaration_fails_closed_without_external_capability(tmp_path) -> None:
