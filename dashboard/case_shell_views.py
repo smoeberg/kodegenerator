@@ -25,6 +25,7 @@ from dashboard.case_workbench import (
     find_case,
     overview_counts,
 )
+from dashboard.workbench_guidance import case_status_badge, primary_action_text
 
 
 def greeting() -> str:
@@ -89,6 +90,15 @@ def _activity_copy(item: CaseWorkbenchItem) -> tuple[str, str]:
     )
 
 
+def _render_status_badge(item: CaseWorkbenchItem) -> None:
+    badge = case_status_badge(item.projection)
+    css_class = "" if badge.tone == "attention" else " quiet-pill"
+    st.markdown(
+        f'<span class="status-pill{css_class}">{badge.label}</span>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_process(item: CaseWorkbenchItem) -> None:
     html = '<div class="lifecycle">'
     for index, step in enumerate(item.projection.process_steps, start=1):
@@ -107,17 +117,7 @@ def render_process(item: CaseWorkbenchItem) -> None:
 
 def render_attention(item: CaseWorkbenchItem) -> None:
     projection = item.projection
-    if projection.attention_required:
-        st.markdown(
-            '<span class="status-pill">Din handling er nødvendig</span>',
-            unsafe_allow_html=True,
-        )
-    elif projection.owner_type == "dor":
-        st.markdown(
-            '<span class="status-pill quiet-pill">DOR har bolden</span>',
-            unsafe_allow_html=True,
-        )
-
+    _render_status_badge(item)
     st.markdown(
         f'<div class="attention"><div class="attention-kicker">NÆSTE SKRIDT</div>'
         f'<div class="attention-title">{projection.attention_title}</div>'
@@ -147,7 +147,7 @@ def _render_quick_starts() -> None:
     )
     cols = st.columns(3)
     with cols[0]:
-        if st.button("＋ Opret en sag", type="primary", use_container_width=True):
+        if st.button("＋ Opret en sag", use_container_width=True):
             _go_to("Sager")
         st.caption("Beskriv situationen og det ønskede resultat.")
     with cols[1]:
@@ -207,12 +207,7 @@ def overview(
                 st.subheader(projection.title)
                 st.write(projection.human_status)
             with top_right:
-                if projection.attention_required:
-                    st.markdown("**Kræver dig nu**")
-                elif projection.owner_type == "dor":
-                    st.markdown("**DOR arbejder**")
-                else:
-                    st.markdown("**Følg sagen**")
+                _render_status_badge(focus)
 
             render_attention(focus)
             render_process(focus)
@@ -249,13 +244,11 @@ def overview(
                 continue
             cols = st.columns([5, 1])
             with cols[0]:
+                _render_status_badge(item)
                 st.markdown(f"**{item.projection.title}**")
-                next_label = (
-                    item.projection.next_action.label
-                    if item.projection.next_action
-                    else item.projection.attention_title
+                st.caption(
+                    f"{item.projection.phase.label} · Næste: {primary_action_text(item.projection)}"
                 )
-                st.caption(f"{item.projection.phase.label} · Næste: {next_label}")
             with cols[1]:
                 if st.button(
                     "Åbn",
@@ -278,20 +271,21 @@ def _work_group(
     if not items:
         st.caption("Ingen sager i denne gruppe.")
         return
-    for item in items:
+    for index, item in enumerate(items):
         with st.container(border=True):
             cols = st.columns([5, 1])
             with cols[0]:
+                _render_status_badge(item)
                 st.markdown(f"**{item.projection.title}**")
                 st.write(item.projection.attention_title)
-                st.caption(f"{item.projection.phase.label} · {item.projection.human_status}")
-                if item.projection.next_action:
-                    st.caption(f"Næste: {item.projection.next_action.label}")
+                st.caption(
+                    f"{item.projection.phase.label} · Næste: {primary_action_text(item.projection)}"
+                )
             with cols[1]:
                 if st.button(
                     "Åbn sag",
                     key=f"work-open-{title}-{item.projection.case_id}",
-                    type="primary" if primary else "secondary",
+                    type="primary" if primary and index == 0 else "secondary",
                     use_container_width=True,
                 ):
                     open_case(item.projection.case_id)
@@ -328,47 +322,31 @@ def _render_case_action(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
             "Sagen er afsluttet. Eventuelle administrative lifecycle-handlinger ligger under Flere muligheder."
         )
     elif projection.attention_required:
-        st.info("Backend har endnu ikke åbnet en konkret human handling for dette snapshot.")
+        st.info("DOR har endnu ikke åbnet en konkret handling for denne situation.")
     else:
         st.info("Der er ingen åben handling lige nu.")
 
 
-def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
-    st.markdown(
-        '<div class="eyebrow">DOR / SAG</div>'
-        '<h1>Sag</h1>'
-        '<div class="subtitle">Forstå situationen, tag næste handling, og se hvorfor.</div>',
-        unsafe_allow_html=True,
-    )
-    create_case_form(client)
-    if not snapshot.cases:
-        st.info("Der er ingen sager at vise endnu.")
-        return
+def _select_case(snapshot: CaseWorkbenchSnapshot, selected_id: str) -> None:
+    st.markdown('<div class="section-label">SAGER</div>', unsafe_allow_html=True)
+    for candidate in snapshot.cases:
+        candidate_id = candidate.projection.case_id
+        selected = candidate_id == selected_id
+        label = f"● {candidate.projection.title}" if selected else candidate.projection.title
+        if st.button(
+            label,
+            key=f"case-picker-{candidate_id}",
+            use_container_width=True,
+        ) and not selected:
+            st.session_state["selected_project_id"] = candidate_id
+            st.rerun()
+        badge = case_status_badge(candidate.projection)
+        st.caption(f"{badge.label} · {candidate.projection.phase.label}")
 
-    case_ids = [item.projection.case_id for item in snapshot.cases]
-    selected_id = st.session_state.get("selected_project_id")
-    if selected_id not in case_ids:
-        selected_id = case_ids[0]
-        st.session_state["selected_project_id"] = selected_id
-    index = case_ids.index(selected_id)
 
-    def _case_label(case_id: str) -> str:
-        item = find_case(snapshot, case_id)
-        return item.projection.title if item else case_id
-
-    selected_id = st.selectbox(
-        "Vælg sag",
-        case_ids,
-        index=index,
-        format_func=_case_label,
-    )
-    st.session_state["selected_project_id"] = selected_id
-    item = find_case(snapshot, selected_id)
-    if item is None:
-        st.error("Sagen kunne ikke projiceres fra det aktuelle backend-snapshot.")
-        return
-
+def _render_case_detail(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
     projection = item.projection
+    _render_status_badge(item)
     st.caption(f"{projection.phase.label} · {projection.human_status}")
     st.title(projection.title)
 
@@ -449,6 +427,37 @@ def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
         render_execution_detail(client, technical_workflow_id)
 
 
+def cases_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
+    st.markdown(
+        '<div class="eyebrow">DOR / SAG</div>'
+        '<h1>Sag</h1>'
+        '<div class="subtitle">Vælg en sag, se hvor den er, og gør kun det næste, som situationen kræver.</div>',
+        unsafe_allow_html=True,
+    )
+    if not snapshot.cases:
+        st.info("Der er ingen sager endnu. Opret den første sag ud fra det resultat, du vil opnå.")
+        create_case_form(client, expanded=True)
+        return
+
+    create_case_form(client)
+    case_ids = [item.projection.case_id for item in snapshot.cases]
+    selected_id = st.session_state.get("selected_project_id")
+    if selected_id not in case_ids:
+        selected_id = case_ids[0]
+        st.session_state["selected_project_id"] = selected_id
+
+    item = find_case(snapshot, selected_id)
+    if item is None:
+        st.error("DOR kunne ikke vise den valgte sag fra det aktuelle snapshot. Hent siden igen.")
+        return
+
+    picker_col, detail_col = st.columns([1.05, 3.25], gap="large")
+    with picker_col:
+        _select_case(snapshot, selected_id)
+    with detail_col:
+        _render_case_detail(client, item)
+
+
 def search_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
     st.markdown(
         '<div class="eyebrow">DOR / SØG</div>'
@@ -478,8 +487,11 @@ def search_view(client: DORAPIClient, snapshot: CaseWorkbenchSnapshot) -> None:
         for item in matches:
             cols = st.columns([5, 1])
             with cols[0]:
+                _render_status_badge(item)
                 st.markdown(f"**{item.projection.title}**")
-                st.caption(f"{item.projection.phase.label} · {item.projection.human_status}")
+                st.caption(
+                    f"{item.projection.phase.label} · Næste: {primary_action_text(item.projection)}"
+                )
             with cols[1]:
                 if st.button(
                     "Åbn",

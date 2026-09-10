@@ -27,6 +27,7 @@ from dashboard.project_lifecycle import render_project_lifecycle_console
 from dashboard.realtime import WorkflowRealtime
 from dashboard.ui_primitives import format_timestamp
 from dashboard.user_feedback import explain_api_error, render_api_error
+from dashboard.workbench_guidance import gate_guidance
 
 
 def stop_realtime() -> None:
@@ -153,7 +154,11 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
     try:
         gates = normalize_gates(client.get(f"/api/v1/execution/{workflow_id}/gates"))
     except DORAPIError as exc:
-        render_api_error(exc, key=f"gate-list-{workflow_id}", operation="Handlinger kunne ikke hentes")
+        render_api_error(
+            exc,
+            key=f"gate-list-{workflow_id}",
+            operation="Handlinger kunne ikke hentes",
+        )
         return
 
     actionable = [gate for gate in gates if gate["status"] in {"human_required", "rejected"}]
@@ -161,17 +166,26 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
         st.info("Der er ingen beslutning, der kræver dig lige nu.")
         return
 
+    primary_gate_id = actionable[0]["id"]
     for gate in actionable:
+        guidance = gate_guidance(gate)
+        is_primary_gate = gate["id"] == primary_gate_id
         with st.container(border=True):
+            st.markdown(
+                f'<span class="status-pill">{guidance.status_label}</span>',
+                unsafe_allow_html=True,
+            )
             st.markdown(f"**{gate['name']}**")
             st.write(gate["description"])
+            st.caption(guidance.explanation)
+
             if gate["status"] == "human_required":
                 approve_col, reject_col = st.columns(2)
                 with approve_col:
                     if st.button(
-                        "Godkend",
+                        guidance.primary_action or "Godkend",
                         key=f"approve-{workflow_id}-{gate['id']}",
-                        type="primary",
+                        type="primary" if is_primary_gate else "secondary",
                         use_container_width=True,
                     ):
                         try:
@@ -189,7 +203,7 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                             )
                 with reject_col:
                     if st.button(
-                        "Bed om ændringer",
+                        guidance.secondary_action or "Bed om ændringer",
                         key=f"reject-{workflow_id}-{gate['id']}",
                         use_container_width=True,
                     ):
@@ -198,7 +212,9 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                                 f"/api/v1/execution/{workflow_id}/gates/decide",
                                 json=gate_decision_payload(gate["id"], "rejected"),
                             )
-                            st.warning("Ændringsønsket er registreret. Sagen fortsætter ikke, før ændringerne er håndteret.")
+                            st.warning(
+                                "Ændringsønsket er registreret. Sagen fortsætter ikke, før ændringerne er håndteret."
+                            )
                             st.rerun()
                         except DORAPIError as exc:
                             render_api_error(
@@ -208,7 +224,10 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                             )
                 continue
 
-            st.warning("Sagen er blokeret af en afvist beslutning.")
+            if not gate["can_rework"] and not gate["can_retry"]:
+                st.info("Der er ingen backend-tilladt handling for blokeringen endnu.")
+                continue
+
             if gate["can_rework"]:
                 reason = st.text_area(
                     "Hvad skal ændres?",
@@ -216,9 +235,10 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                     max_chars=2000,
                 )
                 if st.button(
-                    "Bed DOR om at rette",
+                    guidance.primary_action or "Bed DOR om at rette",
                     key=f"rework-{workflow_id}-{gate['id']}",
-                    type="primary",
+                    type="primary" if is_primary_gate else "secondary",
+                    use_container_width=True,
                 ):
                     try:
                         client.post(
@@ -239,9 +259,17 @@ def render_gate_actions(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                     key=f"retry-reason-{workflow_id}-{gate['id']}",
                     max_chars=2000,
                 )
+                retry_is_primary = is_primary_gate and not gate["can_rework"]
+                retry_label = (
+                    guidance.primary_action
+                    if retry_is_primary and guidance.primary_action
+                    else guidance.secondary_action or "Åbn for ny vurdering"
+                )
                 if st.button(
-                    "Åbn for ny vurdering",
+                    retry_label,
                     key=f"retry-{workflow_id}-{gate['id']}",
+                    type="primary" if retry_is_primary else "secondary",
+                    use_container_width=True,
                 ):
                     try:
                         client.post(
@@ -316,7 +344,11 @@ def render_execution_detail(client: DORAPIClient, workflow_id: str) -> None:
                 feedback = explain_api_error(exc)
                 st.warning(f"{feedback.title}. {feedback.next_step}")
     except DORAPIError as exc:
-        render_api_error(exc, key=f"execution-{workflow_id}", operation="Arbejdsprocessen kunne ikke hentes")
+        render_api_error(
+            exc,
+            key=f"execution-{workflow_id}",
+            operation="Arbejdsprocessen kunne ikke hentes",
+        )
     render_evidence_trace(client, workflow_id)
 
 
