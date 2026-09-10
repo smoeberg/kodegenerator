@@ -57,6 +57,37 @@ class OnboardingIntentRepository:
         ).scalar_one_or_none()
         return self._restore(row) if row is not None else None
 
+    def get_current_for_project(
+        self,
+        project_id: str,
+        organization_id: str,
+    ) -> tuple[OnboardingIntent, ...]:
+        """Return terminal intent in each immutable repository chain for a project.
+
+        A project may legitimately carry more than one source-repository chain, so
+        this read never guesses a single canonical intent. Superseded records stay
+        durable but are omitted from the current projection.
+        """
+        rows = self.session.execute(
+            select(OnboardingIntentModel)
+            .where(
+                OnboardingIntentModel.organization_id == organization_id,
+                OnboardingIntentModel.project_id == project_id,
+            )
+            .order_by(
+                OnboardingIntentModel.source_repository.asc(),
+                OnboardingIntentModel.declared_at.asc(),
+                OnboardingIntentModel.intent_id.asc(),
+            )
+        ).scalars().all()
+        superseded = {
+            row.supersedes_intent_id
+            for row in rows
+            if row.supersedes_intent_id is not None
+        }
+        current = [row for row in rows if row.intent_id not in superseded]
+        return tuple(self._restore(row) for row in current)
+
     def get_root_for_repository(
         self,
         source_repository: str,
