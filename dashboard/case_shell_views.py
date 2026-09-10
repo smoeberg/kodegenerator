@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.case_clarification import render_case_clarification
 from dashboard.case_process_projection import AttentionState
 from dashboard.case_shell_actions import (
     create_case_form,
@@ -378,6 +379,10 @@ def _render_case_detail(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
             elif projection.next_action:
                 st.markdown("**Hvorfor dette er næste skridt**")
                 st.caption(projection.next_action.explanation)
+
+    st.write("")
+    st.markdown('<div class="section-label">AFKLARING</div>', unsafe_allow_html=True)
+    render_case_clarification(client, item)
 
     st.write("")
     activity_title, activity_detail = _activity_copy(item)
