@@ -13,6 +13,12 @@ from api.auth import User, get_current_active_user
 from api.dependencies import get_dor
 from infrastructure.persistence.models import OrganizationMembershipModel
 from runtime.core import DORRuntime
+from services.implementation_ai_settings import (
+    effective_implementation_ai_config,
+    probe_implementation_ai,
+    public_implementation_ai_config,
+    save_implementation_ai_config,
+)
 from services.redmine_client import check_redmine_health
 from services.runtime_settings import (
     RuntimeSettingsStore,
@@ -59,6 +65,34 @@ class RedmineConfigResponse(BaseModel):
     project_id: str
     api_key_configured: bool
     source: str
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class ImplementationAIConfigRequest(BaseModel):
+    organization_id: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=255)
+    base_url: str = Field(min_length=1, max_length=2048)
+    api_key: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("organization_id", "model", "base_url")
+    @classmethod
+    def strip_required(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Værdien er påkrævet")
+        return value
+
+
+class ImplementationAIConfigResponse(BaseModel):
+    organization_id: str
+    provider: str
+    model: str
+    base_url: str
+    api_key_configured: bool
+    source: str
+    active_for_new_tasks: bool
+    applies_to: str
     updated_by: str | None = None
     updated_at: datetime | None = None
 
@@ -136,6 +170,95 @@ def _public(config: dict[str, Any]) -> RedmineConfigResponse:
         updated_by=config["updated_by"],
         updated_at=config["updated_at"],
     )
+
+
+def _ai_config_or_503(dor: DORRuntime, organization_id: str) -> dict[str, Any]:
+    try:
+        return effective_implementation_ai_config(dor.database, organization_id)
+    except (SettingsEncryptionUnavailable, SettingsSecretUnreadable) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "settings_secret_unavailable", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_ai_configuration", "message": str(exc)},
+        ) from exc
+
+
+@router.get("/ai/config", response_model=ImplementationAIConfigResponse)
+def get_implementation_ai_config(
+    organization_id: str,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> ImplementationAIConfigResponse:
+    """Return browser-safe implementation-AI settings for one organization."""
+    _membership(
+        dor,
+        username=current_user.username,
+        organization_id=organization_id,
+        require_admin=True,
+    )
+    return ImplementationAIConfigResponse(
+        **public_implementation_ai_config(_ai_config_or_503(dor, organization_id))
+    )
+
+
+@router.put("/ai/config", response_model=ImplementationAIConfigResponse)
+def put_implementation_ai_config(
+    request: ImplementationAIConfigRequest,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> ImplementationAIConfigResponse:
+    """Persist the model/endpoint; the API key is encrypted and never echoed."""
+    _membership(
+        dor,
+        username=current_user.username,
+        organization_id=request.organization_id,
+        require_admin=True,
+    )
+    try:
+        config = save_implementation_ai_config(
+            dor.database,
+            request.organization_id,
+            model=request.model,
+            base_url=request.base_url,
+            updated_by=current_user.username,
+            api_key=request.api_key,
+        )
+    except SettingsEncryptionUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "settings_encryption_not_configured",
+                "message": "Systemet mangler sin krypteringsnøgle til hemmelige indstillinger.",
+            },
+        ) from exc
+    except (SettingsSecretUnreadable, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_ai_configuration", "message": str(exc)},
+        ) from exc
+    return ImplementationAIConfigResponse(
+        **public_implementation_ai_config(config)
+    )
+
+
+@router.post("/ai/test")
+def test_implementation_ai_connection(
+    organization_id: str,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> dict[str, Any]:
+    """Verify endpoint, credential and model without sending a generation request."""
+    _membership(
+        dor,
+        username=current_user.username,
+        organization_id=organization_id,
+        require_admin=True,
+    )
+    return probe_implementation_ai(_ai_config_or_503(dor, organization_id))
 
 
 @router.get("/redmine/config", response_model=RedmineConfigResponse)

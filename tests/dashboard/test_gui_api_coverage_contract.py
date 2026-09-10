@@ -42,8 +42,8 @@ def test_coverage_summary_is_derived_from_classifications() -> None:
         "internal": counts["internal"],
     }
     assert coverage["summary"] == {
-        "total": 100,
-        "covered": 57,
+        "total": 103,
+        "covered": 60,
         "planned": 18,
         "internal": 25,
     }
@@ -80,6 +80,19 @@ def test_user_relevant_gaps_are_explicit_not_silently_internal() -> None:
     for key in required_planned:
         assert by_key[key]["status"] == "planned"
         assert by_key[key]["surface"] == "sag"
+
+
+def test_system_ai_settings_are_covered_in_administration() -> None:
+    coverage = _load(COVERAGE_PATH)
+    by_key = {_key(item): item for item in coverage["endpoints"]}
+    keys = {
+        ("GET", "/api/v1/integrations/ai/config"),
+        ("PUT", "/api/v1/integrations/ai/config"),
+        ("POST", "/api/v1/integrations/ai/test"),
+    }
+    for key in keys:
+        assert by_key[key]["status"] == "covered"
+        assert by_key[key]["surface"] == "administration"
 
 
 def test_worker_and_legacy_protocols_remain_internal() -> None:
