@@ -6,10 +6,12 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
+from urllib.parse import urlparse
 
 from .models import IMPLEMENTATION_ACTION, ImplementationRequest, PatchCandidate
 
-OPENAI_IMPLEMENTATION_RESPONSES_URL = "https://api.openai.com/v1/responses"
+OPENAI_IMPLEMENTATION_BASE_URL = "https://api.openai.com/v1"
+OPENAI_IMPLEMENTATION_RESPONSES_URL = f"{OPENAI_IMPLEMENTATION_BASE_URL}/responses"
 _HTTP_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
@@ -31,13 +33,14 @@ ResponsesTransport = Callable[
 
 
 class OpenAIImplementationProvider:
-    """Ask one fixed OpenAI model for a unified-diff patch candidate only."""
+    """Ask one fixed OpenAI-compatible model for a unified-diff patch candidate only."""
 
     def __init__(
         self,
         *,
         api_key: str,
         model: str,
+        base_url: str = OPENAI_IMPLEMENTATION_BASE_URL,
         max_input_bytes: int = 512 * 1024,
         max_output_bytes: int = 512 * 1024,
         timeout_seconds: float = 120.0,
@@ -52,6 +55,17 @@ class OpenAIImplementationProvider:
             raise ValueError("api_key must be a canonical non-empty string")
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model must be a non-empty string")
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ValueError("base_url must be a non-empty string")
+        normalized_base = base_url.strip().rstrip("/")
+        parsed = urlparse(normalized_base)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError("base_url must be an absolute HTTP(S) URL without credentials")
         if type(max_input_bytes) is not int or max_input_bytes < 1:
             raise ValueError("max_input_bytes must be a positive integer")
         if type(max_output_bytes) is not int or max_output_bytes < 1:
@@ -60,10 +74,19 @@ class OpenAIImplementationProvider:
             raise ValueError("timeout_seconds must be positive")
         self._api_key = api_key
         self._model = model.strip()
+        self._responses_url = f"{normalized_base}/responses"
         self._max_input_bytes = max_input_bytes
         self._max_output_bytes = max_output_bytes
         self._timeout_seconds = float(timeout_seconds)
-        self._transport = transport or _http_transport
+        self._transport = transport or (
+            lambda url, headers, body, timeout: _http_transport(
+                url,
+                headers,
+                body,
+                timeout,
+                allowed_url=self._responses_url,
+            )
+        )
 
     @property
     def provider_id(self) -> str:
@@ -102,7 +125,7 @@ class OpenAIImplementationProvider:
             ensure_ascii=False,
         ).encode("utf-8")
         response = self._transport(
-            OPENAI_IMPLEMENTATION_RESPONSES_URL,
+            self._responses_url,
             {
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
@@ -137,8 +160,10 @@ def _http_transport(
     headers: Mapping[str, str],
     body: bytes,
     timeout_seconds: float,
+    *,
+    allowed_url: str = OPENAI_IMPLEMENTATION_RESPONSES_URL,
 ) -> Mapping[str, object]:
-    if url != OPENAI_IMPLEMENTATION_RESPONSES_URL:
+    if url != allowed_url:
         raise OpenAIImplementationProviderError(
             "OpenAI Responses API endpoint is not allowed"
         )
@@ -149,7 +174,7 @@ def _http_transport(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(  # nosec B310
+        with urllib.request.urlopen(  # nosec B310 - exact admin-configured URL is pinned above.
             request, timeout=timeout_seconds
         ) as response:
             raw = response.read(_HTTP_MAX_RESPONSE_BYTES + 1)

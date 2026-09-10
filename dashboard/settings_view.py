@@ -190,6 +190,120 @@ def _render_user_settings(client: DORAPIClient) -> None:
             st.rerun()
 
 
+def _show_ai_test_result(payload: Any) -> None:
+    result = dict(payload) if isinstance(payload, Mapping) else {}
+    if result.get("model_available"):
+        st.success("Forbindelsen virker, API-nøglen accepteres, og modellen er tilgængelig.")
+        return
+    error = str(result.get("error") or "")
+    if error == "not_configured":
+        st.warning("AI-forbindelsen er ikke konfigureret færdigt endnu.")
+    elif error == "authentication_failed":
+        st.error("AI-endpointet afviste API-nøglen. Kontrollér nøglen og prøv igen.")
+    elif error == "model_not_found":
+        st.error("Forbindelsen virker, men den valgte model blev ikke fundet på endpointet.")
+    elif error == "models_endpoint_not_supported":
+        st.error("Endpointet svarer, men understøtter ikke den OpenAI-kompatible modeloversigt.")
+    elif error == "connection_error":
+        st.error("DOR kunne ikke nå AI-endpointet. Kontrollér adresse og netværk.")
+    else:
+        st.error("AI-endpointet kunne nås, men konfigurationen kunne ikke verificeres.")
+
+
+def _render_ai_settings(client: DORAPIClient) -> None:
+    organization_id = str(st.session_state.get("organization_id") or "").strip()
+    st.markdown("#### Implementerings-AI")
+    st.caption(
+        "Vælg den model og det OpenAI-kompatible endpoint, som DOR bruger til nye implementeringsopgaver. "
+        "API-nøglen gemmes krypteret og vises aldrig igen."
+    )
+    if not organization_id:
+        st.info("Vælg først en organisation.")
+        return
+
+    try:
+        payload = client.get(
+            "/api/v1/integrations/ai/config",
+            params={"organization_id": organization_id},
+        )
+    except DORAPIError as exc:
+        if exc.status_code == 403:
+            st.info("Kun en administrator kan se eller ændre organisationens AI-indstillinger.")
+        else:
+            st.error(_human_error(exc, "hente AI-indstillingerne"))
+        return
+    config = dict(payload) if isinstance(payload, Mapping) else {}
+
+    if config.get("active_for_new_tasks"):
+        st.success("AI-konfigurationen er aktiv for nye implementeringsopgaver.")
+    else:
+        st.warning("DOR mangler en komplet AI-konfiguration til nye implementeringsopgaver.")
+    if config.get("source") == "environment":
+        st.info(
+            "DOR bruger stadig den ældre serverkonfiguration. Gem formularen for at flytte model, endpoint og nøgle ind i DORs indstillinger."
+        )
+
+    with st.form(f"implementation-ai-settings-{organization_id}"):
+        model = st.text_input(
+            "Model",
+            value=str(config.get("model") or ""),
+            placeholder="gpt-5.6",
+            help="Model-ID som AI-endpointet forventer.",
+        )
+        base_url = st.text_input(
+            "API-base-URL",
+            value=str(config.get("base_url") or "https://api.openai.com/v1"),
+            help="OpenAI-kompatibelt API-endpoint. DOR kalder /responses og bruger /models til forbindelsestesten.",
+        )
+        key_label = (
+            "Ny API-nøgle (lad feltet være tomt for at beholde den gemte)"
+            if config.get("api_key_configured")
+            else "API-nøgle"
+        )
+        api_key = st.text_input(key_label, type="password")
+        saved = st.form_submit_button("Gem AI-indstillinger", type="primary")
+
+    if saved:
+        body: dict[str, Any] = {
+            "organization_id": organization_id,
+            "model": model.strip(),
+            "base_url": base_url.strip(),
+        }
+        if api_key.strip():
+            body["api_key"] = api_key.strip()
+        try:
+            client.put("/api/v1/integrations/ai/config", json=body)
+        except DORAPIError as exc:
+            st.error(_human_error(exc, "gemme AI-indstillingerne"))
+        else:
+            st.success("AI-indstillingerne er gemt. Nye implementeringsopgaver bruger dem med det samme.")
+            st.rerun()
+
+    cols = st.columns([1, 2])
+    with cols[0]:
+        test = st.button(
+            "Test AI-forbindelse",
+            key=f"test-implementation-ai-{organization_id}",
+            use_container_width=True,
+        )
+    with cols[1]:
+        st.caption(
+            "API-nøgle: gemt sikkert"
+            if config.get("api_key_configured")
+            else "API-nøgle: mangler"
+        )
+    if test:
+        try:
+            result = client.post(
+                "/api/v1/integrations/ai/test",
+                params={"organization_id": organization_id},
+            )
+        except DORAPIError as exc:
+            st.error(_human_error(exc, "teste AI-forbindelsen"))
+        else:
+            _show_ai_test_result(result)
+
+
 def _render_system_settings(client: DORAPIClient) -> None:
     st.markdown("### System")
     st.caption("Systemstatus vises i menneskeligt sprog. Tekniske detaljer er sekundære.")
@@ -204,11 +318,14 @@ def _render_system_settings(client: DORAPIClient) -> None:
     else:
         st.warning("DOR er startet, men alle systemtjenester er ikke klar endnu.")
 
+    _render_ai_settings(client)
+
     with st.expander("Tekniske systemoplysninger"):
         if isinstance(ready, Mapping):
             st.json(dict(ready))
         st.caption(
-            "Lager, workers og runtime-endpoints flyttes ind i denne sektion som server-ejede indstillinger; browseren skal ikke kende hemmelige filer eller miljøvariabler."
+            "Storage og workers flyttes ind i denne sektion, når deres backend har reel apply/reconcile-semantik. "
+            "Browseren skal ikke kende hemmelige filer eller miljøvariabler."
         )
 
 

@@ -1,5 +1,5 @@
 {
-  "count": 100,
+  "count": 103,
   "endpoints": [
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate_selection","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","tags":["bot-evidence"]},
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate","path":"/api/v1/bot-evidence/candidates/{candidate_id}","tags":["bot-evidence"]},
@@ -70,6 +70,9 @@
     {"method":"POST","module":"api.endpoints.execution","name":"rework_execution_gate","path":"/api/v1/execution/{workflow_id}/gates/rework","tags":["execution"]},
     {"method":"GET","module":"api.endpoints.execution","name":"list_implementation_proposals","path":"/api/v1/execution/{workflow_id}/proposals","tags":["execution"]},
     {"method":"POST","module":"api.endpoints.execution","name":"create_implementation_proposal","path":"/api/v1/execution/{workflow_id}/proposals","tags":["execution"]},
+    {"method":"GET","module":"api.endpoints.integrations","name":"get_implementation_ai_config","path":"/api/v1/integrations/ai/config","tags":["integrations"]},
+    {"method":"PUT","module":"api.endpoints.integrations","name":"put_implementation_ai_config","path":"/api/v1/integrations/ai/config","tags":["integrations"]},
+    {"method":"POST","module":"api.endpoints.integrations","name":"test_implementation_ai_connection","path":"/api/v1/integrations/ai/test","tags":["integrations"]},
     {"method":"GET","module":"api.endpoints.integrations","name":"get_redmine_config","path":"/api/v1/integrations/redmine/config","tags":["integrations"]},
     {"method":"PUT","module":"api.endpoints.integrations","name":"put_redmine_config","path":"/api/v1/integrations/redmine/config","tags":["integrations"]},
     {"method":"GET","module":"api.endpoints.integrations","name":"redmine_health","path":"/api/v1/integrations/redmine/health","tags":["integrations"]},
