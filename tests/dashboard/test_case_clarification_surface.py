@@ -5,12 +5,27 @@ CLARIFICATION = Path("dashboard/case_clarification.py")
 VIEWS = Path("dashboard/case_shell_views.py")
 
 
-def test_case_workbench_places_clarification_in_normal_case_flow():
+def test_case_workbench_uses_canonical_case_journey_not_clarification_as_primary_ia():
     views = VIEWS.read_text(encoding="utf-8")
-    assert "from dashboard.case_clarification import render_case_clarification" in views
-    assert '<div class="section-label">AFKLARING</div>' in views
-    assert "render_case_clarification(client, item)" in views
-    assert views.index("NÆSTE HANDLING") < views.index("AFKLARING") < views.index("AKTUEL AKTIVITET")
+    assert "CANONICAL_CASE_JOURNEY" in views
+    for label in (
+        '"Sag"',
+        '"Plan"',
+        '"Aktivt arbejdsgrundlag"',
+        '"Execution"',
+        '"Proposal"',
+        '"Beslutning"',
+    ):
+        assert label in views
+    assert '<div class="section-label">AFKLARING</div>' not in views
+    assert "render_case_clarification(client, item)" not in views
+
+    plan_call = views.index("render_case_onboarding(client, item)")
+    audit_call = views.index("render_case_audit_planning(client, item)")
+    execution_call = views.index("render_case_execution_implementation(client, item)")
+    provenance_call = views.index("_render_case_proposal_provenance(item)")
+    decision_call = views.index("render_case_decisions(client, item)")
+    assert plan_call < audit_call < execution_call < provenance_call < decision_call
 
 
 def test_onboarding_is_bound_to_selected_case_and_hides_provenance_ids():

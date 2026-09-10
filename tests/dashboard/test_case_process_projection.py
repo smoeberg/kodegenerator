@@ -196,11 +196,32 @@ def test_terminal_project_states(project_status, execution_state, expected):
     assert projection.next_action is None
 
 
-def test_unknown_pipeline_state_fails_soft_without_authority():
+@pytest.mark.parametrize(
+    "execution",
+    [
+        {"workflow_id": "wf-1", "action_required": "none"},
+        {"workflow_id": "wf-1", "current_state": "future_state", "action_required": "none"},
+    ],
+)
+def test_unknown_or_missing_execution_state_fails_closed(execution):
     projection = project_case(
         "case-1",
-        {"project_id": "project-1", "name": "Demo", "status": "active"},
-        {"workflow_id": "wf-1", "current_state": "future_state", "action_required": "none"},
+        {
+            "project_id": "project-1",
+            "name": "Demo",
+            "status": "active",
+            "allowed_actions": ["advance"],
+        },
+        {**execution, "allowed_actions": ["advance"]},
     )
-    assert projection.phase is ProcessPhase.CLARIFICATION
+    assert projection.phase is ProcessPhase.UNKNOWN
+    assert projection.human_status == "Status kan ikke fastslås"
+    assert projection.attention_state is AttentionState.UNKNOWN
+    assert projection.attention_title == "Status kan ikke fastslås"
+    assert projection.owner_type == "none"
+    assert projection.attention_required is False
+    assert projection.allowed_actions == ()
     assert projection.next_action is None
+    assert projection.process_steps == []
+    assert projection.evidence_completed == []
+    assert projection.evidence_missing == []

@@ -1,14 +1,19 @@
 """Human-facing case views shared by the DOR operator shell."""
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
-from dashboard.case_clarification import render_case_clarification
+from dashboard.case_audit_planning import render_case_audit_planning
+from dashboard.case_clarification import render_case_decisions, render_case_onboarding
+from dashboard.copenhagen_greeting import copenhagen_greeting
+from dashboard.case_implementation import render_case_execution_implementation
 from dashboard.case_process_projection import AttentionState
+from dashboard.case_proposal_provenance import (
+    PROPOSAL_RESULTS_KEY,
+    proposal_results_for_case,
+    resolve_proposal_provenance,
+)
 from dashboard.case_shell_actions import (
     create_case_form,
     evidence_lookup,
@@ -29,13 +34,18 @@ from dashboard.case_workbench import (
 from dashboard.workbench_guidance import case_status_badge, primary_action_text
 
 
+CANONICAL_CASE_JOURNEY = (
+    "Sag",
+    "Plan",
+    "Aktivt arbejdsgrundlag",
+    "Execution",
+    "Proposal",
+    "Beslutning",
+)
+
+
 def greeting() -> str:
-    hour = datetime.now(ZoneInfo("Europe/Copenhagen")).hour
-    if 5 <= hour < 12:
-        return "Godmorgen"
-    if 12 <= hour < 18:
-        return "Goddag"
-    return "Godaften"
+    return copenhagen_greeting()
 
 
 def open_case(case_id: str) -> None:
@@ -62,6 +72,8 @@ def _owner_label(item: CaseWorkbenchItem) -> str:
 
 def _activity_copy(item: CaseWorkbenchItem) -> tuple[str, str]:
     projection = item.projection
+    if projection.attention_state is AttentionState.UNKNOWN:
+        return ("Status kan ikke fastslås", projection.attention_explanation)
     if projection.attention_state in {
         AttentionState.COMPLETED,
         AttentionState.CANCELLED,
@@ -101,6 +113,11 @@ def _render_status_badge(item: CaseWorkbenchItem) -> None:
 
 
 def render_process(item: CaseWorkbenchItem) -> None:
+    if not item.projection.process_steps:
+        st.caption(
+            "Procestrin kan ikke markeres, før backend rapporterer en genkendelig runtime-state."
+        )
+        return
     html = '<div class="lifecycle">'
     for index, step in enumerate(item.projection.process_steps, start=1):
         status = step["status"]
@@ -138,6 +155,8 @@ def render_attention(item: CaseWorkbenchItem) -> None:
         st.caption(
             "Du skal ikke gøre noget nu. DOR genberegner næste handling, når arbejdet ændrer state."
         )
+    elif projection.attention_state is AttentionState.UNKNOWN:
+        st.caption("DOR viser ingen handling, før runtime-state igen kan fastslås.")
     elif projection.attention_required:
         st.caption("Handlingen vises nedenfor, når backend eksplicit tillader den.")
 
@@ -314,6 +333,8 @@ def _render_case_action(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
         render_gate_actions(client, item)
     elif projection.owner_type == "dor":
         st.info("DOR arbejder videre. Der kræves ingen handling fra dig lige nu.")
+    elif projection.attention_state is AttentionState.UNKNOWN:
+        st.warning("Status kan ikke fastslås. DOR viser ingen handling fra dette snapshot.")
     elif projection.attention_state in {
         AttentionState.COMPLETED,
         AttentionState.CANCELLED,
@@ -345,11 +366,51 @@ def _select_case(snapshot: CaseWorkbenchSnapshot, selected_id: str) -> None:
         st.caption(f"{badge.label} · {candidate.projection.phase.label}")
 
 
+def _render_case_journey() -> None:
+    st.markdown('<div class="section-label">CASE JOURNEY</div>', unsafe_allow_html=True)
+    st.markdown("**" + " → ".join(CANONICAL_CASE_JOURNEY) + "**")
+    st.caption(
+        "Hvert trin viser kun den state og de handlinger, som den autoritative backend har gjort tilgængelige."
+    )
+
+
+def _render_case_proposal_provenance(item: CaseWorkbenchItem) -> None:
+    results = proposal_results_for_case(
+        st.session_state.get(PROPOSAL_RESULTS_KEY),
+        item.projection.case_id,
+    )
+    if not results:
+        return
+
+    st.markdown("**Proposal-provenance**")
+    for result in results:
+        provenance = resolve_proposal_provenance(
+            case_id=item.projection.case_id,
+            execution=item.execution,
+            proposal_result=result,
+        )
+        if provenance is None:
+            st.warning(
+                "Execution-provenance mangler eller matcher ikke den aktuelle Case + Plan. "
+                "DOR konstruerer derfor ikke en Case → Plan → Execution → Proposal-relation."
+            )
+            continue
+        st.caption(
+            f"Case {provenance.case_id} → Plan {provenance.plan_id} → "
+            f"Execution {provenance.execution_id} → Proposal {provenance.proposal_id}"
+        )
+        if provenance.proposal_execution_id:
+            st.caption(
+                "Proposal-generator execution: " + provenance.proposal_execution_id
+            )
+
+
 def _render_case_detail(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
     projection = item.projection
     _render_status_badge(item)
     st.caption(f"{projection.phase.label} · {projection.human_status}")
     st.title(projection.title)
+    _render_case_journey()
 
     main_col, context_col = st.columns([2.15, 1])
     with main_col:
@@ -381,8 +442,22 @@ def _render_case_detail(client: DORAPIClient, item: CaseWorkbenchItem) -> None:
                 st.caption(projection.next_action.explanation)
 
     st.write("")
-    st.markdown('<div class="section-label">AFKLARING</div>', unsafe_allow_html=True)
-    render_case_clarification(client, item)
+    st.markdown('<div class="section-label">PLAN</div>', unsafe_allow_html=True)
+    render_case_onboarding(client, item)
+    st.write("")
+    render_case_audit_planning(client, item)
+
+    st.write("")
+    st.markdown(
+        '<div class="section-label">AKTIVT ARBEJDSGRUNDLAG → EXECUTION → PROPOSAL</div>',
+        unsafe_allow_html=True,
+    )
+    render_case_execution_implementation(client, item)
+    _render_case_proposal_provenance(item)
+
+    st.write("")
+    st.markdown('<div class="section-label">BESLUTNING</div>', unsafe_allow_html=True)
+    render_case_decisions(client, item)
 
     st.write("")
     activity_title, activity_detail = _activity_copy(item)

@@ -28,6 +28,8 @@ class GateGuidance:
 def case_status_badge(projection: CaseProcessProjection) -> CaseStatusBadge:
     """Return a human status label without changing process or authority semantics."""
     state = projection.attention_state
+    if state is AttentionState.UNKNOWN:
+        return CaseStatusBadge("Status ukendt", "waiting")
     if state is AttentionState.FAILED:
         return CaseStatusBadge("Fejl kræver opmærksomhed", "attention")
     if state is AttentionState.BLOCKED:
