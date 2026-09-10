@@ -1,76 +1,82 @@
-# DOR Control Plane GUI
+# DOR GUI surfaces
 
-`dashboard/app.py` er den kanoniske Streamlit-GUI for Digital Organization Runtime.
-GUI'en er en tynd, authenticated klient til `api/main.py`: domæneregler,
-authority, tenant-scope og state transitions ligger i backend.
+DOR har separate GUI-surfaces over den samme authoritative FastAPI-backend.
+GUI-lagene er tynde authenticated klienter: domæneregler, authority, tenant-scope,
+secrets og state transitions ligger i backend.
 
-## Én kanonisk surface
+## GUI-01 — Operator / Case Journey
 
-Start GUI'en fra repo-roden:
+`dashboard/app.py` er den kanoniske interne Operator-GUI.
+
+Start fra repo-roden:
 
 ```bash
-streamlit run dashboard/app.py
+streamlit run dashboard/app.py --server.port 8501
 ```
 
-GUI'en bruger kun `dashboard.api_client.DORAPIClient` som HTTP-transport. Login
-henter et bearer-token fra backend, og samme token/base URL bruges på tværs af
-projekt-, execution-, governance- og integrationsviews.
+GUI-01 ejer den operative brugerrejse omkring Case, Plan, aktivt arbejdsgrundlag,
+Execution, Evidence, Implementation Proposal og Decision status. Backend er eneste
+authority for workflow-progression og gate-state.
 
-Der er ingen mock fallback og ingen separat dashboard-tokenkonfiguration.
-Hvis backend ikke kan verificere en handling eller integration, viser GUI'en
-ikke en lokal successtatus.
+## GUI-03 — Administration & Configuration
 
-## De tre top-level logikker
+`dashboard/admin_app.py` er den selvstændige administrative surface. Den kan
+startes uden GUI-01 og uden Customer Portal GUI-02:
 
-### 1. Projekt & Krav
+```bash
+streamlit run dashboard/admin_app.py --server.port 8503
+```
 
-- opret tenant-scoped projekter/intents gennem Control Plane API
-- hent eksisterende projektstatus
-- request launch med eksplicit command ID og expected fingerprint
-- læs projekt-events
+GUI-02 er reserveret til port `8502`; GUI-03 bruger derfor `8503` i lokal
+standardkørsel. Porten ligger i startkommandoen og er ikke hardcodet i Python-
+koden.
 
-### 2. Udvikling & Decision Cockpit
+GUI-03 genbruger `dashboard.api_client.DORAPIClient` og det eksisterende
+session-state/login-flow. Den opretter ikke en parallel HTTP-klient, tokenmodel,
+authority-model eller lokal konfigurationsdatabase.
 
-- live execution-status og realtime events
-- task/fase-overblik
-- fail-closed manual advance
-- Quality Gates med `approved` / `rejected` beslutninger gennem Execution API
-- implementation proposals og diffs
-- read-only Why / Evidence Trace
+### Understøttede administrative capabilities
 
-Backend er eneste authority for workflow-progression og gate-state. En rejected
-gate forbliver blocking, indtil backend tilbyder en eksplicit rework/retry-
-transition.
+De aktuelle backend-kontrakter giver GUI-03 følgende reelle surfaces:
 
-### 3. Administration & Governance
+- **Administration Overview** — API liveness, database readiness, Redmine status
+  og et eksplicit capability map.
+- **Organisationer** — liste, opret og rediger organisationens navn/beskrivelse.
+- **Brugere** — liste, opret, profil/password, aktiv/deaktiv og organization-admin
+  via det durable identity store og server-side organization-admin kontrol.
+- **Projekter** — read-only administrativ katalogvisning. Lifecycle og Case-arbejde
+  forbliver i GUI-01.
+- **Redmine** — URL/project config, krypteret API-token via backend og sikker
+  forbindelsestest.
+- **Implementation AI** — model/base URL/credential config og forbindelsestest.
+- **System & Security** — liveness/readiness og eksplicit read-only security status.
 
-Bot Governance-fanen er den integrerede Multi-bot Control Plane og bruger samme
-authenticated `DORAPIClient` som resten af GUI'en. Den understøtter:
+### Kendte backend-gaps
 
-- provider-forbindelser
-- deployments
-- botprofiler
-- roller
-- council templates
-- allokeringspools
-- frozen bot selections
-- read-only durable bot-evidence
+GUI-03 fabrikerer ikke funktionalitet for capabilities, der ikke har en
+canonical administrativ backend-kontrakt. I den aktuelle API gælder det bl.a.:
 
-Alle kald scopes med den valgte `organization_id`. Governance er append-only;
-deaktivering sker kun gennem eksplicitte backend-commands.
+- generisk RBAC/permission administration ud over organization `is_admin`
+- departments
+- project membership/repository mapping
+- GitHub/GitLab administrative repository mappings
+- notification configuration
+- mutable MFA/SSO/session/security policy
+- global administrativ audit query/log
 
-Administration indeholder også:
+Disse gaps vises som `Begrænset`, `Read-only` eller `Ikke understøttet af backend`.
+`Status kan ikke fastslås` anvendes, når backend/transport ikke kan etablere en
+status. Projekt-events genbruges ikke som falsk global admin-audit.
 
-- **Redmine Integration** — server-side, fail-closed health verification via
-  `GET /api/v1/integrations/redmine/health`
-- **System Health** — backend readiness/drift
+## Shared transport og login
 
-Redmine API-key håndteres kun af API-processen og sendes aldrig til Streamlit-
-klienten.
+Begge interne GUI'er bruger kun:
 
-## Konfiguration
+```text
+dashboard/api_client.py
+```
 
-Dashboard-transport:
+Dashboard-transport konfigureres med:
 
 ```bash
 export DOR_API_URL=http://localhost:8000
@@ -78,55 +84,77 @@ export DOR_API_URL=http://localhost:8000
 
 Default i container-topologien er `http://api:8000`.
 
-Brugercredentials valideres af backend via `/auth/token`; GUI'en gemmer kun det
-returnerede access token i Streamlit session-state.
+Brugercredentials valideres af backend via `/auth/token`; GUI'erne gemmer kun det
+returnerede access token i Streamlit session-state. Secret input sendes kun ved
+den eksplicitte backend-mutation og gemmes ikke som GUI-owned configuration.
+Eksisterende integration credentials returneres aldrig til GUI'en; kun
+`api_key_configured`/status eksponeres.
 
-Redmine konfigureres server-side på API-servicen:
+## GUI-01 funktioner
 
-```bash
-export REDMINE_URL=https://redmine.example.com
-export REDMINE_API_KEY=...
-export REDMINE_PROJECT_ID=my-project
-```
+Operator-GUI'en indeholder bl.a.:
+
+- tenant-scoped projekt/intents og projektstatus
+- canonical Case Journey
+- execution-status og realtime events
+- Quality Gates og backend-authoritative decisions
+- implementation proposals og diffs
+- read-only Why / Evidence Trace
+- Multi-bot Control Plane
+
+GUI-03 flytter eller kopierer ikke disse operative capabilities.
 
 ## Centrale filer
 
 ```text
 dashboard/
-  app.py                       # eneste top-level Streamlit entrypoint
-  api_client.py                # eneste dashboard HTTP-transport
-  state.py                     # authenticated session-state
-  realtime.py                  # workflow realtime transport
-  cockpit_view_model.py        # execution/gate/evidence normalization
-  evidence_trace.py            # read-only Why / Evidence Trace
-  multi_bot_control_plane.py   # live tenant-scoped bot governance UI
-  governance_catalog.py        # API paths + schema-validerede eksempelpayloads
-  integration_view_model.py    # integrationsstatus normalization
-  redmine_integration.py       # fail-closed Redmine status UI
+  app.py                       # GUI-01 Operator entrypoint
+  admin_app.py                 # GUI-03 Administration entrypoint
+  admin_api.py                 # GUI-03 authoritative API facade
+  api_client.py                # shared HTTP transport
+  state.py                     # shared authenticated session-state
+  realtime.py                  # GUI-01 workflow realtime transport
+  case_shell_views.py          # GUI-01 canonical Case Journey
+  multi_bot_control_plane.py   # GUI-01 bot governance UI
 ```
 
 ## Retired demo/legacy surfaces
 
-Følgende gamle dashboard-paths er bevidst fjernet og må ikke genindføres som
+Følgende gamle dashboard-paths er fortsat retired og må ikke genindføres som
 parallelle production-surfaces:
 
-- `dashboard/decision_cockpit.py` — hardcodede beslutninger/lokale success states
-- `dashboard/swarm_monitor.py` — random session-state mock fleet
-- `dashboard/workflow_cockpit.py` — mock wizard/council/WBS/test evidence
-- `dashboard/fixtures.py` — demo-data
-- `dashboard/index.html` — statiske ONLINE/READY/ENFORCING badges
-- `dashboard/control_plane_api.py` — parallel HTTP-klient/token-flow
-- `dashboard/catalog.py` — legacy presentation-only role catalog
-- `dashboard/security.py` — legacy lokal password/secret-store
-
-`tests/dashboard/test_dashboard_surface.py` låser denne boundary.
+- `dashboard/decision_cockpit.py`
+- `dashboard/swarm_monitor.py`
+- `dashboard/workflow_cockpit.py`
+- `dashboard/fixtures.py`
+- `dashboard/index.html`
+- `dashboard/control_plane_api.py`
+- `dashboard/catalog.py`
+- `dashboard/security.py`
+- `dashboard/pages/00_Project_Lifecycle.py`
 
 ## Sikkerheds- og authority-principper
 
 - GUI'en opfinder aldrig backend-success.
-- Secrets lagres ikke i browser/Streamlit-inputs.
-- Tenant-scope sendes eksplicit til governance-kald.
-- Gate-decisions og workflow-advance afgøres af backend.
-- Evidence views er read-only og må ikke fabricere direkte provenance-links,
-  som backend ikke eksponerer.
-- Der findes én production GUI entrypoint og én dashboard HTTP-klient.
+- Backend håndhæver authorization og organization isolation; skjulte knapper er
+  ikke sikkerhed.
+- Secrets vises aldrig igen efter lagring og logges ikke af GUI-03.
+- Unknown state forbliver unknown og åbner ikke farlige handlinger.
+- GUI-03 har ingen direkte deployment-, release-, execution-, PR-creation- eller
+  Patch Apply-path.
+- Administrative mutationer går kun gennem canonical FastAPI endpoints.
+- GUI-01's Case Journey forbliver separat og uændret.
+
+## Test
+
+Fokuserede GUI-03 boundary-tests:
+
+```bash
+pytest -q tests/dashboard/test_admin_api.py tests/dashboard/test_admin_surface.py
+```
+
+Den eksisterende dashboard-suite køres fortsat for regression:
+
+```bash
+pytest -q tests/dashboard
+```
