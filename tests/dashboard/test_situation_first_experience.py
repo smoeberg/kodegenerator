@@ -17,7 +17,6 @@ def test_overview_is_situation_first_not_system_dashboard_first():
     assert "Find en sag" in source
     assert "Systemoplysninger" in source
 
-    # Execution/readiness problems stay available as secondary system context.
     assert '_render_system_details(client, execution_error)' in source
     assert "SYSTEMHELDBRED" not in source
     assert "Execution-data er midlertidigt utilgængelige.</b>" not in source
@@ -49,18 +48,20 @@ def test_case_actions_still_delegate_to_backend_authority():
     assert "advance_pipeline(" not in source
 
 
-def test_operator_shell_keeps_case_first_navigation_and_unified_settings():
+def test_operator_shell_keeps_case_first_navigation_and_integrated_administration():
     source = APP.read_text(encoding="utf-8")
 
     assert 'WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")' in source
-    assert 'ADMIN_NAV = ("Ingen", "Indstillinger")' in source
+    assert 'ADMIN_NAV = ("Ingen", "Administration")' in source
     assert "situation-first" in source
+    assert "fetch_organization_admin_status" in source
     assert "render_settings(client)" in source
 
 
 def test_settings_rejects_terminal_first_ordinary_configuration():
     source = SETTINGS.read_text(encoding="utf-8")
-    assert "uden terminal eller serverfiler" in source
+    assert "den samme Operator GUI" in source
     assert "Brugere" in source
-    assert "Integrationer" in source
+    assert "Redmine" in source
+    assert "Implementation AI" in source
     assert "System" in source

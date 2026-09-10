@@ -1,12 +1,12 @@
 from pathlib import Path
 
-
 APP = Path("dashboard/operator_center.py")
 ACTIONS = Path("dashboard/case_shell_actions.py")
 VIEWS = Path("dashboard/case_shell_views.py")
 WORKBENCH = Path("dashboard/case_workbench.py")
 PROJECT_LIFECYCLE = Path("dashboard/project_lifecycle.py")
 SETTINGS = Path("dashboard/settings_view.py")
+ADMIN_ACCESS = Path("dashboard/admin_access.py")
 GREETING = Path("dashboard/copenhagen_greeting.py")
 COMPOSE = Path("compose.yml")
 CONFIG = Path(".streamlit/config.toml")
@@ -15,11 +15,12 @@ CONFIG = Path(".streamlit/config.toml")
 def test_operator_center_is_canonical_dashboard_entrypoint():
     compose = COMPOSE.read_text(encoding="utf-8")
     assert "dashboard/operator_center.py" in compose
+    assert "--server.port=8501" in compose
+    assert "8503" not in compose
 
 
 def test_operator_center_hides_legacy_streamlit_multipage_chrome():
-    config = CONFIG.read_text(encoding="utf-8")
-    assert "showSidebarNavigation = false" in config
+    assert "showSidebarNavigation = false" in CONFIG.read_text(encoding="utf-8")
 
 
 def test_operator_center_uses_authenticated_api_client_only():
@@ -35,7 +36,6 @@ def test_case_shell_preserves_canonical_project_authority():
     app_source = APP.read_text(encoding="utf-8")
     actions_source = ACTIONS.read_text(encoding="utf-8")
     lifecycle_source = PROJECT_LIFECYCLE.read_text(encoding="utf-8")
-
     assert "/api/v1/control-plane/projects" in app_source
     assert "render_project_lifecycle_console" in actions_source
     assert "/launch" in lifecycle_source
@@ -53,9 +53,7 @@ def test_case_shell_uses_backend_gate_authority():
 
 
 def test_operator_center_has_no_local_workflow_transition_engine():
-    source = "\n".join(
-        path.read_text(encoding="utf-8") for path in (APP, ACTIONS, VIEWS, WORKBENCH)
-    )
+    source = "\n".join(path.read_text(encoding="utf-8") for path in (APP, ACTIONS, VIEWS, WORKBENCH))
     assert "transition_workflow(" not in source
     assert "advance_pipeline(" not in source
 
@@ -81,17 +79,21 @@ def test_operator_center_builds_shared_case_workbench():
     assert "search_view(client, snapshot)" in source
 
 
-def test_operator_center_has_case_first_navigation_and_one_settings_entry():
+def test_operator_center_has_case_first_navigation_and_gated_administration():
     source = APP.read_text(encoding="utf-8")
+    access = ADMIN_ACCESS.read_text(encoding="utf-8")
     assert 'WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")' in source
-    assert 'ADMIN_NAV = ("Ingen", "Indstillinger")' in source
+    assert 'ADMIN_NAV = ("Ingen", "Administration")' in source
+    assert "fetch_organization_admin_status(client, organization_id)" in source
+    assert "if admin_status is True:" in source
+    assert "if admin_status is not True:" in source
     assert "render_settings(client)" in source
-    assert 'ADMIN_NAV = ("Ingen", "Governance", "Integration")' not in source
+    assert "/api/v1/control-plane/organizations" in access
 
 
-def test_settings_unifies_ordinary_administration_surfaces():
+def test_settings_unifies_supported_administration_surfaces():
     source = SETTINGS.read_text(encoding="utf-8")
-    for label in ("Organisation", "Brugere", "Integrationer", "System", "AI & Governance"):
+    for label in ("Organisationer", "Brugere", "Projekter", "Redmine", "Implementation AI", "System"):
         assert label in source
     assert "render_redmine_integration(client)" in source
     assert "render_multi_bot_control_plane(client, organization_id)" in source

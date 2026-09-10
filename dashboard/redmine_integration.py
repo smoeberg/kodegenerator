@@ -1,4 +1,4 @@
-"""Human-facing Redmine configuration inside DOR Settings."""
+"""Human-facing Redmine configuration inside DOR Administration."""
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -10,6 +10,8 @@ from dashboard.integration_view_model import normalize_redmine_health
 
 
 def _friendly_error(exc: DORAPIError) -> str:
+    if exc.status_code == 401:
+        return "Din session er ikke længere gyldig. Log ind igen."
     if exc.status_code == 403:
         return "Du har ikke administratorrettigheder til denne organisations integrationer."
     if exc.status_code == 422:
@@ -30,39 +32,30 @@ def _show_test_result(payload: Any) -> None:
     elif status["error"] == "timeout":
         st.error("Redmine svarede ikke i tide. Kontrollér URL, netværk og Redmine-status.")
     elif status["error"] == "connection_error":
-        st.error("DOR kunne ikke oprette forbindelse til Redmine. Kontrollér URL og netværk.")
+        st.error("DOR kunne ikke oprette forbindelse til Redmine.")
     elif status["error"] in {"not_configured", "invalid_configuration"}:
         st.warning("Redmine er ikke konfigureret færdigt endnu.")
     else:
-        st.error("Redmine svarede, men forbindelsen kunne ikke verificeres.")
+        st.error("Status kan ikke fastslås")
 
 
 def _render_legacy_health_only(client: DORAPIClient) -> None:
-    """Keep the retired dashboard usable while the canonical shell gains Settings.
-
-    Older dashboard test doubles and transitional clients expose only ``get``.
-    Real canonical clients expose ``put`` and therefore always use the Settings
-    flow below. This fallback preserves read-only health verification without
-    reintroducing environment editing as a user-facing configuration path.
-    """
+    """Preserve the retired read-only health fallback without mutation authority."""
     st.subheader("Redmine Integration")
     st.caption("Denne ældre visning kan kun kontrollere den serverkonfiguration, der allerede findes.")
     if not st.button("Verificér Redmine-forbindelse", type="primary"):
         st.info("Kør en backend-verifikation for at se den aktuelle integrationsstatus.")
         return
-
     try:
         payload = client.get("/api/v1/integrations/redmine/health")
     except DORAPIError as exc:
         st.error(f"Redmine health-check fejlede ({exc.status_code}): {exc}")
         return
-
     status = normalize_redmine_health(payload)
     cols = st.columns(3)
     cols[0].metric("Konfigureret", "Ja" if status["configured"] else "Nej")
     cols[1].metric("Reachable", "Ja" if status["reachable"] else "Nej")
     cols[2].metric("Verificeret", "Ja" if status["verified"] else "Nej")
-
     if status["level"] == "success":
         st.success(status["message"])
     elif status["level"] == "warning":
@@ -71,74 +64,65 @@ def _render_legacy_health_only(client: DORAPIClient) -> None:
         st.error(status["message"])
 
 
+def _valid_config(payload: Any, organization_id: str) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    config = dict(payload)
+    if str(config.get("organization_id") or "").strip() != organization_id:
+        return None
+    if not isinstance(config.get("api_key_configured"), bool):
+        return None
+    for key in ("url", "project_id", "source"):
+        if key not in config:
+            return None
+    return config
+
+
 def render_redmine_integration(client: DORAPIClient) -> None:
     """Configure, save and test Redmine without exposing the stored API key."""
     if not hasattr(client, "put"):
         _render_legacy_health_only(client)
         return
-
     organization_id = str(st.session_state.get("organization_id") or "").strip()
     st.markdown("### Redmine")
-    st.caption(
-        "Opsæt forbindelsen her. API-nøglen gemmes krypteret af backend og vises aldrig igen."
-    )
+    st.caption("URL, external project ID og credential administreres via backenden. API-nøglen gemmes krypteret og vises aldrig igen.")
     if not organization_id:
-        st.info("Vælg først en organisation.")
+        st.warning("Status kan ikke fastslås")
         return
-
     try:
-        config = client.get(
-            "/api/v1/integrations/redmine/config",
-            params={"organization_id": organization_id},
-        )
+        payload = client.get("/api/v1/integrations/redmine/config", params={"organization_id": organization_id})
     except DORAPIError as exc:
         st.error(_friendly_error(exc))
         return
-    if not isinstance(config, Mapping):
-        config = {}
-
-    source = str(config.get("source") or "none")
-    if source == "environment":
-        st.info(
-            "Der findes en ældre serverkonfiguration. Gem formularen nedenfor for at flytte den ind i DORs indstillinger."
-        )
-
+    except Exception:
+        st.error("Status kan ikke fastslås")
+        return
+    config = _valid_config(payload, organization_id)
+    if config is None:
+        st.error("Status kan ikke fastslås")
+        return
+    if config.get("source") == "environment":
+        st.info("Der findes en ældre serverkonfiguration. Gem formularen nedenfor for at flytte den ind i DORs indstillinger.")
     with st.form(f"redmine-settings-{organization_id}"):
-        url = st.text_input(
-            "Redmine-adresse",
-            value=str(config.get("url") or ""),
-            placeholder="https://redmine.example.dk",
-            help="Adressen til Redmine. DOR tilføjer selv den nødvendige API-sti.",
-        )
-        project_id = st.text_input(
-            "Projekt-ID",
-            value=str(config.get("project_id") or ""),
-            help="Redmines projekt-identifikator, fx dor-platform.",
-        )
-        key_label = (
-            "Ny API-nøgle (lad feltet være tomt for at beholde den gemte)"
-            if config.get("api_key_configured")
-            else "API-nøgle"
-        )
+        url = st.text_input("Redmine-adresse", value=str(config.get("url") or ""), placeholder="https://redmine.example.dk")
+        project_id = st.text_input("Projekt-ID", value=str(config.get("project_id") or ""), help="Redmines eksterne projekt-identifikator.")
+        key_label = "Ny API-nøgle (lad feltet være tomt for at beholde den gemte)" if config.get("api_key_configured") else "API-nøgle"
         api_key = st.text_input(key_label, type="password")
         saved = st.form_submit_button("Gem Redmine-indstillinger", type="primary")
-
     if saved:
-        payload: dict[str, Any] = {
-            "organization_id": organization_id,
-            "url": url.strip(),
-            "project_id": project_id.strip(),
-        }
+        body: dict[str, Any] = {"organization_id": organization_id, "url": url.strip(), "project_id": project_id.strip()}
         if api_key.strip():
-            payload["api_key"] = api_key.strip()
+            body["api_key"] = api_key.strip()
         try:
-            client.put("/api/v1/integrations/redmine/config", json=payload)
+            saved_config = client.put("/api/v1/integrations/redmine/config", json=body)
         except DORAPIError as exc:
             st.error(_friendly_error(exc))
         else:
-            st.success("Redmine-indstillingerne er gemt sikkert.")
+            if _valid_config(saved_config, organization_id) is None:
+                st.error("Status kan ikke fastslås")
+                return
+            st.success("Redmine-indstillingerne er gemt sikkert af backenden.")
             st.rerun()
-
     cols = st.columns([1, 2])
     with cols[0]:
         test = st.button("Test forbindelse", use_container_width=True)
@@ -147,14 +131,12 @@ def render_redmine_integration(client: DORAPIClient) -> None:
             st.caption("API-nøgle: gemt sikkert · vises ikke i browseren")
         else:
             st.caption("API-nøgle: mangler")
-
     if test:
         try:
-            result = client.post(
-                "/api/v1/integrations/redmine/test",
-                params={"organization_id": organization_id},
-            )
+            result = client.post("/api/v1/integrations/redmine/test", params={"organization_id": organization_id})
         except DORAPIError as exc:
             st.error(_friendly_error(exc))
+        except Exception:
+            st.error("Status kan ikke fastslås")
         else:
             _show_test_result(result)

@@ -1,7 +1,8 @@
 """DOR / Guide — canonical Streamlit shell.
 
 The shell is situation-first: user work is organized around Overblik, Mit arbejde,
-Sager and Søg. Backend APIs remain authoritative for state and actions.
+Sager and Søg. Administration is a backend-authorized capability inside the same
+Operator GUI deployment.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from dashboard.admin_access import fetch_organization_admin_status
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.case_shell_actions import stop_realtime
 from dashboard.case_shell_views import cases_view, overview, search_view, work_view
@@ -29,7 +31,7 @@ from dashboard.state import authenticated, clear_auth, init_state
 from dashboard.user_feedback import explain_api_error, render_api_error
 
 WORK_NAV = ("Overblik", "Mit arbejde", "Sager", "Søg")
-ADMIN_NAV = ("Ingen", "Indstillinger")
+ADMIN_NAV = ("Ingen", "Administration")
 
 init_state()
 
@@ -171,12 +173,13 @@ def _get_executions(client: DORAPIClient) -> tuple[list[dict[str, Any]], str | N
         return [], f"{feedback.title}. {feedback.next_step}"
 
 
-def _sidebar(client: DORAPIClient) -> str:
+def _sidebar(client: DORAPIClient) -> tuple[str, bool | None]:
     if st.session_state.get("operator_nav") not in WORK_NAV:
         st.session_state["operator_nav"] = "Overblik"
     if st.session_state.get("operator_admin_nav") not in ADMIN_NAV:
         st.session_state["operator_admin_nav"] = "Ingen"
 
+    admin_status: bool | None = None
     with st.sidebar:
         st.markdown('<div class="nav-brand">DOR / Guide</div>', unsafe_allow_html=True)
         st.markdown('<div class="nav-section">Arbejde</div>', unsafe_allow_html=True)
@@ -195,15 +198,41 @@ def _sidebar(client: DORAPIClient) -> str:
             feedback = explain_api_error(exc)
             st.caption(f"{feedback.title}. {feedback.next_step}")
 
-        st.markdown('<div class="nav-section">Administration</div>', unsafe_allow_html=True)
-        admin = st.radio(
-            "Administration",
-            ADMIN_NAV,
-            label_visibility="collapsed",
-            key="operator_admin_nav",
-        )
-        if admin != "Ingen":
-            nav = admin
+        organization_id = str(st.session_state.get("organization_id") or "").strip()
+        if organization_id:
+            try:
+                admin_status = fetch_organization_admin_status(client, organization_id)
+            except DORAPIError as exc:
+                if exc.status_code == 401:
+                    admin_status = None
+                else:
+                    admin_status = None
+            except Exception:
+                admin_status = None
+
+        if admin_status is True:
+            st.markdown(
+                '<div class="nav-section">Administration</div>',
+                unsafe_allow_html=True,
+            )
+            admin = st.radio(
+                "Administration",
+                ADMIN_NAV,
+                label_visibility="collapsed",
+                key="operator_admin_nav",
+            )
+            if admin == "Administration":
+                nav = "Administration"
+        else:
+            # Never preserve a privileged client-side selection once the
+            # authoritative admin projection is false or unknown.
+            st.session_state["operator_admin_nav"] = "Ingen"
+            if organization_id and admin_status is None:
+                st.markdown(
+                    '<div class="nav-section">Administration</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption("Status kan ikke fastslås")
 
         st.divider()
         st.caption(st.session_state.get("username") or "—")
@@ -211,7 +240,7 @@ def _sidebar(client: DORAPIClient) -> str:
             stop_realtime()
             clear_auth()
             st.rerun()
-    return nav
+    return nav, admin_status
 
 
 def _login() -> None:
@@ -249,18 +278,27 @@ def _login() -> None:
 def _render_no_organization_state() -> None:
     st.markdown(
         '<div class="eyebrow">DOR / KOM I GANG</div>'
-        '<h1>Vælg eller opret en organisation</h1>'
+        '<h1>Vælg en organisation</h1>'
         '<div class="subtitle">DOR skal kende din organisation, før sager, ansvar og evidens kan bindes korrekt.</div>',
         unsafe_allow_html=True,
     )
     with st.container(border=True):
         st.subheader("Organisationen er dit arbejdsrum")
         st.write(
-            "Opret en organisation eller vælg en eksisterende. Du behøver ikke kende interne ID'er eller konfigurere noget i en terminal."
+            "Kun organisationer, som backenden har knyttet til din bruger, kan vælges her. "
+            "Hvis du mangler adgang, skal en eksisterende administrator tilknytte dig."
         )
-        if st.button("Gå til Indstillinger", type="primary", use_container_width=True):
-            st.session_state["operator_admin_nav"] = "Indstillinger"
-            st.rerun()
+
+
+def _render_admin_denied(admin_status: bool | None) -> None:
+    if admin_status is None:
+        st.error("Status kan ikke fastslås")
+        st.caption(
+            "DOR kunne ikke bekræfte administratorstatus fra backenden. "
+            "Ingen administrative handlinger vises eller udføres."
+        )
+    else:
+        st.error("Administration er ikke tilgængelig for denne bruger.")
 
 
 def main() -> None:
@@ -270,8 +308,16 @@ def main() -> None:
         return
 
     client = api()
-    nav = _sidebar(client)
+    nav, admin_status = _sidebar(client)
     organization_id = st.session_state.get("organization_id")
+
+    if nav == "Administration":
+        stop_realtime()
+        if admin_status is not True:
+            _render_admin_denied(admin_status)
+            return
+        render_settings(client)
+        return
 
     if nav in WORK_NAV and not organization_id:
         stop_realtime()
@@ -300,8 +346,6 @@ def main() -> None:
         cases_view(client, snapshot)
     elif nav == "Søg":
         search_view(client, snapshot)
-    elif nav == "Indstillinger":
-        render_settings(client)
 
 
 if __name__ == "__main__":

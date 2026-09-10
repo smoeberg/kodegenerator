@@ -1,79 +1,111 @@
 # DOR GUI surfaces
 
-DOR har separate GUI-surfaces over den samme authoritative FastAPI-backend.
-GUI-lagene er tynde authenticated klienter: domæneregler, authority, tenant-scope,
+DOR bruger én intern Operator GUI over den authoritative FastAPI-backend.
+GUI-laget er en tynd authenticated klient: domæneregler, authority, tenant-scope,
 secrets og state transitions ligger i backend.
 
-## GUI-01 — Operator / Case Journey
+## GUI-01 — Operator + Administration
 
-`dashboard/app.py` er den kanoniske interne Operator-GUI.
+`dashboard/operator_center.py` er den canonical interne DOR-applikation.
 
 Start fra repo-roden:
 
 ```bash
-streamlit run dashboard/app.py --server.port 8501
+streamlit run dashboard/operator_center.py --server.port 8501
 ```
 
-GUI-01 ejer den operative brugerrejse omkring Case, Plan, aktivt arbejdsgrundlag,
-Execution, Evidence, Implementation Proposal og Decision status. Backend er eneste
-authority for workflow-progression og gate-state.
+Den samme deployment indeholder to capabilities:
 
-## GUI-03 — Administration & Configuration
-
-`dashboard/admin_app.py` er den selvstændige administrative surface. Den kan
-startes uden GUI-01 og uden Customer Portal GUI-02:
-
-```bash
-streamlit run dashboard/admin_app.py --server.port 8503
+```text
+DOR Operator GUI :8501
+│
+├── Case Journey
+│   ├── Sag
+│   ├── Plan
+│   ├── Aktivt arbejdsgrundlag
+│   ├── Execution
+│   ├── Proposal
+│   └── Beslutning
+│
+└── Administration
+    ├── Organisationer
+    ├── Brugere
+    ├── Projekter
+    ├── Redmine
+    ├── Implementation AI
+    └── System configuration / health
 ```
 
-GUI-02 er reserveret til port `8502`; GUI-03 bruger derfor `8503` i lokal
-standardkørsel. Porten ligger i startkommandoen og er ikke hardcodet i Python-
-koden.
+Administration vises kun, når det aktuelle backend organization catalog eksplicit
+bekræfter `is_admin=true` for den aktive organisation. `false` skjuler
+administrations-capability'en. Manglende, ukendt eller malformed administratorstatus
+failer closed med `Status kan ikke fastslås` og giver ingen administrativ navigation.
 
-GUI-03 genbruger `dashboard.api_client.DORAPIClient` og det eksisterende
-session-state/login-flow. Den opretter ikke en parallel HTTP-klient, tokenmodel,
-authority-model eller lokal konfigurationsdatabase.
+Denne UI-gating er kun presentation. Hver administrativ API-operation bliver fortsat
+autentificeret, autoriseret og organization-scoped i FastAPI-backenden.
 
-### Understøttede administrative capabilities
+### Administrative capabilities
 
-De aktuelle backend-kontrakter giver GUI-03 følgende reelle surfaces:
+De aktuelle backend-kontrakter understøtter:
 
-- **Administration Overview** — API liveness, database readiness, Redmine status
-  og et eksplicit capability map.
-- **Organisationer** — liste, opret og rediger organisationens navn/beskrivelse.
-- **Brugere** — liste, opret, profil/password, aktiv/deaktiv og organization-admin
-  via det durable identity store og server-side organization-admin kontrol.
-- **Projekter** — read-only administrativ katalogvisning. Lifecycle og Case-arbejde
-  forbliver i GUI-01.
-- **Redmine** — URL/project config, krypteret API-token via backend og sikker
-  forbindelsestest.
-- **Implementation AI** — model/base URL/credential config og forbindelsestest.
-- **System & Security** — liveness/readiness og eksplicit read-only security status.
+- **Organisationer** — list, create og update.
+- **Brugere** — list, create og update, herunder den eksisterende organization
+  `is_admin`-markering og aktivering/deaktivering.
+- **Projekter** — read-only katalog for den aktive organisation. Project lifecycle,
+  Cases og execution forbliver i Operator/Case Journey.
+- **Redmine** — URL, external project ID, krypteret API-key og connection test.
+  Et tomt replacement-secret sendes ikke, så den gemte secret bevares.
+- **Implementation AI** — model, base URL, krypteret API-key og connection test.
+- **System** — API liveness og database/readiness. Uventede eller malformed
+  responses vises som `Status kan ikke fastslås`, aldrig som success.
 
 ### Kendte backend-gaps
 
-GUI-03 fabrikerer ikke funktionalitet for capabilities, der ikke har en
-canonical administrativ backend-kontrakt. I den aktuelle API gælder det bl.a.:
+Administration fabrikerer ikke funktionalitet for capabilities uden canonical
+administrativ backend-kontrakt. Det gælder fortsat bl.a.:
 
 - generisk RBAC/permission administration ud over organization `is_admin`
 - departments
-- project membership/repository mapping
-- GitHub/GitLab administrative repository mappings
+- project membership
+- repository mappings
+- GitHub/GitLab administrative mappings
 - notification configuration
 - mutable MFA/SSO/session/security policy
 - global administrativ audit query/log
 
-Disse gaps vises som `Begrænset`, `Read-only` eller `Ikke understøttet af backend`.
-`Status kan ikke fastslås` anvendes, når backend/transport ikke kan etablere en
-status. Projekt-events genbruges ikke som falsk global admin-audit.
+Disse hører til senere ADM-02/INT-02/operations-slices.
+
+## GUI-02 — Customer Portal
+
+GUI-02 er reserveret til den eksterne/customer-facing portal på port `8502`.
+GUI-02 ændres ikke af administrationens integration i GUI-01.
+
+```text
+GUI-01  Operator + Administration  :8501
+GUI-02  Customer Portal            :8502
+```
+
+Der findes ingen GUI-03 deployment på `8503`.
+
+## Retired standalone GUI-03
+
+Den tidligere standalone entrypoint `dashboard/admin_app.py` er fjernet.
+GUI-03-navnet beskriver herefter kun den administrative capability, som er
+integreret i GUI-01. Der er ingen separat admin-container, healthcheck, port
+eller deployment.
+
+`dashboard/admin_api.py` kan fortsat bruges som en transport-only facade i tests
+og hjælpefunktioner, men den er ikke en application entrypoint og ejer ingen
+session-, authorization- eller configuration-state.
 
 ## Shared transport og login
 
-Begge interne GUI'er bruger kun:
+Operator og Administration genbruger:
 
 ```text
 dashboard/api_client.py
+dashboard/state.py
+dashboard/context_navigation.py
 ```
 
 Dashboard-transport konfigureres med:
@@ -82,79 +114,33 @@ Dashboard-transport konfigureres med:
 export DOR_API_URL=http://localhost:8000
 ```
 
-Default i container-topologien er `http://api:8000`.
+I container-topologien kalder Operator GUI backenden via `http://api:8000`.
 
-Brugercredentials valideres af backend via `/auth/token`; GUI'erne gemmer kun det
-returnerede access token i Streamlit session-state. Secret input sendes kun ved
-den eksplicitte backend-mutation og gemmes ikke som GUI-owned configuration.
-Eksisterende integration credentials returneres aldrig til GUI'en; kun
-`api_key_configured`/status eksponeres.
+Brugercredentials valideres af backend via `/auth/token`. Browseren gemmer kun
+det returnerede access token i Streamlit session state. Integration secrets
+sendes kun ved eksplicit mutation; eksisterende secrets returneres aldrig til
+GUI'en i plaintext.
 
-## GUI-01 funktioner
-
-Operator-GUI'en indeholder bl.a.:
-
-- tenant-scoped projekt/intents og projektstatus
-- canonical Case Journey
-- execution-status og realtime events
-- Quality Gates og backend-authoritative decisions
-- implementation proposals og diffs
-- read-only Why / Evidence Trace
-- Multi-bot Control Plane
-
-GUI-03 flytter eller kopierer ikke disse operative capabilities.
-
-## Centrale filer
-
-```text
-dashboard/
-  app.py                       # GUI-01 Operator entrypoint
-  admin_app.py                 # GUI-03 Administration entrypoint
-  admin_api.py                 # GUI-03 authoritative API facade
-  api_client.py                # shared HTTP transport
-  state.py                     # shared authenticated session-state
-  realtime.py                  # GUI-01 workflow realtime transport
-  case_shell_views.py          # GUI-01 canonical Case Journey
-  multi_bot_control_plane.py   # GUI-01 bot governance UI
-```
-
-## Retired demo/legacy surfaces
-
-Følgende gamle dashboard-paths er fortsat retired og må ikke genindføres som
-parallelle production-surfaces:
-
-- `dashboard/decision_cockpit.py`
-- `dashboard/swarm_monitor.py`
-- `dashboard/workflow_cockpit.py`
-- `dashboard/fixtures.py`
-- `dashboard/index.html`
-- `dashboard/control_plane_api.py`
-- `dashboard/catalog.py`
-- `dashboard/security.py`
-- `dashboard/pages/00_Project_Lifecycle.py`
-
-## Sikkerheds- og authority-principper
+## Security- og authority-principper
 
 - GUI'en opfinder aldrig backend-success.
-- Backend håndhæver authorization og organization isolation; skjulte knapper er
-  ikke sikkerhed.
-- Secrets vises aldrig igen efter lagring og logges ikke af GUI-03.
-- Unknown state forbliver unknown og åbner ikke farlige handlinger.
-- GUI-03 har ingen direkte deployment-, release-, execution-, PR-creation- eller
-  Patch Apply-path.
+- Backend håndhæver authentication, authorization og organization isolation.
+- Skjult admin-navigation er ikke en security boundary.
+- Ukendt administratorstatus failer closed.
+- Ukendt/malformed health eller configuration state bliver ikke success.
+- Secrets vises aldrig igen efter lagring og gemmes ikke som GUI-owned config.
+- Administration har ingen deployment-, release-, workflow execution-, PR-
+  creation- eller Patch Apply-path.
 - Administrative mutationer går kun gennem canonical FastAPI endpoints.
-- GUI-01's Case Journey forbliver separat og uændret.
+- Case Journey forbliver DOR-authoritative og uændret.
 
-## Test
+## Deployment
 
-Fokuserede GUI-03 boundary-tests:
+`compose.yml` har én intern dashboard-service. Den starter:
 
-```bash
-pytest -q tests/dashboard/test_admin_api.py tests/dashboard/test_admin_surface.py
+```text
+dashboard/operator_center.py
+port 8501
 ```
 
-Den eksisterende dashboard-suite køres fortsat for regression:
-
-```bash
-pytest -q tests/dashboard
-```
+Administration kører i samme Streamlit-proces og kræver ingen ekstra service.
