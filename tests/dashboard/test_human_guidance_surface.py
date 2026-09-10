@@ -10,9 +10,10 @@ def test_work_surfaces_have_guided_no_organization_state() -> None:
     source = APP.read_text(encoding="utf-8")
 
     assert "_render_no_organization_state" in source
-    assert "Vælg eller opret en organisation" in source
-    assert "Gå til Indstillinger" in source
+    assert "Vælg en organisation" in source
+    assert "Gå til Indstillinger" not in source
     assert "nav in WORK_NAV and not organization_id" in source
+    assert "eksisterende administrator" in source
 
 
 def test_primary_case_actions_use_human_error_guidance() -> None:
