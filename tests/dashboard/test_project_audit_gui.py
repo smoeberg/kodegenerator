@@ -14,7 +14,7 @@ from dashboard.repository_checkout_catalog import RepositoryCheckoutCatalogError
 from phase4.onboarding import OnboardingIntent, OnboardingIntentDraft, OnboardingPurpose
 
 
-def _intent() -> OnboardingIntent:
+def _intent(*, project_id: str | None = None) -> OnboardingIntent:
     return OnboardingIntent.from_draft(
         OnboardingIntentDraft(
             source_repository="repository:smoeberg/kodegenerator",
@@ -23,6 +23,7 @@ def _intent() -> OnboardingIntent:
         ),
         declared_by="alice",
         organization_id="org-a",
+        project_id=project_id,
         declared_at=datetime(2026, 9, 6, 8, 0, tzinfo=timezone.utc),
     )
 
@@ -35,6 +36,16 @@ def test_restore_onboarding_intent_revalidates_canonical_identity() -> None:
     assert restored == intent
     assert restored.intent_id == intent.intent_id
     assert restored.content_fingerprint == intent.content_fingerprint
+
+
+def test_restore_onboarding_intent_preserves_project_bound_identity() -> None:
+    intent = _intent(project_id="project-a")
+
+    restored = restore_onboarding_intent({"intent": intent.canonical()})
+
+    assert restored == intent
+    assert restored.project_id == "project-a"
+    assert restored.intent_id == intent.intent_id
 
 
 def test_restore_onboarding_intent_rejects_tampered_identity() -> None:

@@ -45,6 +45,7 @@ def restore_onboarding_intent(result: Mapping[str, Any]) -> OnboardingIntent:
             organization_id=str(raw["organization_id"]),
             target_stack=target_stack,
             supersedes_intent_id=raw.get("supersedes_intent_id"),
+            project_id=raw.get("project_id"),
             declared_at=datetime.fromisoformat(str(raw["declared_at"])),
         )
     except (KeyError, TypeError, ValueError) as exc:
