@@ -20,5 +20,5 @@ def test_case_buttons_may_change_logical_navigation_after_sidebar_render() -> No
 
     assert 'st.session_state["operator_nav"] = nav' in views
     assert 'st.session_state["operator_admin_nav"] = "Ingen"' in views
-    assert 'key="operator_nav"' not in app
-    assert 'key="operator_admin_nav"' not in app
+    assert 'key="operator_nav_widget"' in app
+    assert 'key="operator_admin_nav_widget"' in app
