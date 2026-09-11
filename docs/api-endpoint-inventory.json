@@ -1,5 +1,5 @@
 {
-  "count": 106,
+  "count": 108,
   "endpoints": [
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate_selection","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","tags":["bot-evidence"]},
     {"method":"GET","module":"api.endpoints.bot_evidence","name":"get_candidate","path":"/api/v1/bot-evidence/candidates/{candidate_id}","tags":["bot-evidence"]},
@@ -37,6 +37,8 @@
     {"method":"GET","module":"api.endpoints.control_plane_organizations","name":"list_organizations","path":"/api/v1/control-plane/organizations","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.control_plane_organizations","name":"create_organization","path":"/api/v1/control-plane/organizations","tags":["control-plane-v1"]},
     {"method":"PATCH","module":"api.endpoints.control_plane_organizations","name":"update_organization","path":"/api/v1/control-plane/organizations/{organization_id}","tags":["control-plane-v1"]},
+    {"method":"GET","module":"api.endpoints.control_plane_organizations","name":"get_bot_provider_credential_status","path":"/api/v1/control-plane/organizations/{organization_id}/bot-provider-credentials/{connection_id}","tags":["control-plane-v1"]},
+    {"method":"PUT","module":"api.endpoints.control_plane_organizations","name":"put_bot_provider_credential","path":"/api/v1/control-plane/organizations/{organization_id}/bot-provider-credentials/{connection_id}","tags":["control-plane-v1"]},
     {"method":"GET","module":"api.endpoints.organization_users","name":"list_organization_users","path":"/api/v1/control-plane/organizations/{organization_id}/users","tags":["control-plane-v1"]},
     {"method":"POST","module":"api.endpoints.organization_users","name":"create_organization_user","path":"/api/v1/control-plane/organizations/{organization_id}/users","tags":["control-plane-v1"]},
     {"method":"PATCH","module":"api.endpoints.organization_users","name":"update_organization_user","path":"/api/v1/control-plane/organizations/{organization_id}/users/{username}","tags":["control-plane-v1"]},
