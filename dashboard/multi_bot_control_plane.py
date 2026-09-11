@@ -1,5 +1,4 @@
 """Human-facing governed AI-bot administration for the Operator GUI."""
-
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -27,6 +26,14 @@ INDEPENDENCE_LEVELS = (
     "brand",
     "deployment",
 )
+PROVIDER_PRESETS = {
+    "OpenAI": ("openai", "https://api.openai.com/v1"),
+    "Anthropic": ("anthropic", "https://api.anthropic.com"),
+    "Mistral": ("mistral", "https://api.mistral.ai/v1"),
+    "OpenAI-kompatibel": ("openai_compatible", ""),
+    "Lokal / anden": ("custom", ""),
+}
+DATA_BOUNDARIES = ("eu", "organization", "global", "local")
 
 
 def _org_params(organization_id: str) -> dict[str, str]:
@@ -46,6 +53,10 @@ def _post(
     return client.post(path, params=_org_params(organization_id), json=payload)
 
 
+def _put(client: DORAPIClient, path: str, payload: dict[str, Any]):
+    return client.put(path, json=payload)
+
+
 def _rows(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         return []
@@ -57,14 +68,39 @@ def _human_error(exc: DORAPIError, action: str) -> str:
         return "Din session er udløbet. Log ind igen."
     if exc.status_code == 403:
         return (
-            f"DOR afviste at {action}. Din runtime-authority mangler den "
-            "nødvendige bot-administrationsrettighed."
+            f"DOR afviste at {action}. Din organisation eller runtime-authority "
+            "tillader ikke handlingen."
         )
     if exc.status_code == 409:
         return f"DOR kunne ikke {action}, fordi kataloget er ændret. Hent siden igen."
     if exc.status_code == 422:
-        return f"DOR kunne ikke {action}. Kontrollér felterne og de valgte versioner."
+        return f"DOR kunne ikke {action}. Kontrollér felterne og prøv igen."
     return f"DOR kunne ikke {action} (fejlkode {exc.status_code})."
+
+
+def build_connection_payload(
+    *,
+    connection_id: str,
+    brand: str,
+    adapter_type: str,
+    endpoint: str,
+    secret_reference: str,
+    region: str | None = None,
+    data_boundary: str = "global",
+    concurrency_limit: int = 1,
+) -> dict[str, Any]:
+    return {
+        "command_id": f"dashboard-connection-{uuid4()}",
+        "connection_id": connection_id.strip(),
+        "brand": brand.strip(),
+        "adapter_type": adapter_type.strip(),
+        "endpoint": endpoint.strip(),
+        "secret_reference": secret_reference.strip(),
+        "region": (region or "").strip() or None,
+        "data_boundary": data_boundary,
+        "concurrency_limit": int(concurrency_limit),
+        "enabled": True,
+    }
 
 
 def build_deployment_payload(
@@ -233,37 +269,112 @@ def _render_table(rows: list[dict[str, Any]], *, empty: str) -> None:
         st.info(empty)
 
 
+def _credential_path(organization_id: str, connection_id: str) -> str:
+    return (
+        f"/api/v1/control-plane/organizations/{organization_id}/"
+        f"bot-provider-credentials/{connection_id}"
+    )
+
+
 def _connection_tab(client: DORAPIClient, organization_id: str) -> None:
     st.markdown("### AI-forbindelser")
     st.caption(
-        "En forbindelse repræsenterer en tenant-ejet provider-konto eller et lokalt endpoint. "
-        "Credentials må aldrig vises igen i GUI'en."
+        "Tilføj en provider og API-nøgle én gang. Nøglen krypteres af backenden "
+        "og bliver aldrig vist igen."
     )
     connections = _load_catalog(client, organization_id, "connections")
     if connections is None:
         return
-    visible = [
-        {
-            "Navn / ID": row.get("connection_id"),
-            "Provider": row.get("brand"),
-            "Endpoint": row.get("endpoint"),
-            "Region": row.get("region") or "—",
-            "Aktiv": "Ja" if row.get("enabled") else "Nej",
-            "Version": row.get("version"),
-        }
-        for row in connections
-    ]
-    _render_table(visible, empty="Der er ingen AI-forbindelser endnu.")
+    _render_table(
+        [
+            {
+                "Navn / ID": row.get("connection_id"),
+                "Provider": row.get("brand"),
+                "Endpoint": row.get("endpoint"),
+                "Region": row.get("region") or "—",
+                "Aktiv": "Ja" if row.get("enabled") else "Nej",
+                "Version": row.get("version"),
+            }
+            for row in connections
+        ],
+        empty="Der er ingen AI-forbindelser endnu.",
+    )
 
-    st.warning(
-        "API-key onboarding er endnu ikke tilgængelig gennem den canonical bot-governance "
-        "backend. DORs kontrakt kræver en secret-manager integration, så GUI'en må ikke "
-        "sende eller gemme API-nøgler som almindelig konfiguration."
-    )
-    st.caption(
-        "Når backendens credential-kontrakt findes, bliver flowet her: Provider → API-nøgle "
-        "→ Test forbindelse → Gem. Indtil da vises ingen secret-reference eller rå payload."
-    )
+    with st.expander("Tilføj AI-forbindelse", expanded=not connections):
+        with st.form("create-ai-connection"):
+            connection_id = st.text_input(
+                "Forbindelses-ID", placeholder="openai-production"
+            )
+            provider = st.selectbox("Udbyder", list(PROVIDER_PRESETS))
+            preset_adapter, preset_endpoint = PROVIDER_PRESETS[provider]
+            endpoint = st.text_input(
+                "API endpoint",
+                value=preset_endpoint,
+                placeholder="https://provider.example/v1",
+            )
+            api_key = st.text_input(
+                "API-nøgle",
+                type="password",
+                help="Gemmes krypteret i DOR. Den eksisterende nøgle kan ikke læses tilbage.",
+            )
+            region = st.text_input("Region", placeholder="eu-west")
+            data_boundary = st.selectbox("Dataområde", DATA_BOUNDARIES)
+            concurrency = st.number_input(
+                "Maks. samtidige kald", min_value=1, value=1
+            )
+            if provider in {"OpenAI-kompatibel", "Lokal / anden"}:
+                adapter_type = st.text_input(
+                    "Adaptertype",
+                    value=preset_adapter,
+                    help="Canonical adapter-id for den valgte provider.",
+                )
+            else:
+                adapter_type = preset_adapter
+            submitted = st.form_submit_button("Gem forbindelse", type="primary")
+
+        if submitted:
+            clean_id = connection_id.strip()
+            if not clean_id or not endpoint.strip() or not api_key.strip():
+                st.error("Forbindelses-ID, API endpoint og API-nøgle er påkrævet.")
+            else:
+                try:
+                    credential = _put(
+                        client,
+                        _credential_path(organization_id, clean_id),
+                        {"api_key": api_key},
+                    )
+                    if not isinstance(credential, Mapping):
+                        raise ValueError("credential status is malformed")
+                    reference = credential.get("secret_reference")
+                    if credential.get("credential_configured") is not True or not isinstance(
+                        reference, str
+                    ) or not reference.strip():
+                        raise ValueError("credential was not confirmed")
+                    payload = build_connection_payload(
+                        connection_id=clean_id,
+                        brand=provider,
+                        adapter_type=adapter_type,
+                        endpoint=endpoint,
+                        secret_reference=reference,
+                        region=region,
+                        data_boundary=data_boundary,
+                        concurrency_limit=int(concurrency),
+                    )
+                    _post(
+                        client,
+                        organization_id,
+                        resource_path("connections"),
+                        payload,
+                    )
+                except DORAPIError as exc:
+                    st.error(_human_error(exc, "gemme AI-forbindelsen"))
+                except Exception:
+                    st.error("Status kan ikke fastslås")
+                else:
+                    st.success(
+                        "AI-forbindelsen er gemt. API-nøglen er krypteret og skjult."
+                    )
+                    st.rerun()
 
     enabled = [row for row in connections if row.get("enabled") is True]
     if enabled:
@@ -273,7 +384,9 @@ def _connection_tab(client: DORAPIClient, organization_id: str) -> None:
                 for row in enabled
                 if row.get("connection_id")
             }
-            selected = st.selectbox("Forbindelse", list(labels), key="disable-connection")
+            selected = st.selectbox(
+                "Forbindelse", list(labels), key="disable-connection"
+            )
             if st.button("Deaktivér forbindelse", key="disable-connection-submit"):
                 connection = labels[selected]
                 try:
@@ -296,7 +409,6 @@ def _deployment_tab(client: DORAPIClient, organization_id: str) -> None:
     deployments = _load_catalog(client, organization_id, "deployments")
     if connections is None or deployments is None:
         return
-
     _render_table(
         [
             {
@@ -310,23 +422,20 @@ def _deployment_tab(client: DORAPIClient, organization_id: str) -> None:
         ],
         empty="Der er ingen modeller registreret endnu.",
     )
-
-    active_connections = [
+    active = [
         row
         for row in connections
         if row.get("enabled") is True and row.get("connection_id") and row.get("version")
     ]
-    if not active_connections:
+    if not active:
         st.info("Opret eller aktivér først en AI-forbindelse.")
         return
-
     labels = {
-        f"{row['connection_id']} · {row.get('brand') or 'provider'}": row
-        for row in active_connections
+        f"{row['connection_id']} · {row.get('brand') or 'provider'}": row for row in active
     }
     with st.expander("Tilføj model", expanded=not deployments):
         with st.form("create-model-deployment"):
-            deployment_id = st.text_input("Deployment ID", placeholder="openai-gpt-production")
+            deployment_id = st.text_input("Deployment ID", placeholder="gpt-production")
             selected = st.selectbox("Forbindelse", list(labels))
             model_id = st.text_input("Model", placeholder="gpt-5.6")
             model_family = st.text_input("Modelfamilie", placeholder="gpt-5")
@@ -337,26 +446,27 @@ def _deployment_tab(client: DORAPIClient, organization_id: str) -> None:
                 "Maks. output tokens", min_value=1, value=8192, step=256
             )
             structured_output = st.checkbox("Structured output", value=True)
-            tool_text = st.text_input(
-                "Tool capabilities",
-                help="Valgfrit. Komma-separerede capability-navne.",
-            )
+            tool_text = st.text_input("Tool capabilities")
             submitted = st.form_submit_button("Gem model", type="primary")
         if submitted:
             connection = labels[selected]
-            payload = build_deployment_payload(
-                deployment_id=deployment_id,
-                connection_id=str(connection["connection_id"]),
-                connection_version=int(connection["version"]),
-                model_id=model_id,
-                model_family=model_family,
-                max_context_tokens=int(context_tokens),
-                max_output_tokens=int(output_tokens),
-                structured_output=structured_output,
-                tool_capabilities=tool_text.split(","),
-            )
             try:
-                _post(client, organization_id, resource_path("deployments"), payload)
+                _post(
+                    client,
+                    organization_id,
+                    resource_path("deployments"),
+                    build_deployment_payload(
+                        deployment_id=deployment_id,
+                        connection_id=str(connection["connection_id"]),
+                        connection_version=int(connection["version"]),
+                        model_id=model_id,
+                        model_family=model_family,
+                        max_context_tokens=int(context_tokens),
+                        max_output_tokens=int(output_tokens),
+                        structured_output=structured_output,
+                        tool_capabilities=tool_text.split(","),
+                    ),
+                )
             except DORAPIError as exc:
                 st.error(_human_error(exc, "gemme modellen"))
             else:
@@ -370,7 +480,6 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
     profiles = _load_catalog(client, organization_id, "profiles")
     if deployments is None or profiles is None:
         return
-
     _render_table(
         [
             {
@@ -385,36 +494,27 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
         ],
         empty="Der er ingen AI-bots endnu.",
     )
-
-    active_deployments = [
+    active = [
         row
         for row in deployments
         if row.get("status") == "active"
         and row.get("deployment_id")
         and row.get("revision")
     ]
-    if not active_deployments:
+    if not active:
         st.info("Registrér først en aktiv model.")
         return
-
-    st.info(
-        "DOR kræver en allerede registreret AI-1 agent identity for en botprofil. "
-        "Backenden eksponerer endnu ikke et administrativt identity-katalog, så feltet "
-        "ligger midlertidigt under Avanceret i stedet for at DOR opfinder en identitet."
-    )
-    deployment_labels = {
+    labels = {
         f"{row['deployment_id']} · {row.get('model_id') or 'model'}": row
-        for row in active_deployments
+        for row in active
     }
     with st.expander("Tilføj AI-bot"):
         with st.form("create-bot-profile"):
             display_name = st.text_input("Botnavn", placeholder="Arkitekt")
             bot_profile_id = st.text_input("Bot ID", placeholder="architecture-primary")
-            selected = st.selectbox("Model", list(deployment_labels))
+            selected = st.selectbox("Model", list(labels))
             capabilities_text = st.text_input(
-                "Capabilities",
-                placeholder="architecture.propose, architecture.review",
-                help="Komma-separerede canonical capabilities.",
+                "Capabilities", placeholder="architecture.propose, architecture.review"
             )
             prompt_version = st.text_input("Prompt-version", value="v1")
             concurrency = st.number_input("Samtidige opgaver", min_value=1, value=1)
@@ -422,9 +522,11 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
             with st.expander("Avanceret"):
                 agent_identity = st.text_input(
                     "AI-1 agent identity",
-                    help="64-tegns SHA-256 identity, som allerede er registreret i DOR.",
+                    help="SHA-256 identity, som allerede er registreret i DOR.",
                 )
-                data_boundary = st.text_input("Data boundary", value="global")
+                data_boundary = st.selectbox(
+                    "Bot-dataområde", DATA_BOUNDARIES, index=2
+                )
                 source_code_allowed = st.checkbox("Kildekode må sendes", value=True)
                 max_input = st.number_input(
                     "Maks. input tokens", min_value=1, value=32000, step=1000
@@ -434,24 +536,28 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
                 )
             submitted = st.form_submit_button("Gem AI-bot", type="primary")
         if submitted:
-            deployment = deployment_labels[selected]
-            payload = build_profile_payload(
-                bot_profile_id=bot_profile_id,
-                agent_identity=agent_identity,
-                display_name=display_name,
-                deployment_id=str(deployment["deployment_id"]),
-                deployment_revision=int(deployment["revision"]),
-                prompt_version=prompt_version,
-                capabilities=capabilities_text.split(","),
-                data_boundary=data_boundary,
-                source_code_allowed=source_code_allowed,
-                max_input_tokens=int(max_input),
-                max_output_tokens=int(max_output),
-                concurrency_limit=int(concurrency),
-                enabled=enabled,
-            )
+            deployment = labels[selected]
             try:
-                _post(client, organization_id, resource_path("profiles"), payload)
+                _post(
+                    client,
+                    organization_id,
+                    resource_path("profiles"),
+                    build_profile_payload(
+                        bot_profile_id=bot_profile_id,
+                        agent_identity=agent_identity,
+                        display_name=display_name,
+                        deployment_id=str(deployment["deployment_id"]),
+                        deployment_revision=int(deployment["revision"]),
+                        prompt_version=prompt_version,
+                        capabilities=capabilities_text.split(","),
+                        data_boundary=data_boundary,
+                        source_code_allowed=source_code_allowed,
+                        max_input_tokens=int(max_input),
+                        max_output_tokens=int(max_output),
+                        concurrency_limit=int(concurrency),
+                        enabled=enabled,
+                    ),
+                )
             except DORAPIError as exc:
                 st.error(_human_error(exc, "gemme AI-botten"))
             else:
@@ -465,34 +571,25 @@ def _role_tab(client: DORAPIClient, organization_id: str) -> None:
     profiles = _load_catalog(client, organization_id, "profiles")
     if roles is None or profiles is None:
         return
-
-    if roles:
-        st.dataframe(
-            [
-                {
-                    "Rolle": row.get("name") or row.get("role_id"),
-                    "ID": row.get("role_id"),
-                    "Funktion": row.get("protocol_function"),
-                    "Capabilities": ", ".join(row.get("required_capabilities") or []),
-                    "Version": row.get("version"),
-                }
-                for row in roles
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("Der er ingen roller endnu.")
-
+    _render_table(
+        [
+            {
+                "Rolle": row.get("name") or row.get("role_id"),
+                "Funktion": row.get("protocol_function"),
+                "Capabilities": ", ".join(row.get("required_capabilities") or []),
+                "Version": row.get("version"),
+            }
+            for row in roles
+        ],
+        empty="Der er ingen roller endnu.",
+    )
     with st.expander("Opret rolle"):
         with st.form("create-bot-role"):
             name = st.text_input("Rollenavn", placeholder="Chief Architect")
             role_id = st.text_input("Rolle ID", placeholder="chief-architect")
-            purpose = st.text_area("Formål", placeholder="Udarbejder den primære arkitektur.")
+            purpose = st.text_area("Formål")
             protocol_function = st.selectbox("Protocol function", PROTOCOL_FUNCTIONS)
-            capabilities = st.text_input(
-                "Påkrævede capabilities", placeholder="architecture.propose"
-            )
+            capabilities = st.text_input("Påkrævede capabilities")
             output_schema_ref = st.text_input(
                 "Output schema", value="schema://generic/output/v1"
             )
@@ -500,18 +597,22 @@ def _role_tab(client: DORAPIClient, organization_id: str) -> None:
             independent = st.checkbox("Kræv uafhængig verifikation", value=True)
             submitted = st.form_submit_button("Gem rolle", type="primary")
         if submitted:
-            payload = build_role_payload(
-                role_id=role_id,
-                name=name,
-                purpose=purpose,
-                protocol_function=protocol_function,
-                required_capabilities=capabilities.split(","),
-                output_schema_ref=output_schema_ref,
-                rubric_ref=rubric_ref,
-                independent_verification=independent,
-            )
             try:
-                _post(client, organization_id, resource_path("roles"), payload)
+                _post(
+                    client,
+                    organization_id,
+                    resource_path("roles"),
+                    build_role_payload(
+                        role_id=role_id,
+                        name=name,
+                        purpose=purpose,
+                        protocol_function=protocol_function,
+                        required_capabilities=capabilities.split(","),
+                        output_schema_ref=output_schema_ref,
+                        rubric_ref=rubric_ref,
+                        independent_verification=independent,
+                    ),
+                )
             except DORAPIError as exc:
                 st.error(_human_error(exc, "gemme rollen"))
             else:
@@ -519,19 +620,16 @@ def _role_tab(client: DORAPIClient, organization_id: str) -> None:
                 st.rerun()
 
     active_roles = [
-        row
-        for row in roles
+        row for row in roles
         if row.get("enabled") is True and row.get("role_id") and row.get("version")
     ]
     active_profiles = [
-        row
-        for row in profiles
+        row for row in profiles
         if row.get("enabled") is True and row.get("bot_profile_id") and row.get("version")
     ]
     if not active_roles or not active_profiles:
         st.info("Der skal være mindst én aktiv rolle og én aktiv AI-bot før tildeling.")
         return
-
     role_labels = {
         f"{row.get('name') or row['role_id']} · v{row['version']}": row
         for row in active_roles
@@ -541,54 +639,43 @@ def _role_tab(client: DORAPIClient, organization_id: str) -> None:
         for row in active_profiles
     }
     fallback_options = ["Ingen"] + list(profile_labels)
-
     st.markdown("#### Tildel bots til rolle")
-    st.caption(
-        "Den primære bot får preference rank 1. En fallback bliver kun en del af den "
-        "godkendte pool; Selection Engine kan ikke vælge bots uden for denne pool."
-    )
     with st.form("create-role-allocation"):
         role_label = st.selectbox("Rolle", list(role_labels))
         primary_label = st.selectbox("Primær AI-bot", list(profile_labels))
         fallback_label = st.selectbox("Fallback AI-bot", fallback_options)
-        allocation_id = st.text_input(
-            "Tildelings-ID", placeholder="chief-architect-production"
-        )
-        independence = st.selectbox(
-            "Uafhængighedskrav", INDEPENDENCE_LEVELS, index=3
-        )
+        allocation_id = st.text_input("Tildelings-ID", placeholder="chief-architect-production")
+        independence = st.selectbox("Uafhængighedskrav", INDEPENDENCE_LEVELS, index=3)
         autonomy = st.slider("Autonominiveau", min_value=0, max_value=5, value=2)
         approved_by = st.text_input(
-            "Godkendt af",
-            value=str(st.session_state.get("username") or "operator-admin"),
+            "Godkendt af", value=str(st.session_state.get("username") or "operator-admin")
         )
         submitted = st.form_submit_button("Gem tildeling", type="primary")
     if submitted:
         role = role_labels[role_label]
         primary = profile_labels[primary_label]
         fallback = profile_labels.get(fallback_label)
-        payload = build_allocation_payload(
-            allocation_id=allocation_id,
-            role_id=str(role["role_id"]),
-            role_version=int(role["version"]),
-            primary_profile_id=str(primary["bot_profile_id"]),
-            primary_profile_version=int(primary["version"]),
-            fallback_profile_id=(
-                str(fallback["bot_profile_id"]) if fallback is not None else None
-            ),
-            fallback_profile_version=(
-                int(fallback["version"]) if fallback is not None else None
-            ),
-            independence_level=independence,
-            autonomy_level=autonomy,
-            approved_by=approved_by,
-        )
         try:
             _post(
                 client,
                 organization_id,
                 "/api/v1/bot-governance/allocations",
-                payload,
+                build_allocation_payload(
+                    allocation_id=allocation_id,
+                    role_id=str(role["role_id"]),
+                    role_version=int(role["version"]),
+                    primary_profile_id=str(primary["bot_profile_id"]),
+                    primary_profile_version=int(primary["version"]),
+                    fallback_profile_id=(
+                        str(fallback["bot_profile_id"]) if fallback else None
+                    ),
+                    fallback_profile_version=(
+                        int(fallback["version"]) if fallback else None
+                    ),
+                    independence_level=independence,
+                    autonomy_level=autonomy,
+                    approved_by=approved_by,
+                ),
             )
         except DORAPIError as exc:
             st.error(_human_error(exc, "gemme tildelingen"))
@@ -596,25 +683,9 @@ def _role_tab(client: DORAPIClient, organization_id: str) -> None:
             st.success("Rolle-tildelingen er gemt og versioneret af backenden.")
             st.rerun()
 
-    with st.expander("Hent eksisterende tildeling"):
-        allocation_lookup = st.text_input("Tildelings-ID", key="allocation-lookup")
-        if st.button("Hent tildeling", key="allocation-lookup-submit"):
-            if not allocation_lookup.strip():
-                st.error("Tildelings-ID er påkrævet.")
-            else:
-                try:
-                    result = _get(
-                        client,
-                        organization_id,
-                        f"/api/v1/bot-governance/allocations/{allocation_lookup.strip()}",
-                    )
-                except DORAPIError as exc:
-                    st.error(_human_error(exc, "hente tildelingen"))
-                else:
-                    st.json(result)
-
 
 def _advanced_tab(client: DORAPIClient, organization_id: str) -> None:
+    st.subheader("🧠 Bot Governance & Multi-bot Control Plane")
     st.markdown("### Avanceret")
     st.caption(
         "Tekniske runtime- og evidensopslag. Der skal ikke skrives JSON eller API-payloads her."
@@ -623,56 +694,13 @@ def _advanced_tab(client: DORAPIClient, organization_id: str) -> None:
     if templates is not None:
         with st.expander("Council templates"):
             _render_table(templates, empty="Ingen council templates.")
-
     with st.expander("Selection decision"):
         run_id = st.text_input("Run ID", key="selection-run-id")
-        if st.button("Hent selection", key="selection-fetch"):
-            if not run_id.strip():
-                st.error("Run ID er påkrævet.")
-            else:
-                try:
-                    st.json(
-                        _get(client, organization_id, f"/api/v1/bot-selections/{run_id.strip()}")
-                    )
-                except DORAPIError as exc:
-                    st.error(_human_error(exc, "hente selection"))
-
-    with st.expander("Evidens"):
-        evidence_type = st.selectbox(
-            "Evidenstype",
-            [
-                "evaluations",
-                "observations",
-                "snapshots",
-                "work-packages",
-                "candidates",
-                "candidate-selections",
-                "integration-plans",
-                "integration-receipts",
-            ],
-        )
-        identity = st.text_input("Evidence ID eller plan fingerprint")
-        if st.button("Hent evidens", key="bot-evidence-fetch"):
-            if not identity.strip():
-                st.error("Evidence ID er påkrævet.")
-            else:
-                try:
-                    evidence = _get(
-                        client,
-                        organization_id,
-                        f"/api/v1/bot-evidence/{evidence_type}/{identity.strip()}",
-                    )
-                except DORAPIError as exc:
-                    st.error(_human_error(exc, "hente evidens"))
-                else:
-                    if isinstance(evidence, Mapping):
-                        st.success(
-                            f"{evidence.get('evidence_type') or 'Evidens'} · "
-                            f"fingerprint {evidence.get('fingerprint') or 'ukendt'}"
-                        )
-                        st.json(evidence.get("payload", {}))
-                    else:
-                        st.error("Status kan ikke fastslås")
+        if st.button("Hent selection", key="selection-fetch") and run_id.strip():
+            try:
+                st.json(_get(client, organization_id, f"/api/v1/bot-selections/{run_id.strip()}"))
+            except DORAPIError as exc:
+                st.error(_human_error(exc, "hente selection"))
 
 
 def render_multi_bot_control_plane(
@@ -682,22 +710,14 @@ def render_multi_bot_control_plane(
     if not organization_id.strip():
         st.warning("Vælg en organisation for at administrere AI-bots.")
         return
-
     organization_id = organization_id.strip()
     st.subheader("AI-bots")
     st.caption(
-        "Opsæt modeller og bots, opret roller og vælg primær/fallback. "
-        "DORs backend forbliver autoritativ for tenant-scope, versionsbinding og rettigheder."
+        "Opsæt provider/API-nøgle, model og bot; opret roller og vælg primær/fallback. "
+        "DORs backend forbliver autoritativ for tenant-scope, credentials og rettigheder."
     )
-
     tabs = st.tabs(
-        [
-            "Forbindelser",
-            "Modeller",
-            "AI-bots",
-            "Roller & tildeling",
-            "Avanceret",
-        ]
+        ["Forbindelser", "Modeller", "AI-bots", "Roller & tildeling", "Avanceret"]
     )
     with tabs[0]:
         _connection_tab(client, organization_id)
