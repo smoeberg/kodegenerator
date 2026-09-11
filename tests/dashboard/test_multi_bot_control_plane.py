@@ -3,10 +3,13 @@ from pathlib import Path
 from dashboard.multi_bot_control_plane import (
     _get,
     _post,
+    _put,
     build_allocation_payload,
+    build_connection_payload,
     build_deployment_payload,
     build_role_payload,
 )
+from services.bot_provider_credentials import credential_reference
 
 SOURCE = Path("dashboard/multi_bot_control_plane.py")
 
@@ -21,6 +24,10 @@ class FakeClient:
 
     def post(self, path, **kwargs):
         self.calls.append(("POST", path, kwargs))
+        return {"ok": True}
+
+    def put(self, path, **kwargs):
+        self.calls.append(("PUT", path, kwargs))
         return {"ok": True}
 
 
@@ -48,6 +55,35 @@ def test_post_scopes_request_and_uses_json_payload():
             },
         )
     ]
+
+
+def test_credential_put_uses_write_only_json_payload():
+    client = FakeClient()
+
+    assert _put(client, "/credential", {"api_key": "secret"}) == {"ok": True}
+    assert client.calls == [
+        ("PUT", "/credential", {"json": {"api_key": "secret"}})
+    ]
+
+
+def test_connection_builder_passes_only_opaque_secret_reference_to_bot_catalog():
+    reference = credential_reference("openai-prod")
+    payload = build_connection_payload(
+        connection_id=" openai-prod ",
+        brand="OpenAI",
+        adapter_type="openai",
+        endpoint="https://api.openai.com/v1",
+        secret_reference=reference,
+        region="eu",
+        data_boundary="eu",
+        concurrency_limit=2,
+    )
+
+    assert payload["connection_id"] == "openai-prod"
+    assert payload["secret_reference"] == reference
+    assert reference.startswith("dor-runtime-settings://")
+    assert "api_key" not in payload
+    assert "secret" not in payload
 
 
 def test_deployment_builder_binds_exact_connection_version():
@@ -121,16 +157,18 @@ def test_allocation_builder_assigns_primary_and_fallback_without_expanding_pool(
     ]
 
 
-def test_normal_bot_admin_has_no_raw_json_payload_editor_or_secret_reference_input():
+def test_normal_bot_admin_has_no_raw_json_editor_or_secret_reference_field():
     source = SOURCE.read_text(encoding="utf-8")
 
     assert 'st.text_area("Payload"' not in source
     assert '"Allocation payload"' not in source
     assert '"Selection payload"' not in source
     assert "json.loads" not in source
-    assert "secret_reference" not in source
-    assert "API-key onboarding" in source
-    assert "secret-manager" in source
+    assert 'st.text_input("secret_reference"' not in source
+    assert 'st.text_input("Secret reference"' not in source
+    assert '"API-nøgle"' in source
+    assert 'type="password"' in source
+    assert '"Gem forbindelse"' in source
 
 
 def test_bot_admin_exposes_human_facing_setup_and_role_assignment():
@@ -138,6 +176,10 @@ def test_bot_admin_exposes_human_facing_setup_and_role_assignment():
 
     for label in (
         "AI-forbindelser",
+        "Tilføj AI-forbindelse",
+        "Udbyder",
+        "API endpoint",
+        "API-nøgle",
         "Modeller",
         "AI-bots",
         "Roller & tildeling",
