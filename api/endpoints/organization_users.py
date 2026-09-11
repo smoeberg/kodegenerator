@@ -20,6 +20,7 @@ from domain.actor import Actor, ActorType
 from infrastructure.persistence.models import OrganizationMembershipModel
 from infrastructure.persistence.repositories import RepositoryError
 from runtime.core import DORRuntime
+from services.control_plane_admin_authority import sync_control_plane_admin_authority
 
 router = APIRouter(
     prefix="/api/v1/control-plane/organizations/{organization_id}/users",
@@ -191,6 +192,12 @@ def create_organization_user(
             detail={"error": "user_membership_conflict"},
         ) from exc
 
+    sync_control_plane_admin_authority(
+        dor.database,
+        username=request.username,
+        organization_id=organization_id,
+        is_admin=request.is_admin,
+    )
     return OrganizationUserResponse(
         username=request.username,
         email=request.email.strip() if request.email else None,
@@ -241,6 +248,14 @@ def update_organization_user(
         if request.is_admin is not None:
             membership.is_admin = request.is_admin
         membership.updated_at = datetime.now(timezone.utc)
+        effective_is_admin = membership.is_admin
+
+    sync_control_plane_admin_authority(
+        dor.database,
+        username=username,
+        organization_id=organization_id,
+        is_admin=effective_is_admin,
+    )
 
     identity = store.get(username)
     assert identity is not None
