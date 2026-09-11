@@ -459,7 +459,7 @@ def test_evidence_trace_renders_canonical_chain(fake_api: FakeAPI) -> None:
 def test_admin_renders_governance_redmine_and_health(fake_api: FakeAPI) -> None:
     at = _navigate(_run_app(), ADMIN_PAGE)
 
-    assert "🧠 Bot Governance & Multi-bot Control Plane" in _values(at.subheader)
+    assert "AI-bots" in _values(at.subheader)
     assert "Redmine Integration" in _values(at.subheader)
     assert "Readiness & Drift" in _values(at.subheader)
 
@@ -469,13 +469,10 @@ def test_admin_renders_governance_redmine_and_health(fake_api: FakeAPI) -> None:
         "Redmine Integration",
         "System Health",
         "Forbindelser",
-        "Deployments",
-        "Botprofiler",
-        "Roller",
-        "Council templates",
-        "Allokering",
-        "Selection",
-        "Evidens",
+        "Modeller",
+        "AI-bots",
+        "Roller & tildeling",
+        "Avanceret",
     ):
         assert expected in tab_labels
 

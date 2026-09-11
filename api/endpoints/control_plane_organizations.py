@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -19,6 +19,8 @@ from infrastructure.persistence.models import OrganizationMembershipModel
 from infrastructure.persistence.repositories import OrganizationRepository, RepositoryError
 from infrastructure.persistence.uow import UnitOfWork
 from runtime.core import DORRuntime
+from services.bot_provider_credentials import BotProviderCredentialStore
+from services.control_plane_admin_authority import sync_control_plane_admin_authority
 
 
 router = APIRouter(
@@ -27,6 +29,7 @@ router = APIRouter(
 )
 
 _ORGANIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_CONNECTION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class OrganizationCreateRequest(BaseModel):
@@ -76,6 +79,17 @@ class OrganizationListResponse(BaseModel):
     organizations: list[OrganizationResponse]
 
 
+class BotProviderCredentialRequest(BaseModel):
+    api_key: SecretStr = Field(min_length=1, max_length=16_384)
+
+
+class BotProviderCredentialResponse(BaseModel):
+    organization_id: str
+    connection_id: str
+    credential_configured: bool
+    secret_reference: str | None = None
+
+
 def _membership_rows(dor: DORRuntime, username: str) -> list[OrganizationMembershipModel]:
     with dor.database.session() as session:
         return list(
@@ -111,6 +125,16 @@ def _require_admin_membership(
             detail={"error": "organization_admin_required"},
         )
     return membership
+
+
+def _validate_connection_id(connection_id: str) -> str:
+    connection_id = str(connection_id or "").strip()
+    if not _CONNECTION_ID.fullmatch(connection_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "invalid_connection_id"},
+        )
+    return connection_id
 
 
 def _response(organization: Organization, *, is_admin: bool) -> OrganizationResponse:
@@ -216,6 +240,12 @@ def create_organization(
             detail={"error": "organization_create_conflict"},
         ) from exc
 
+    sync_control_plane_admin_authority(
+        dor.database,
+        username=current_user.username,
+        organization_id=request.id,
+        is_admin=True,
+    )
     return _response(organization, is_admin=True)
 
 
@@ -257,3 +287,61 @@ def update_organization(
         ) from exc
 
     return _response(organization, is_admin=membership.is_admin)
+
+
+@router.get(
+    "/{organization_id}/bot-provider-credentials/{connection_id}",
+    response_model=BotProviderCredentialResponse,
+)
+def get_bot_provider_credential_status(
+    organization_id: str,
+    connection_id: str,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> BotProviderCredentialResponse:
+    """Return only whether a provider credential exists; never return the key."""
+    connection_id = _validate_connection_id(connection_id)
+    with dor.database.session() as session:
+        _require_admin_membership(
+            session,
+            username=current_user.username,
+            organization_id=organization_id,
+        )
+    result = BotProviderCredentialStore(dor.database).status(
+        organization_id, connection_id
+    )
+    return BotProviderCredentialResponse(**result)
+
+
+@router.put(
+    "/{organization_id}/bot-provider-credentials/{connection_id}",
+    response_model=BotProviderCredentialResponse,
+)
+def put_bot_provider_credential(
+    organization_id: str,
+    connection_id: str,
+    request: BotProviderCredentialRequest,
+    current_user: User = Depends(get_current_active_user),
+    dor: DORRuntime = Depends(get_dor),
+) -> BotProviderCredentialResponse:
+    """Encrypt a new API key and return only an opaque reference/status."""
+    connection_id = _validate_connection_id(connection_id)
+    with dor.database.session() as session:
+        _require_admin_membership(
+            session,
+            username=current_user.username,
+            organization_id=organization_id,
+        )
+    sync_control_plane_admin_authority(
+        dor.database,
+        username=current_user.username,
+        organization_id=organization_id,
+        is_admin=True,
+    )
+    result = BotProviderCredentialStore(dor.database).put(
+        organization_id,
+        connection_id,
+        api_key=request.api_key.get_secret_value(),
+        updated_by=current_user.username,
+    )
+    return BotProviderCredentialResponse(**result)

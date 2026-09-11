@@ -44,6 +44,7 @@ from runtime.project_scope_runtime import (
     ProjectScopeNotFoundError,
     ProjectScopeRuntime,
 )
+from services.control_plane_admin_authority import sync_control_plane_admin_membership
 
 router = APIRouter(
     prefix="/api/v1/control-plane/projects",
@@ -211,6 +212,14 @@ def create_project(
     current_user: User = Depends(get_current_active_user),
     dor: DORRuntime = Depends(get_dor),
 ) -> ControlPlaneProjectCommandResponse:
+    # Organization-admin membership is presentation/control-plane state. Map it
+    # into the canonical Phase-3 role model before the runtime performs its
+    # normal fail-closed authorization check; never bypass that check here.
+    sync_control_plane_admin_membership(
+        dor.database,
+        username=current_user.username,
+        organization_id=request.organization_id,
+    )
     context = _context(dor, current_user, request.organization_id)
     try:
         result = dor.projects.create_project(

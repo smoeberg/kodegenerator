@@ -173,11 +173,44 @@ def _get_executions(client: DORAPIClient) -> tuple[list[dict[str, Any]], str | N
         return [], f"{feedback.title}. {feedback.next_step}"
 
 
+def _copy_widget_to_logical(widget_key: str, logical_key: str) -> None:
+    st.session_state[logical_key] = st.session_state.get(widget_key)
+
+
+def _sync_radio_state(
+    *,
+    logical_key: str,
+    widget_key: str,
+    allowed: tuple[str, ...],
+    default: str,
+) -> None:
+    """Sync logical navigation before Streamlit instantiates the radio widget.
+
+    Buttons rendered later in a run may safely change the logical key. On the
+    next rerun we copy that value into the widget-owned key before the widget
+    exists, avoiding Streamlit's post-instantiation session-state exception.
+    """
+    logical = st.session_state.get(logical_key)
+    if logical not in allowed:
+        logical = default
+        st.session_state[logical_key] = logical
+    if st.session_state.get(widget_key) != logical:
+        st.session_state[widget_key] = logical
+
+
 def _sidebar(client: DORAPIClient) -> tuple[str, bool | None]:
-    if st.session_state.get("operator_nav") not in WORK_NAV:
-        st.session_state["operator_nav"] = "Overblik"
-    if st.session_state.get("operator_admin_nav") not in ADMIN_NAV:
-        st.session_state["operator_admin_nav"] = "Ingen"
+    _sync_radio_state(
+        logical_key="operator_nav",
+        widget_key="operator_nav_widget",
+        allowed=WORK_NAV,
+        default="Overblik",
+    )
+    _sync_radio_state(
+        logical_key="operator_admin_nav",
+        widget_key="operator_admin_nav_widget",
+        allowed=ADMIN_NAV,
+        default="Ingen",
+    )
 
     admin_status: bool | None = None
     with st.sidebar:
@@ -187,8 +220,11 @@ def _sidebar(client: DORAPIClient) -> tuple[str, bool | None]:
             "Navigation",
             WORK_NAV,
             label_visibility="collapsed",
-            key="operator_nav",
+            key="operator_nav_widget",
+            on_change=_copy_widget_to_logical,
+            args=("operator_nav_widget", "operator_nav"),
         )
+        st.session_state["operator_nav"] = nav
 
         st.markdown('<div class="nav-section">Organisation</div>', unsafe_allow_html=True)
         try:
@@ -202,11 +238,8 @@ def _sidebar(client: DORAPIClient) -> tuple[str, bool | None]:
         if organization_id:
             try:
                 admin_status = fetch_organization_admin_status(client, organization_id)
-            except DORAPIError as exc:
-                if exc.status_code == 401:
-                    admin_status = None
-                else:
-                    admin_status = None
+            except DORAPIError:
+                admin_status = None
             except Exception:
                 admin_status = None
 
@@ -219,14 +252,18 @@ def _sidebar(client: DORAPIClient) -> tuple[str, bool | None]:
                 "Administration",
                 ADMIN_NAV,
                 label_visibility="collapsed",
-                key="operator_admin_nav",
+                key="operator_admin_nav_widget",
+                on_change=_copy_widget_to_logical,
+                args=("operator_admin_nav_widget", "operator_admin_nav"),
             )
+            st.session_state["operator_admin_nav"] = admin
             if admin == "Administration":
                 nav = "Administration"
         else:
             # Never preserve a privileged client-side selection once the
             # authoritative admin projection is false or unknown.
             st.session_state["operator_admin_nav"] = "Ingen"
+            st.session_state["operator_admin_nav_widget"] = "Ingen"
             if organization_id and admin_status is None:
                 st.markdown(
                     '<div class="nav-section">Administration</div>',

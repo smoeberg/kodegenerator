@@ -10,7 +10,7 @@
       "internal": "Backend/worker/diagnostic/legacy API with no direct canonical GUI surface."
     }
   },
-  "summary": {"total": 106, "covered": 67, "planned": 13, "internal": 26},
+  "summary": {"total": 108, "covered": 68, "planned": 14, "internal": 26},
   "endpoints": [
     {"method":"GET","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate selection"},
     {"method":"GET","path":"/api/v1/bot-evidence/candidates/{candidate_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate"},
@@ -48,6 +48,8 @@
     {"method":"GET","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization context"},
     {"method":"POST","path":"/api/v1/control-plane/organizations","surface":"administration","status":"covered","capability":"Organization management"},
     {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}","surface":"administration","status":"covered","capability":"Organization management"},
+    {"method":"GET","path":"/api/v1/control-plane/organizations/{organization_id}/bot-provider-credentials/{connection_id}","surface":"administration","status":"planned","capability":"Bot provider credential status"},
+    {"method":"PUT","path":"/api/v1/control-plane/organizations/{organization_id}/bot-provider-credentials/{connection_id}","surface":"administration","status":"covered","capability":"Bot provider credential write"},
     {"method":"GET","path":"/api/v1/control-plane/organizations/{organization_id}/users","surface":"administration","status":"covered","capability":"Organization user management"},
     {"method":"POST","path":"/api/v1/control-plane/organizations/{organization_id}/users","surface":"administration","status":"covered","capability":"Organization user management"},
     {"method":"PATCH","path":"/api/v1/control-plane/organizations/{organization_id}/users/{username}","surface":"administration","status":"covered","capability":"Organization user management"},
