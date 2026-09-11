@@ -10,7 +10,6 @@ from phase4.authority.grants import VerifiedAuthorityGrant
 from services.git_pr_publisher import (
     GitPRPublisher,
     GitWorktreeManager,
-    WorktreeExecutionError,
     WorktreeSecurityError,
 )
 from services.github_pr_contracts import (
@@ -71,6 +70,21 @@ def test_worktree_lifecycle_and_patch_application(temp_git_repo: Path):
     # Cleanup worktree
     manager.cleanup_worktree(session)
     assert not session.worktree_path.exists()
+
+
+def test_detached_exact_base_and_deterministic_commit(temp_git_repo: Path):
+    manager = GitWorktreeManager(temp_git_repo)
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=temp_git_repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    session = manager.create_detached_worktree(base)
+    try:
+        assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=session.worktree_path,
+                              check=True, capture_output=True, text=True).stdout.strip() == base
+        (session.worktree_path / "new.txt").write_text("deterministic")
+        commit = manager.stage_and_commit(session, "deterministic", authored_at="2000-01-01T00:00:00+00:00")
+        assert len(commit) == 40
+    finally:
+        manager.cleanup_worktree(session)
 
 
 def test_git_pr_publisher_end_to_end(temp_git_repo: Path):

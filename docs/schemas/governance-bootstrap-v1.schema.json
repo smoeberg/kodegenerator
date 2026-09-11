@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/smoeberg/kodegenerator/blob/main/docs/schemas/governance-bootstrap-v1.schema.json",
+  "title": "DOR Governance Bootstrap v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organization_id", "repository_root", "base_sha", "roles"],
+  "properties": {
+    "organization_id": {"type": "string", "minLength": 1},
+    "repository_root": {"type": "string", "minLength": 1},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "audit_path": {"type": "string", "minLength": 1},
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_owner", "orchestrator", "coder", "auditor", "reviewer"],
+      "properties": {
+        "product_owner": {"$ref": "#/$defs/binding"},
+        "orchestrator": {"$ref": "#/$defs/binding"},
+        "coder": {"$ref": "#/$defs/binding"},
+        "auditor": {"$ref": "#/$defs/binding"},
+        "reviewer": {"$ref": "#/$defs/binding"}
+      }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider_id", "factory", "model", "prompt_version", "options_fingerprint"],
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "factory": {"enum": ["governed_llm", "governed_execution"]},
+        "model": {"type": "string", "minLength": 1},
+        "prompt_version": {"type": "string", "minLength": 1},
+        "options_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

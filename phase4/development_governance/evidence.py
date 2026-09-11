@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Protocol
 
-from .contracts import ArtifactSubmission, AuditDecision, EvidenceReport, SolutionProposal
+from .contracts import (
+    ArtifactSubmission,
+    AuditDecision,
+    EvidenceReport,
+    SolutionProposal,
+)
 
 
 class EvidenceCollectionError(RuntimeError):
@@ -21,6 +27,8 @@ class SupplementalEvidenceSource(Protocol):
     def ci_results(self, artifact_version: str) -> tuple[str, ...]: ...
 
     def migration_results(self, artifact_version: str) -> tuple[str, ...]: ...
+
+    def dependency_results(self, artifact_version: str) -> tuple[str, ...]: ...
 
 
 class GitRepositoryEvidenceVerifier:
@@ -46,6 +54,18 @@ class GitRepositoryEvidenceVerifier:
         del solution  # contract conformance is the Auditor's concern
         mismatches: list[str] = []
         verified: list[str] = []
+        for label, value in (
+            ("artifact_version", submission.artifact_version),
+            ("base_version", submission.base_version),
+        ):
+            if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+                mismatches.append(f"{label} must be an exact lowercase 40-character Git commit SHA")
+        if mismatches:
+            return EvidenceReport(
+                decision=AuditDecision.VETO,
+                facts_verified=(),
+                mismatches=tuple(mismatches),
+            )
         try:
             self._run("git", "rev-parse", "--is-inside-work-tree")
             artifact = self._run("git", "rev-parse", f"{submission.artifact_version}^{{commit}}")
@@ -94,6 +114,10 @@ class GitRepositoryEvidenceVerifier:
                     mismatches,
                 )
                 self._compare_claims(
+                    "dependencies", submission.dependency_versions,
+                    self.supplemental.dependency_results(artifact), verified, mismatches,
+                )
+                self._compare_claims(
                     "ci",
                     submission.ci_claims,
                     self.supplemental.ci_results(artifact),
@@ -107,6 +131,12 @@ class GitRepositoryEvidenceVerifier:
                     verified,
                     mismatches,
                 )
+            else:
+                for label, claims in (("tests", submission.test_claims), ("ci", submission.ci_claims),
+                                      ("migrations", submission.migration_claims),
+                                      ("dependencies", submission.dependency_versions)):
+                    if claims:
+                        mismatches.append(f"{label} claims are unverifiable without a supplemental evidence source")
         except EvidenceCollectionError as exc:
             mismatches.append(str(exc))
 

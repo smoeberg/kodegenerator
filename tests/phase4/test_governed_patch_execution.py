@@ -30,7 +30,6 @@ from domain.organization import Organization
 from infrastructure.persistence.uow import UnitOfWork
 from phase4.context_packet import ContextItem
 from phase4.execution import ExecutionStatus
-from phase4.implementation_agent.sandbox_tool_runner import BubblewrapToolRunner
 from phase4.implementation_agent import (
     IMPLEMENTATION_APPLY_ACTION,
     ChangeBudget,
@@ -41,6 +40,7 @@ from phase4.implementation_agent import (
     PatchCandidate,
     PatchExecutionContractError,
     PatchExecutionRequest,
+    PatchExecutionRequestNotFoundError,
     PatchRecordStatus,
     PatchWorkspaceError,
     RawToolResult,
@@ -51,6 +51,7 @@ from phase4.implementation_agent import (
     WorkspacePatchExecutor,
     canonical_python_tools,
 )
+from phase4.implementation_agent.sandbox_tool_runner import BubblewrapToolRunner
 from phase4.outcome.models import OutcomeStatus
 from runtime.core import DORRuntime
 
@@ -174,12 +175,14 @@ def _patch_runtime(
     root: Path,
     proposal_runtime: ImplementationAgentRuntime,
     runner: RecordingToolRunner,
+    materialize=None,
 ) -> GovernedPatchExecutionRuntime:
     return GovernedPatchExecutionRuntime(
         proposal_runtime=proposal_runtime,
         workspace_root=root,
         tools=_tools(),
         tool_runner=runner,
+        materialize=materialize,
     )
 
 
@@ -221,6 +224,42 @@ def test_successful_patch_is_authorized_evidenced_committed_and_replayed(tmp_pat
     ]
     capabilities = {item.name for item in proposal_runtime.agent.capabilities}
     assert IMPLEMENTATION_APPLY_ACTION in capabilities
+
+
+def test_materialization_occurs_once_before_success_replay(tmp_path):
+    root = _workspace(tmp_path)
+    proposal_runtime, proposal, _ = _proposal_runtime(root)
+    receipts: list[str] = []
+    runtime = _patch_runtime(root, proposal_runtime, RecordingToolRunner(),
+                             materialize=lambda record: receipts.append(record.request_fingerprint) or "commit-sha")
+    first = runtime.run(proposal_id=proposal.proposal_id, idempotency_key="materialize")
+    second = runtime.run(proposal_id=proposal.proposal_id, idempotency_key="materialize")
+    assert receipts == [first.request.request_fingerprint]
+    assert runtime.get_materialization_receipt(first.request.request_fingerprint) == "commit-sha"
+    assert second.replayed is True
+
+
+def test_materialization_failure_caches_no_success_or_receipt(tmp_path):
+    root = _workspace(tmp_path)
+    proposal_runtime, proposal, _ = _proposal_runtime(root)
+
+    attempted: list[str] = []
+
+    def fail(record):
+        attempted.append(record.request_fingerprint)
+        raise RuntimeError("commit failed")
+
+    runtime = _patch_runtime(root, proposal_runtime, RecordingToolRunner(), materialize=fail)
+    run = runtime.run(proposal_id=proposal.proposal_id, idempotency_key="materialize-fail")
+    assert run.execution.status is ExecutionStatus.FAILED
+    assert run.record.status is PatchRecordStatus.FAILED
+    replay = runtime.run(proposal_id=proposal.proposal_id, idempotency_key="materialize-fail")
+    assert replay.execution.status is ExecutionStatus.FAILED
+    assert attempted == [run.request.request_fingerprint]
+    assert (root / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    with pytest.raises(PatchExecutionRequestNotFoundError):
+        runtime.get_materialization_receipt(attempted[0])
+    assert runtime.execution_audit()[-1].status is ExecutionStatus.FAILED
 
 
 def test_bubblewrap_tool_runner_fails_closed_without_bwrap(tmp_path):

@@ -33,10 +33,20 @@ from services.implementation_ai_settings import (
     normalize_openai_base_url,
 )
 from services.llm_adapters import OpenAIAdapter
+from services.runtime_failure_remediation import (
+    GovernanceCoordinatorRemediationAdapter,
+    RedmineIssueAdapter,
+    RepositoryWorkQueueAdapter,
+    RuntimeFailureRemediation,
+    ShipGateDraftPRAdapter,
+    VerifiedAuthorityReleaseAdapter,
+)
 from services.runtime_settings import (
     SettingsEncryptionUnavailable,
     SettingsSecretUnreadable,
 )
+from services.ship_gate import ShipGate
+from services.side_effects import SideEffectCoordinator
 from services.swarm_control_store import SwarmControlStore
 
 
@@ -261,3 +271,68 @@ def get_governed_patch_runtime() -> GovernedPatchExecutionRuntime:
         )
     except (PatchWorkspaceError, TypeError, ValueError) as exc:
         raise ImplementationAgentConfigurationError("Governed patch-execution configuration is invalid") from exc
+
+
+def build_governance_implementation_runtimes(workspace_root: Path, materialize):
+    """Build proposal/apply runtimes sharing one proposal runtime for Governance Coder."""
+    proposal_runtime = get_implementation_agent_runtime()
+    configured_tool_ids = os.getenv("DOR_PATCH_ALLOWED_TOOLS")
+    if not configured_tool_ids:
+        raise ImplementationAgentConfigurationError("DOR_PATCH_ALLOWED_TOOLS is required")
+    requested_ids = tuple(item.strip() for item in configured_tool_ids.split(","))
+    if any(not item for item in requested_ids) or len(requested_ids) != len(set(requested_ids)):
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_ALLOWED_TOOLS must contain unique non-empty tool IDs"
+        )
+    available = {tool.tool_id: tool for tool in canonical_python_tools(
+        timeout_seconds=_positive_int_environment("DOR_PATCH_TOOL_TIMEOUT_SECONDS", 300),
+        max_output_bytes=_positive_int_environment("DOR_PATCH_MAX_TOOL_OUTPUT_BYTES", 256 * 1024),
+    )}
+    unknown = tuple(item for item in requested_ids if item not in available)
+    if unknown:
+        raise ImplementationAgentConfigurationError(
+            "DOR_PATCH_ALLOWED_TOOLS contains an unknown tool ID: " + ", ".join(unknown)
+        )
+    try:
+        patch_runtime = GovernedPatchExecutionRuntime(
+            proposal_runtime=proposal_runtime, workspace_root=workspace_root,
+            tools=tuple(available[item] for item in requested_ids), materialize=materialize,
+            max_file_bytes=_positive_int_environment("DOR_PATCH_MAX_FILE_BYTES", 16 * 1024 * 1024),
+            max_workspace_files=_positive_int_environment("DOR_PATCH_MAX_WORKSPACE_FILES", 20_000),
+            max_workspace_bytes=_positive_int_environment("DOR_PATCH_MAX_WORKSPACE_BYTES", 256 * 1024 * 1024),
+            patch_timeout_seconds=_positive_int_environment("DOR_PATCH_APPLY_TIMEOUT_SECONDS", 30),
+            active_scope_resolver=_active_scope_resolver(),
+        )
+    except (PatchWorkspaceError, TypeError, ValueError) as exc:
+        raise ImplementationAgentConfigurationError(
+            "Governance implementation runtime configuration is invalid"
+        ) from exc
+    return proposal_runtime, patch_runtime
+
+
+def build_runtime_failure_remediation(
+    *, ticker, governance_coordinator, problem_factory, reproduction_runner,
+    patch_loader, scope_validator, verification, release_authority, publisher,
+    knowledge_record, test_results, audit_harness, metadata_factory,
+    required_capability, side_effect_store,
+) -> RuntimeFailureRemediation:
+    """Bind existing runtimes; dependency wiring grants no authority."""
+    effects = SideEffectCoordinator(side_effect_store)
+    return RuntimeFailureRemediation(
+        issues=RedmineIssueAdapter(ticker),
+        work_queue=RepositoryWorkQueueAdapter(
+            _session_factory(), scope_validator=scope_validator
+        ),
+        remediation=GovernanceCoordinatorRemediationAdapter(
+            governance_coordinator, problem_factory, reproduction_runner, patch_loader
+        ),
+        verification=verification,
+        release_authority=VerifiedAuthorityReleaseAdapter(release_authority),
+        draft_prs=ShipGateDraftPRAdapter(
+            ShipGate(publisher), record=knowledge_record, test_results=test_results,
+            audit_harness=audit_harness, metadata_factory=metadata_factory,
+            side_effects=effects,
+        ),
+        required_capability=required_capability,
+        side_effects=effects,
+    )

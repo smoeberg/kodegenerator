@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -19,10 +18,8 @@ from domain.work_queue import (
     WorkUnitState,
 )
 from infrastructure.persistence.models import Base
-from infrastructure.persistence.work_queue_models import WorkUnitModel
 from infrastructure.persistence.work_queue_repository import WorkUnitRepository
 from infrastructure.runtime.work_queue import WorkQueueClaimService
-
 
 ORG = "org-1"
 OTHER = "org-2"
@@ -107,6 +104,7 @@ def text_iso(dt: datetime) -> str:
 # basic claim + lease
 # --------------------------------------------------------------------------- #
 
+
 def test_claim_basic_single_pending(session_factory) -> None:
     add_unit(session_factory, "wu-a")
     service = WorkQueueClaimService(
@@ -128,6 +126,23 @@ def test_claim_basic_single_pending(session_factory) -> None:
     assert len(history) == 2  # add (rev 1) + claim (rev 2)
 
 
+def test_claim_ready_targets_exact_id_without_mutating_earlier_unit(
+    session_factory,
+) -> None:
+    add_unit(session_factory, "wu-earlier")
+    add_unit(session_factory, "wu-requested")
+    service = WorkQueueClaimService(
+        session_factory, organization_id=ORG, lease_seconds=60
+    )
+
+    claimed = service.claim_ready("wu-requested", "worker-1", [capability()])
+
+    assert claimed is not None and claimed.id == "wu-requested"
+    assert units(session_factory, "wu-earlier").state is WorkUnitState.PENDING
+    assert len(histories(session_factory, "wu-earlier")) == 1
+    assert units(session_factory, "wu-requested").state is WorkUnitState.CLAIMED
+
+
 def test_claim_returns_none_when_nothing_ready(session_factory) -> None:
     # worker capability does not match
     add_unit(session_factory, "wu-a")
@@ -141,6 +156,7 @@ def test_claim_returns_none_when_nothing_ready(session_factory) -> None:
 # --------------------------------------------------------------------------- #
 # deterministic ordering
 # --------------------------------------------------------------------------- #
+
 
 def test_claim_orders_by_created_at_then_id(session_factory) -> None:
     add_unit(session_factory, "wu-early")
@@ -196,13 +212,17 @@ def test_claim_orders_by_created_at_then_work_unit_id(session_factory) -> None:
 # capability gate (reuses WQ-103)
 # --------------------------------------------------------------------------- #
 
+
 def test_claim_requires_matching_capability(session_factory) -> None:
     # Worker holds only the Java capability; the unit requires Python.
     add_unit(
-        session_factory, "wu-a",
+        session_factory,
+        "wu-a",
         required_capability=capability(),  # capability.python
     )
-    worker = Capability(id="capability.java", name="Java Developer", level=CapabilityLevel.EXPERT)
+    worker = Capability(
+        id="capability.java", name="Java Developer", level=CapabilityLevel.EXPERT
+    )
     service = WorkQueueClaimService(session_factory, organization_id=ORG)
     assert service.claim_next_ready("worker-1", [worker]) is None
 
@@ -212,7 +232,8 @@ def test_claim_recognises_registry_capability_is_not_dor(session_factory) -> Non
     # even when its name superficially matches the required capability id.
     add_unit(session_factory, "wu-a")
     try:
-        from phase4.agent_registry.models import AgentVersion, Capability as RegistryCapability
+        from phase4.agent_registry.models import AgentVersion
+        from phase4.agent_registry.models import Capability as RegistryCapability
     except Exception:  # pragma: no cover - optional module
         return
     service = WorkQueueClaimService(session_factory, organization_id=ORG)
@@ -226,6 +247,7 @@ def test_claim_recognises_registry_capability_is_not_dor(session_factory) -> Non
 # dependency readiness
 # --------------------------------------------------------------------------- #
 
+
 def test_claim_waits_for_approved_dependency(session_factory) -> None:
     add_unit(session_factory, "wu-up", dependency=True)
     add_unit(session_factory, "wu-child", depends_on=("wu-up",))
@@ -236,23 +258,31 @@ def test_claim_waits_for_approved_dependency(session_factory) -> None:
     assert claimed.id == "wu-child"
 
 
-def test_claim_not_ready_when_dependency_lacks_delivered_version(session_factory) -> None:
+def test_claim_not_ready_when_dependency_lacks_delivered_version(
+    session_factory,
+) -> None:
     # upstream APPROVED but delivered_artifact_version None -> not claimable
     with session_factory() as session:
         repo = WorkUnitRepository(session)
-        repo.add(ORG, WorkUnit(
-            id="wu-up",
-            title="wu-up",
-            required_capability=capability(),
-            state=WorkUnitState.APPROVED,
-        ))
-        repo.add(ORG, WorkUnit(
-            id="wu-child",
-            title="wu-child",
-            required_capability=capability(),
-            state=WorkUnitState.PENDING,
-            depends_on=("wu-up",),
-        ))
+        repo.add(
+            ORG,
+            WorkUnit(
+                id="wu-up",
+                title="wu-up",
+                required_capability=capability(),
+                state=WorkUnitState.APPROVED,
+            ),
+        )
+        repo.add(
+            ORG,
+            WorkUnit(
+                id="wu-child",
+                title="wu-child",
+                required_capability=capability(),
+                state=WorkUnitState.PENDING,
+                depends_on=("wu-up",),
+            ),
+        )
         session.commit()
     service = WorkQueueClaimService(session_factory, organization_id=ORG)
     assert service.claim_next_ready("worker-1", [capability()]) is None
@@ -261,7 +291,9 @@ def test_claim_not_ready_when_dependency_lacks_delivered_version(session_factory
 def test_claim_skips_unapproved_dependency_then_claims_other(session_factory) -> None:
     # 'wu-up' requires Java (worker lacks it) and is PENDING; 'wu-child' depends
     # on it so it is not ready. The independent 'wu-indep' is claimable.
-    java = Capability(id="capability.java", name="Java Developer", level=CapabilityLevel.EXPERT)
+    java = Capability(
+        id="capability.java", name="Java Developer", level=CapabilityLevel.EXPERT
+    )
     add_unit(session_factory, "wu-up", required_capability=java)
     add_unit(session_factory, "wu-child", depends_on=("wu-up",))
     add_unit(session_factory, "wu-indep")
@@ -274,6 +306,7 @@ def test_claim_skips_unapproved_dependency_then_claims_other(session_factory) ->
 # --------------------------------------------------------------------------- #
 # dependency snapshot
 # --------------------------------------------------------------------------- #
+
 
 def test_claim_captures_exact_approved_snapshot_in_order(session_factory) -> None:
     add_unit(
@@ -290,13 +323,16 @@ def test_claim_captures_exact_approved_snapshot_in_order(session_factory) -> Non
     )
     with session_factory() as session:
         repo = WorkUnitRepository(session)
-        repo.add(ORG, WorkUnit(
-            id="wu-root",
-            title="wu-root",
-            required_capability=capability(),
-            state=WorkUnitState.PENDING,
-            depends_on=("wu-app", "wu-lib"),
-        ))
+        repo.add(
+            ORG,
+            WorkUnit(
+                id="wu-root",
+                title="wu-root",
+                required_capability=capability(),
+                state=WorkUnitState.PENDING,
+                depends_on=("wu-app", "wu-lib"),
+            ),
+        )
         session.commit()
     service = WorkQueueClaimService(session_factory, organization_id=ORG)
     claimed = service.claim_next_ready("worker-1", [capability()])
@@ -304,8 +340,7 @@ def test_claim_captures_exact_approved_snapshot_in_order(session_factory) -> Non
     snapshot = claimed.depends_on_snapshot
     assert [b.work_unit_id for b in snapshot] == ["wu-app", "wu-lib"]
     assert all(
-        b.version.kind == "git_commit"
-        and b.version.value == f"{b.work_unit_id}-v1"
+        b.version.kind == "git_commit" and b.version.value == f"{b.work_unit_id}-v1"
         for b in snapshot
     )
     # persisted snapshot equals the captured one
@@ -316,6 +351,7 @@ def test_claim_captures_exact_approved_snapshot_in_order(session_factory) -> Non
 # --------------------------------------------------------------------------- #
 # atomicity / CAS single winner
 # --------------------------------------------------------------------------- #
+
 
 def test_claim_cas_single_winner_under_contention(session_factory) -> None:
     add_unit(session_factory, "wu-only")
@@ -346,6 +382,7 @@ def test_claim_no_duplicate_revision_on_cas_loss(session_factory) -> None:
 # validation
 # --------------------------------------------------------------------------- #
 
+
 def test_claim_rejects_nonpositive_lease(session_factory) -> None:
     with pytest.raises(ValueError):
         WorkQueueClaimService(session_factory, organization_id=ORG, lease_seconds=0)
@@ -374,10 +411,13 @@ def test_claim_rejects_empty_worker_id(session_factory) -> None:
 # tenant isolation
 # --------------------------------------------------------------------------- #
 
+
 def test_claim_never_reads_dependencies_across_tenant(session_factory) -> None:
     # org-2 has the only approved dependency; org-1 child must NOT see it.
     add_unit(session_factory, "wu-2-dep", organization_id=OTHER, dependency=True)
-    add_unit(session_factory, "wu-1-child", organization_id=ORG, depends_on=("wu-2-dep",))
+    add_unit(
+        session_factory, "wu-1-child", organization_id=ORG, depends_on=("wu-2-dep",)
+    )
     service = WorkQueueClaimService(session_factory, organization_id=ORG)
     # dependency lives in another tenant and is invisible -> not claimable
     assert service.claim_next_ready("worker-1", [capability()]) is None
@@ -509,7 +549,6 @@ def test_claim_mandatory_10_worker_race_single_winner(tmp_path) -> None:
     # exactly one claim revision appended (add + one claim), no duplicates
     revs_after = histories(session_factory, "wu-race", ORG_RACE)
     assert len(revs_after) == revs_before + 1 == 2
-
 
 
 def test_claim_candidate_query_is_tenant_scoped(session_factory) -> None:

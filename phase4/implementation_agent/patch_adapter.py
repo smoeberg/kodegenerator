@@ -11,10 +11,11 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from phase4.execution.adapters import AdapterResult
 from phase4.execution.models import ExecutionRequest
@@ -246,7 +247,12 @@ class WorkspacePatchExecutor:
         with self._lock:
             return tuple(self._snapshot(self._root, path).state for path in proposal.touched_paths)
 
-    def execute(self, request: PatchExecutionRequest) -> PatchExecutionRecord:
+    def execute(
+        self,
+        request: PatchExecutionRequest,
+        *,
+        after_commit: Callable[[PatchExecutionRecord], None] | None = None,
+    ) -> PatchExecutionRecord:
         if not isinstance(request, PatchExecutionRequest):
             raise TypeError("request must be a PatchExecutionRequest")
         evidence: list[ToolEvidence] = []
@@ -271,8 +277,10 @@ class WorkspacePatchExecutor:
                 if after_tools.artifact_id != artifact.artifact_id:
                     return self._failed(request, after_tools, tuple(evidence), "trusted tools modified one or more approved patch paths")
                 self._require_live_baseline(request)
-                self._commit_candidate(request, sandbox, artifact)
-                return PatchExecutionRecord(request_fingerprint=request.request_fingerprint, proposal_id=request.proposal.proposal_id, baseline_fingerprint=request.baseline_fingerprint, status=PatchRecordStatus.SUCCEEDED, artifact=artifact, evidence=tuple(evidence), committed=True, rolled_back=False)
+                successful = PatchExecutionRecord(request_fingerprint=request.request_fingerprint, proposal_id=request.proposal.proposal_id, baseline_fingerprint=request.baseline_fingerprint, status=PatchRecordStatus.SUCCEEDED, artifact=artifact, evidence=tuple(evidence), committed=True, rolled_back=False)
+                self._commit_candidate(request, sandbox, artifact, after_commit=after_commit,
+                                       successful=successful)
+                return successful
             except (PatchExecutionContractError, PatchWorkspaceError, OSError, subprocess.SubprocessError) as exc:
                 return self._failed(request, artifact, tuple(evidence), f"{type(exc).__name__}: {exc}")
             finally:
@@ -328,18 +336,50 @@ class WorkspacePatchExecutor:
     def _apply_in_sandbox(self, sandbox: Path, unified_diff: str) -> None:
         payload = unified_diff.encode("utf-8")
         environment = {"PATH": os.defpath, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"}
-        for check_only in (True, False):
+        descriptor, patch_name = tempfile.mkstemp(prefix=".dor-patch-input-", dir=sandbox.parent)
+        git_directory = Path(tempfile.mkdtemp(prefix=".dor-patch-git-", dir=sandbox.parent))
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
             if _file_sha256(Path(self._git)) != self._git_sha256:
                 raise PatchWorkspaceError("the fixed Git patch executable changed after configuration")
-            arguments = [self._git, "apply", "--whitespace=nowarn"]
-            if check_only:
-                arguments.append("--check")
-            arguments.append("-")
-            completed = subprocess.run(tuple(arguments), cwd=sandbox, env=environment, input=payload, capture_output=True, timeout=self._patch_timeout_seconds, check=False, shell=False)
-            if completed.returncode != 0:
-                detail = completed.stderr[:4096].decode("utf-8", errors="replace").strip()
-                phase = "validation" if check_only else "application"
-                raise PatchWorkspaceError(f"patch {phase} failed: {detail or 'git apply rejected the patch'}")
+            initialized = subprocess.run(
+                (self._git, "init", "--bare", "--quiet", str(git_directory)),
+                cwd=sandbox,
+                env=environment,
+                capture_output=True,
+                timeout=self._patch_timeout_seconds,
+                check=False,
+                shell=False,
+            )
+            if initialized.returncode != 0:
+                raise PatchWorkspaceError("could not initialize isolated Git patch context")
+            for check_only in (True, False):
+                if _file_sha256(Path(self._git)) != self._git_sha256:
+                    raise PatchWorkspaceError("the fixed Git patch executable changed after configuration")
+                arguments = [
+                    self._git,
+                    f"--git-dir={git_directory}",
+                    f"--work-tree={sandbox}",
+                    "apply",
+                    "--whitespace=nowarn",
+                ]
+                if check_only:
+                    arguments.append("--check")
+                arguments.append(patch_name)
+                completed = subprocess.run(tuple(arguments), cwd=sandbox, env=environment, capture_output=True, timeout=self._patch_timeout_seconds, check=False, shell=False)
+                if completed.returncode != 0:
+                    detail = completed.stderr[:4096].decode("utf-8", errors="replace").strip()
+                    phase = "validation" if check_only else "application"
+                    raise PatchWorkspaceError(f"patch {phase} failed: {detail or 'git apply rejected the patch'}")
+        finally:
+            try:
+                os.unlink(patch_name)
+            except FileNotFoundError:
+                pass
+            shutil.rmtree(git_directory, ignore_errors=True)
 
     def _artifact_from(self, root: Path, request: PatchExecutionRequest) -> PatchArtifact:
         states = tuple(self._snapshot(root, path).state for path in request.proposal.touched_paths)
@@ -363,7 +403,15 @@ class WorkspacePatchExecutor:
             raise PatchWorkspaceError(f"approved path exceeds max_file_bytes: {path}")
         return _FileSnapshot(WorkspaceFileState(path, True, hashlib.sha256(content).hexdigest(), len(content), stat.S_IMODE(info.st_mode)), content)
 
-    def _commit_candidate(self, request: PatchExecutionRequest, sandbox: Path, artifact: PatchArtifact) -> None:
+    def _commit_candidate(
+        self,
+        request: PatchExecutionRequest,
+        sandbox: Path,
+        artifact: PatchArtifact,
+        *,
+        after_commit: Callable[[PatchExecutionRecord], None] | None,
+        successful: PatchExecutionRecord,
+    ) -> None:
         rollback: list[tuple[Path, bytes | None, int | None]] = []
         baseline_by_path = {state.path: state for state in request.baseline}
         candidate_by_path = {state.path: state for state in artifact.files}
@@ -396,6 +444,8 @@ class WorkspacePatchExecutor:
                         raise StaleBaselineConflictError("baseline did not contain the live file")
                     _atomic_unlink_if_hash_matches(target, expected.sha256)
                 committed_paths.append(path)
+            if after_commit is not None:
+                after_commit(successful)
         except Exception as exc:
             rollback_errors: list[str] = []
             rollback_by_path = {target.relative_to(self._root).as_posix(): (target, content, mode) for target, content, mode in rollback}
@@ -427,15 +477,18 @@ class WorkspacePatchExecutor:
 class PatchExecutionAdapter:
     """AI-4 adapter that executes only operator-registered immutable requests."""
 
-    def __init__(self, *, adapter_id: str, workspace: WorkspacePatchExecutor) -> None:
+    def __init__(self, *, adapter_id: str, workspace: WorkspacePatchExecutor,
+                 materialize: Callable[[PatchExecutionRecord], Any] | None = None) -> None:
         if not isinstance(adapter_id, str) or not adapter_id.strip():
             raise ValueError("adapter_id must be a non-empty string")
         if not isinstance(workspace, WorkspacePatchExecutor):
             raise TypeError("workspace must be a WorkspacePatchExecutor")
         self._adapter_id = adapter_id
         self._workspace = workspace
+        self._materialize = materialize
         self._requests: dict[str, PatchExecutionRequest] = {}
         self._records: dict[str, PatchExecutionRecord] = {}
+        self._receipts: dict[str, Any] = {}
         self._lock = RLock()
 
     @property
@@ -478,10 +531,29 @@ class PatchExecutionAdapter:
                 if existing.status is PatchRecordStatus.FAILED:
                     raise PatchExecutionFailed(existing)
                 return _adapter_result(existing)
-            record = self._workspace.execute(registered)
-            self._records[fingerprint] = record
+            receipt: list[Any] = []
+
+            def after_commit(successful: PatchExecutionRecord) -> None:
+                if self._materialize is not None:
+                    receipt.append(self._materialize(successful))
+
+            record = self._workspace.execute(
+                registered,
+                after_commit=after_commit if self._materialize is not None else None,
+            )
             if record.status is PatchRecordStatus.FAILED:
+                self._records[fingerprint] = record
                 raise PatchExecutionFailed(record)
+            if self._materialize is not None:
+                if len(receipt) != 1:
+                    failed = self._workspace._failed(
+                        registered, record.artifact, record.evidence,
+                        "artifact materialization returned no receipt",
+                    )
+                    self._records[fingerprint] = failed
+                    raise PatchExecutionFailed(failed)
+                self._receipts[fingerprint] = receipt[0]
+            self._records[fingerprint] = record
             return _adapter_result(record)
 
     def get_record(self, request_fingerprint: str) -> PatchExecutionRecord:
@@ -490,6 +562,12 @@ class PatchExecutionAdapter:
                 return self._records[request_fingerprint]
             except KeyError as exc:
                 raise PatchExecutionRequestNotFoundError(request_fingerprint) from exc
+
+    def get_materialization_receipt(self, request_fingerprint: str) -> Any:
+        with self._lock:
+            if request_fingerprint not in self._records or request_fingerprint not in self._receipts:
+                raise PatchExecutionRequestNotFoundError(request_fingerprint)
+            return self._receipts[request_fingerprint]
 
 
 def canonical_python_tools(*, timeout_seconds: int = 300, max_output_bytes: int = 256 * 1024) -> tuple[TrustedToolSpec, ...]:
