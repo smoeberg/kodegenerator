@@ -6,6 +6,7 @@ from typing import Any
 
 from domain.authority import RoleAssignment, RoleDefinition
 from infrastructure.persistence.authority_repositories import AuthorityRepository
+from infrastructure.persistence.models import OrganizationMembershipModel
 
 MANAGED_ADMIN_ROLE_NAME = "DOR Control Plane Administrator"
 MANAGED_ADMIN_CAPABILITIES = frozenset(
@@ -109,3 +110,33 @@ def sync_control_plane_admin_authority(
             )
 
         session.commit()
+
+
+def sync_control_plane_admin_membership(
+    database: Any,
+    *,
+    username: str,
+    organization_id: str,
+) -> bool:
+    """Resolve the exact membership flag, then synchronize the managed role.
+
+    Returns the authoritative membership ``is_admin`` value. Missing membership
+    is treated as non-admin and never creates authority.
+    """
+    username = str(username or "").strip()
+    organization_id = str(organization_id or "").strip()
+    if not username or not organization_id:
+        raise ValueError("username and organization_id are required")
+    with database.session() as session:
+        membership = session.get(
+            OrganizationMembershipModel,
+            (username, organization_id),
+        )
+        is_admin = bool(membership is not None and membership.is_admin)
+    sync_control_plane_admin_authority(
+        database,
+        username=username,
+        organization_id=organization_id,
+        is_admin=is_admin,
+    )
+    return is_admin
