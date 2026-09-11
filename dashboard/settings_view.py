@@ -367,7 +367,7 @@ def render_settings(client: DORAPIClient) -> None:
         '<div class="subtitle">Organisation, brugere, projekter, integrationer og systemstatus i den samme Operator GUI.</div>',
         unsafe_allow_html=True,
     )
-    tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Redmine", "Implementation AI", "System", "AI & Governance"])
+    tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Redmine", "System", "AI & Governance"])
     with tabs[0]:
         _render_organization_settings(client)
     with tabs[1]:
@@ -377,9 +377,7 @@ def render_settings(client: DORAPIClient) -> None:
     with tabs[3]:
         render_redmine_integration(client)
     with tabs[4]:
-        _render_ai_settings(client)
-    with tabs[5]:
         _render_system_settings(client)
-    with tabs[6]:
+    with tabs[5]:
         organization_id = str(st.session_state.get("organization_id") or "").strip()
         render_multi_bot_control_plane(client, organization_id)
