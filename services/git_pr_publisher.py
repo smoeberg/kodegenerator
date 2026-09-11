@@ -6,6 +6,7 @@ commit signing, and automated PR generation with fail-closed safety gates.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -14,7 +15,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from phase4.authority.grants import VerifiedAuthorityGrant
@@ -83,7 +84,7 @@ class GitWorktreeManager:
                 base_branch,
             ]
             self._run_git(cmd, cwd=self.repo_root)
-        except Exception as exc:
+        except (OSError, WorktreeExecutionError) as exc:
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
             raise WorktreeExecutionError(
@@ -98,6 +99,22 @@ class GitWorktreeManager:
             repo_root=self.repo_root,
         )
 
+    def create_detached_worktree(self, base_sha: str) -> WorktreeSession:
+        """Create an isolated detached worktree at one exact immutable commit."""
+        if len(base_sha) != 40 or any(character not in "0123456789abcdef" for character in base_sha):
+            raise WorktreeSecurityError("base_sha must be an exact lowercase Git commit SHA")
+        resolved = self._run_git(["git", "rev-parse", f"{base_sha}^{{commit}}"], cwd=self.repo_root).strip()
+        if resolved != base_sha:
+            raise WorktreeSecurityError("base_sha did not resolve exactly")
+        session_id = hashlib.sha256(base_sha.encode()).hexdigest()[:8]
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"worktree_{session_id}_"))
+        try:
+            self._run_git(["git", "worktree", "add", "--detach", str(temp_dir), base_sha], cwd=self.repo_root)
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        return WorktreeSession(session_id, temp_dir, "", base_sha, self.repo_root)
+
     def cleanup_worktree(self, session: WorktreeSession, force: bool = True) -> None:
         """Remove worktree and prune metadata."""
         try:
@@ -106,7 +123,7 @@ class GitWorktreeManager:
                 cmd.append("--force")
             cmd.append(str(session.worktree_path))
             self._run_git(cmd, cwd=self.repo_root)
-        except Exception as exc:
+        except (OSError, WorktreeExecutionError) as exc:
             logger.warning(
                 "Error executing git worktree remove: %s. "
                 "Falling back to manual cleanup.",
@@ -116,8 +133,8 @@ class GitWorktreeManager:
                 shutil.rmtree(session.worktree_path, ignore_errors=True)
             try:
                 self._run_git(["git", "worktree", "prune"], cwd=self.repo_root)
-            except Exception:
-                pass
+            except (OSError, WorktreeExecutionError) as prune_exc:
+                logger.warning("Git worktree prune failed: %s", prune_exc)
 
     def apply_patch(self, session: WorktreeSession, patch_content: str) -> None:
         """Apply a unified diff patch inside the isolated worktree."""
@@ -146,6 +163,7 @@ class GitWorktreeManager:
         message: str,
         author_name: str = "AI Code Generator",
         author_email: str = "ai-generator@rool.local",
+        authored_at: str | None = None,
     ) -> str:
         """Stage all changes in worktree and commit with author metadata."""
         self._run_git(["git", "add", "-A"], cwd=session.worktree_path)
@@ -165,6 +183,9 @@ class GitWorktreeManager:
         env["GIT_AUTHOR_EMAIL"] = author_email
         env["GIT_COMMITTER_NAME"] = author_name
         env["GIT_COMMITTER_EMAIL"] = author_email
+        if authored_at is not None:
+            env["GIT_AUTHOR_DATE"] = authored_at
+            env["GIT_COMMITTER_DATE"] = authored_at
 
         cmd = ["git", "commit", "-m", message]
         self._run_git(cmd, cwd=session.worktree_path, env=env)
@@ -172,6 +193,14 @@ class GitWorktreeManager:
             ["git", "rev-parse", "HEAD"], cwd=session.worktree_path
         ).strip()
         return commit_sha
+
+    def changed_files(self, session: WorktreeSession, base_sha: str, artifact_sha: str) -> tuple[str, ...]:
+        """Return the exact committed path set for an immutable base/artifact pair."""
+        output = self._run_git(
+            ["git", "diff", "--name-only", f"{base_sha}...{artifact_sha}"],
+            cwd=session.worktree_path,
+        )
+        return tuple(sorted(line for line in output.splitlines() if line))
 
     def push_branch(
         self, session: WorktreeSession, remote: str = "origin", force: bool = False
@@ -183,15 +212,14 @@ class GitWorktreeManager:
         self._run_git(cmd, cwd=session.worktree_path)
 
     def _run_git(
-        self, cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None
+        self, cmd: list[str], cwd: Path, env: dict[str, str] | None = None
     ) -> str:
         """Run a git subcommand and return stdout."""
         res = subprocess.run(
             cmd,
             cwd=str(cwd),
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=False,
         )
@@ -218,8 +246,8 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         owner: str,
         repo: str,
         token: str,
-        repo_root: Optional[Path | str] = None,
-        config: Optional[GitHubConfig] = None,
+        repo_root: Path | str | None = None,
+        config: GitHubConfig | None = None,
     ) -> None:
         """Configure a repository-scoped publisher.
 
@@ -244,9 +272,9 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         self,
         patch: PatchInfo,
         pr_metadata: PRMetadata,
-        wbs_summary: Optional[Dict[str, Any]] = None,
-        test_results: Optional[Dict[str, Any]] = None,
-        authority_grant: Optional[VerifiedAuthorityGrant] = None,
+        wbs_summary: dict[str, Any] | None = None,
+        test_results: dict[str, Any] | None = None,
+        authority_grant: VerifiedAuthorityGrant | None = None,
         push_remote: bool = True,
     ) -> PRResult:
         """Execute full isolated worktree lifecycle and create GitHub Pull Request.
@@ -288,7 +316,7 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
         wbs_data = wbs_summary or {"task": patch.patch_id, "summary": patch.summary}
         tests_data = dict(test_results)
 
-        session: Optional[WorktreeSession] = None
+        session: WorktreeSession | None = None
         try:
             # 2. Spin up isolated worktree
             session = self.worktree_manager.create_worktree(
@@ -371,7 +399,7 @@ class GitPRPublisher(GitHubAPIClientMixin, GitHubPRWorkflowMixin):
                 self.worktree_manager.cleanup_worktree(session)
 
 
-def _tests_passed(test_results: Optional[Dict[str, Any]]) -> bool:
+def _tests_passed(test_results: dict[str, Any] | None) -> bool:
     """Accept only explicit, non-empty successful test evidence."""
     if not isinstance(test_results, dict) or not test_results:
         return False
@@ -410,9 +438,9 @@ def _validate_release_grant(
 
 
 __all__ = [
-    "WorktreeSession",
-    "GitWorktreeManager",
     "GitPRPublisher",
+    "GitWorktreeManager",
     "WorktreeExecutionError",
     "WorktreeSecurityError",
+    "WorktreeSession",
 ]

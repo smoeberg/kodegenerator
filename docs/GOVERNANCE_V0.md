@@ -122,6 +122,32 @@ Role providers are injected using the same provider-neutral pattern already
 used by the Council orchestrator; the coordinator is fail-closed and does not
 create a new scheduler or Authority engine.
 
+### Production bootstrap
+
+`python -m phase4.development_governance --config <bindings.json> --problem
+<problem.json>` is the canonical executable composition root. Its configuration
+schema and example are `docs/schemas/governance-bootstrap-v1.schema.json` and
+`docs/schemas/examples/governance-bootstrap-v1.example.json`.
+
+Bootstrap binding is dependency wiring, not authority delegation. All five
+logical `provider_id` values must be pairwise distinct; missing, extra, unknown,
+or identity-mismatched bindings fail before a role call. Repository HEAD must
+equal the configured immutable `base_sha` and the worktree must be clean before
+providers are constructed. The built-in `governed_llm` adapter has no tools or
+side-effect capabilities and is prohibited for the Coder role. Coder binding
+requires an explicitly injected adapter around an existing governed
+implementation/patch runtime; production construction fails closed when that
+runtime is absent. Bootstrap never grants execution, approval, publication,
+merge, or deployment authority.
+The canonical JSON audit record is process-local and may optionally be mirrored
+to the configured `audit_path`, which must resolve outside the governed
+repository. The clean/exact-base preflight completes before any audit file is
+written. Production Coder composition uses the configured
+shared `ImplementationAgentRuntime` and `GovernedPatchExecutionRuntime` seam.
+The proposal is generated only after exact solution approval and is applied in
+an isolated detached worktree at the configured base SHA; no pre-existing
+proposal ID is accepted by the bootstrap.
+
 ## Measurement, not optimization
 
 Governance v0 records a small process-local measurement surface:

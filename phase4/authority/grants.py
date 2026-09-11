@@ -1,8 +1,7 @@
 """Tamper-evident authority credentials for the Phase 4 execution boundary."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import base64
 import binascii
 import hashlib
@@ -10,6 +9,8 @@ import hmac
 import json
 import os
 import secrets
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .models import AuthorityDecision
@@ -22,7 +23,7 @@ _ISSUER_ID = "phase4.ai-3"
 def _load_signing_key() -> bytes:
     encoded = os.environ.get("DOR_AUTHORITY_SIGNING_KEY")
     is_prod_env = os.environ.get("DOR_ENV", "development").lower() == "production"
-    
+
     if encoded is None:
         if not is_prod_env:
             # Ephemeral fallback for test/dev environments
@@ -31,13 +32,13 @@ def _load_signing_key() -> bytes:
             "DOR_AUTHORITY_SIGNING_KEY must be configured in production. "
             "Set a URL-safe base64 key of at least 32 bytes."
         )
-    
+
     padded = encoded + "=" * (-len(encoded) % 4)
     try:
         key = base64.b64decode(padded, altchars=b"-_", validate=True)
     except (binascii.Error, ValueError) as exc:
         raise RuntimeError("DOR_AUTHORITY_SIGNING_KEY must be URL-safe base64") from exc
-    
+
     if len(key) < 32:
         raise RuntimeError(
             "DOR_AUTHORITY_SIGNING_KEY must decode to at least 32 bytes. "
@@ -48,12 +49,39 @@ def _load_signing_key() -> bytes:
 
 def _canonical_bytes(kind: str, payload: dict[str, object]) -> bytes:
     envelope = {"kind": kind, "payload": payload, "version": _PROVENANCE_VERSION}
-    return json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _signature_for(kind: str, payload: dict[str, object]) -> str:
     key = _load_signing_key()
     return hmac.new(key, _canonical_bytes(kind, payload), hashlib.sha256).hexdigest()
+
+
+def sign_configured_provenance(kind: str, payload: dict[str, object]) -> str:
+    """Sign detached integrity provenance using the configured authority key.
+
+    Unlike authority-grant construction this helper has no development fallback:
+    durable application receipts must remain unverifiable when key material is
+    unavailable rather than silently acquiring a shared test key.
+    """
+    if "DOR_AUTHORITY_SIGNING_KEY" not in os.environ:
+        raise RuntimeError("DOR_AUTHORITY_SIGNING_KEY is required for provenance")
+    return _signature_for(kind, payload)
+
+
+def verify_configured_provenance(
+    kind: str, payload: dict[str, object], signature: str
+) -> bool:
+    """Verify detached integrity provenance, failing closed without key material."""
+    if not isinstance(signature, str) or not signature:
+        return False
+    try:
+        expected = sign_configured_provenance(kind, payload)
+    except RuntimeError:
+        return False
+    return hmac.compare_digest(signature, expected)
 
 
 def _decision_payload(decision: AuthorityDecision) -> dict[str, object]:
@@ -78,7 +106,11 @@ def _decision_payload(decision: AuthorityDecision) -> dict[str, object]:
 
 def _attach_decision_provenance(decision: AuthorityDecision) -> None:
     object.__setattr__(decision, "_provenance_issuer", _ISSUER_ID)
-    object.__setattr__(decision, "_provenance_signature", _signature_for("authority-decision", _decision_payload(decision)))
+    object.__setattr__(
+        decision,
+        "_provenance_signature",
+        _signature_for("authority-decision", _decision_payload(decision)),
+    )
 
 
 def _decision_has_valid_provenance(decision: AuthorityDecision) -> bool:
@@ -132,13 +164,24 @@ class VerifiedAuthorityGrant:
     _signature: str = field(default="", init=False, repr=False, compare=False)
 
     @classmethod
-    def from_decision(cls, decision: AuthorityDecision, *, ttl_seconds: int = DEFAULT_GRANT_TTL_SECONDS, now: datetime | None = None) -> "VerifiedAuthorityGrant":
+    def from_decision(
+        cls,
+        decision: AuthorityDecision,
+        *,
+        ttl_seconds: int = DEFAULT_GRANT_TTL_SECONDS,
+        now: datetime | None = None,
+    ) -> VerifiedAuthorityGrant:
         if not _decision_has_valid_provenance(decision):
             raise ValueError("authority decision has no verified AI-3 provenance")
         if decision.decision.value != "allow":
             raise ValueError("authority decision is not ALLOW")
-        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= DEFAULT_GRANT_TTL_SECONDS:
-            raise ValueError(f"ttl_seconds must be between 1 and {DEFAULT_GRANT_TTL_SECONDS}")
+        if (
+            type(ttl_seconds) is not int
+            or not 1 <= ttl_seconds <= DEFAULT_GRANT_TTL_SECONDS
+        ):
+            raise ValueError(
+                f"ttl_seconds must be between 1 and {DEFAULT_GRANT_TTL_SECONDS}"
+            )
         issued = _aware_utc(now)
         expires = issued + timedelta(seconds=ttl_seconds)
         grant = cls(
@@ -160,7 +203,11 @@ class VerifiedAuthorityGrant:
             issued_at=issued.isoformat(),
             expires_at=expires.isoformat(),
         )
-        object.__setattr__(grant, "_signature", _signature_for("authority-grant", grant._signed_payload()))
+        object.__setattr__(
+            grant,
+            "_signature",
+            _signature_for("authority-grant", grant._signed_payload()),
+        )
         return grant
 
     def _signed_payload(self) -> dict[str, object]:

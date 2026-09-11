@@ -1,0 +1,13 @@
+{
+  "organization_id": "example-org",
+  "repository_root": ".",
+  "base_sha": "0ae97ce8231634c298eea49418cf596c68a79336",
+  "audit_path": "/var/tmp/dor-governance-audit.json",
+  "roles": {
+    "product_owner": {"provider_id": "po.primary", "factory": "governed_llm", "model": "gpt-4o", "prompt_version": "gov-v1", "options_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "orchestrator": {"provider_id": "orchestrator.primary", "factory": "governed_llm", "model": "gpt-4o", "prompt_version": "gov-v1", "options_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "coder": {"provider_id": "coder.primary", "factory": "governed_execution", "model": "implementation-runtime", "prompt_version": "gov-v1", "options_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "auditor": {"provider_id": "auditor.primary", "factory": "governed_llm", "model": "gpt-4o", "prompt_version": "gov-v1", "options_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "reviewer": {"provider_id": "reviewer.primary", "factory": "governed_llm", "model": "gpt-4o", "prompt_version": "gov-v1", "options_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"}
+  }
+}

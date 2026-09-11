@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import select, update
@@ -25,10 +24,9 @@ from sqlalchemy.orm import Session
 from domain.capability import Capability
 from domain.work_queue import (
     DependencyVersionBinding,
-    ImmutableVersionRef,
+    WorkerLease,
     WorkUnit,
     WorkUnitState,
-    WorkerLease,
 )
 from domain.work_queue_readiness import is_ready, is_worker_eligible
 from infrastructure.persistence.database import apply_tenant_context
@@ -61,7 +59,7 @@ class WorkQueueClaimService:
 
     def claim_next_ready(
         self, worker_id: str, capabilities: Iterable[Capability]
-    ) -> Optional[WorkUnit]:
+    ) -> WorkUnit | None:
         """Atomically claim the next ready work unit for ``worker_id``.
 
         Returns the claimed ``WorkUnit`` or ``None`` when nothing is currently
@@ -75,7 +73,9 @@ class WorkQueueClaimService:
         for _ in range(100):
             with self.session_factory() as session:
                 apply_tenant_context(session, self.organization_id)
-                claimed, contested = self._claim_in_session(session, worker_id, capabilities)
+                claimed, contested = self._claim_in_session(
+                    session, worker_id, capabilities
+                )
                 if claimed is not None:
                     session.commit()
                     return claimed
@@ -86,13 +86,55 @@ class WorkQueueClaimService:
                     return None
         raise WorkUnitClaimError("claim contention exceeded retry limit")
 
+    def claim_ready(
+        self,
+        work_unit_id: str,
+        worker_id: str,
+        capabilities: Iterable[Capability],
+    ) -> WorkUnit | None:
+        """Atomically claim one exact ready WorkUnit without touching its peers."""
+        if not isinstance(work_unit_id, str) or not work_unit_id.strip():
+            raise ValueError("work_unit_id must be non-empty")
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("worker_id must be non-empty")
+        capabilities = list(capabilities)
+        for _ in range(100):
+            with self.session_factory() as session:
+                apply_tenant_context(session, self.organization_id)
+                candidates = [
+                    model
+                    for model in self._pending_candidates(session)
+                    if model.work_unit_id == work_unit_id
+                ]
+                if not candidates:
+                    session.rollback()
+                    return None
+                candidate = WorkUnitRepository._from_model(candidates[0])
+                if not is_worker_eligible(candidate, capabilities):
+                    session.rollback()
+                    return None
+                dependencies = self._load_dependencies(session, candidate)
+                if not is_ready(candidate, dependencies):
+                    session.rollback()
+                    return None
+                snapshot = self._approved_snapshot(candidate, dependencies)
+                if snapshot is None:
+                    session.rollback()
+                    return None
+                claimed = self._cas_claim(session, candidate, worker_id, snapshot)
+                if claimed is not None:
+                    session.commit()
+                    return claimed
+                session.rollback()
+        raise WorkUnitClaimError("claim contention exceeded retry limit")
+
     # ------------------------------------------------------------------ #
     # internals
     # ------------------------------------------------------------------ #
 
     def _claim_in_session(
         self, session: Session, worker_id: str, capabilities: list[Capability]
-    ) -> tuple[Optional[WorkUnit], bool]:
+    ) -> tuple[WorkUnit | None, bool]:
         candidates = self._pending_candidates(session)
         contested = False
         for model in candidates:
@@ -123,17 +165,12 @@ class WorkQueueClaimService:
         )
         return list(session.scalars(stmt).all())
 
-    def _load_dependencies(
-        self, session: Session, candidate: WorkUnit
-    ) -> dict:
+    def _load_dependencies(self, session: Session, candidate: WorkUnit) -> dict:
         if not candidate.depends_on:
             return {}
-        stmt = (
-            select(WorkUnitModel)
-            .where(
-                WorkUnitModel.organization_id == self.organization_id,
-                WorkUnitModel.work_unit_id.in_(candidate.depends_on),
-            )
+        stmt = select(WorkUnitModel).where(
+            WorkUnitModel.organization_id == self.organization_id,
+            WorkUnitModel.work_unit_id.in_(candidate.depends_on),
         )
         models = session.scalars(stmt).all()
         return {
@@ -143,7 +180,7 @@ class WorkQueueClaimService:
 
     def _approved_snapshot(
         self, candidate: WorkUnit, dependencies: dict
-    ) -> Optional[tuple[DependencyVersionBinding, ...]]:
+    ) -> tuple[DependencyVersionBinding, ...] | None:
         """Build the exact approved dependency snapshot in ``depends_on`` order.
 
         Returns ``None`` if any declared dependency is missing, misidentified,
@@ -173,7 +210,7 @@ class WorkQueueClaimService:
         candidate: WorkUnit,
         worker_id: str,
         snapshot: tuple[DependencyVersionBinding, ...],
-    ) -> Optional[WorkUnit]:
+    ) -> WorkUnit | None:
         now = datetime.now(timezone.utc)
         lease = WorkerLease(
             lease_id=str(uuid4()),

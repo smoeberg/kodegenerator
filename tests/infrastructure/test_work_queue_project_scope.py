@@ -1,4 +1,5 @@
 """SC-101C acceptance coverage for project-scoped Work Queue supersession."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -92,11 +93,14 @@ def test_scope_binding_is_immutable_and_idempotent() -> None:
         plan_request_fingerprint=P1,
     )
     assert work_unit_scope(bound) == (PROJECT, P1)
-    assert bind_work_unit_scope(
-        bound,
-        project_id=PROJECT,
-        plan_request_fingerprint=P1,
-    ) is bound
+    assert (
+        bind_work_unit_scope(
+            bound,
+            project_id=PROJECT,
+            plan_request_fingerprint=P1,
+        )
+        is bound
+    )
     with pytest.raises(WorkUnitContractError, match="immutable"):
         bind_work_unit_scope(
             bound,
@@ -110,9 +114,7 @@ def test_p1_cannot_receive_new_claim_after_p2_becomes_active(session_factory) ->
 
     def validator(organization_id: str, project_id: str, plan: str) -> bool:
         return (
-            organization_id == ORG
-            and project_id == PROJECT
-            and plan == active["plan"]
+            organization_id == ORG and project_id == PROJECT and plan == active["plan"]
         )
 
     add_scoped(session_factory, "p1-first", P1)
@@ -146,14 +148,36 @@ def test_p1_cannot_receive_new_claim_after_p2_becomes_active(session_factory) ->
     assert get_unit(session_factory, "p1-late").state is WorkUnitState.PENDING
 
 
-def test_inflight_p1_is_cooperatively_fenced_when_p2_supersedes(session_factory) -> None:
+def test_exact_scoped_claim_leaves_unrequested_eligible_unit_pending(
+    session_factory,
+) -> None:
+    def validator(organization_id: str, project_id: str, plan: str) -> bool:
+        return (organization_id, project_id, plan) == (ORG, PROJECT, P1)
+
+    add_scoped(session_factory, "p1-earlier", P1)
+    add_scoped(session_factory, "p1-requested", P1)
+    service = ProjectScopedWorkQueueClaimService(
+        session_factory,
+        organization_id=ORG,
+        project_id=PROJECT,
+        plan_request_fingerprint=P1,
+        scope_validator=validator,
+    )
+
+    claimed = service.claim_ready("p1-requested", "worker-p1", [capability()])
+
+    assert claimed is not None and claimed.id == "p1-requested"
+    assert get_unit(session_factory, "p1-earlier").state is WorkUnitState.PENDING
+
+
+def test_inflight_p1_is_cooperatively_fenced_when_p2_supersedes(
+    session_factory,
+) -> None:
     active = {"plan": P1}
 
     def validator(organization_id: str, project_id: str, plan: str) -> bool:
         return (
-            organization_id == ORG
-            and project_id == PROJECT
-            and plan == active["plan"]
+            organization_id == ORG and project_id == PROJECT and plan == active["plan"]
         )
 
     add_scoped(session_factory, "p1-inflight", P1)
@@ -179,20 +203,26 @@ def test_inflight_p1_is_cooperatively_fenced_when_p2_supersedes(session_factory)
     )
     # Even before the cancellation attempt completes, the stale scope cannot
     # renew ownership or submit output through the lease boundary.
-    assert lease_service.heartbeat(
-        "p1-inflight",
-        worker_id="worker-p1",
-        lease_id=lease_id,
-    ) is None
-    assert lease_service.submit_for_review(
-        "p1-inflight",
-        worker_id="worker-p1",
-        lease_id=lease_id,
-        delivered_artifact_version=ImmutableVersionRef(
-            kind="git_commit",
-            value="stale-p1-output",
-        ),
-    ) is None
+    assert (
+        lease_service.heartbeat(
+            "p1-inflight",
+            worker_id="worker-p1",
+            lease_id=lease_id,
+        )
+        is None
+    )
+    assert (
+        lease_service.submit_for_review(
+            "p1-inflight",
+            worker_id="worker-p1",
+            lease_id=lease_id,
+            delivered_artifact_version=ImmutableVersionRef(
+                kind="git_commit",
+                value="stale-p1-output",
+            ),
+        )
+        is None
+    )
 
     changed = request_superseded_scope_cancellation(
         Database(session_factory),
@@ -209,7 +239,9 @@ def test_inflight_p1_is_cooperatively_fenced_when_p2_supersedes(session_factory)
     assert stored.previous_worker == "worker-p1"
 
 
-def test_scoped_recovery_never_steals_expired_work_from_other_plan(session_factory) -> None:
+def test_scoped_recovery_never_steals_expired_work_from_other_plan(
+    session_factory,
+) -> None:
     now = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
 
     def validator(organization_id: str, project_id: str, plan: str) -> bool:
