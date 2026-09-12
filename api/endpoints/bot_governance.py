@@ -357,6 +357,21 @@ def disable_profile(
     )
 
 
+@router.post("/profiles/{bot_profile_id}/activate", response_model=ProfileResponse)
+def activate_profile(
+    bot_profile_id: str,
+    request: DisableRequest,
+    organization_id: str = Query(...),
+    user: User = Depends(get_current_active_user),
+    runtime: DORRuntime = Depends(get_dor),
+    service: BotCatalogService = Depends(get_bot_catalog_service),
+):
+    _authorize(runtime, user, organization_id, request.command_id, bot_profile_id)
+    return _profile(
+        _translate(lambda: service.activate_profile(organization_id, bot_profile_id))
+    )
+
+
 def _role(value: CouncilRoleDefinition) -> RoleResponse:
     return RoleResponse(
         **value.canonical(), fingerprint=value.fingerprint, created_at=value.created_at

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from threading import Event, Thread
 
 import pytest
@@ -159,6 +160,176 @@ def test_profile_creation_fails_closed_for_inactive_derived_identity(tmp_path) -
     registry.deactivate(AgentIdentity(created.agent_identity), actor="test")
     with pytest.raises(BotCatalogValidationError, match="inactive"):
         service.create_profile(**values)
+
+
+def test_concurrent_identical_profile_activation_returns_persisted_winner(
+    tmp_path, monkeypatch
+) -> None:
+    catalog = store(tmp_path)
+    registry = AgentRegistry()
+    service = BotCatalogService(catalog, registry)
+    service.create_connection(connection("org-1"))
+    service.create_deployment(
+        ModelDeployment(
+            deployment_id="dep-1",
+            organization_id="org-1",
+            connection_id="shared",
+            connection_version=1,
+            model_id="model",
+            model_family="family",
+            max_context_tokens=10_000,
+            max_output_tokens=1_000,
+        )
+    )
+    profile = service.create_profile(
+        bot_profile_id="architect-1",
+        organization_id="org-1",
+        display_name="Architect",
+        deployment_id="dep-1",
+        deployment_revision=1,
+        prompt_version="v1",
+        capabilities=("architecture.design",),
+    )
+    real_add = catalog.add_profile
+
+    def concurrent_add(value):
+        winner = profile.next_version(enabled=True)
+        real_add(winner)
+        raise BotCatalogConflictError("concurrent activation")
+
+    monkeypatch.setattr(catalog, "add_profile", concurrent_add)
+
+    result = service.activate_profile("org-1", "architect-1")
+
+    assert result == catalog.get_profile("org-1", "architect-1")
+    assert result.enabled is True
+    assert result.version == 2
+
+
+def test_nonidentical_concurrent_activation_conflicts(tmp_path, monkeypatch) -> None:
+    catalog = store(tmp_path)
+    registry = AgentRegistry()
+    service = BotCatalogService(catalog, registry)
+    service.create_connection(connection("org-1"))
+    service.create_deployment(
+        ModelDeployment(
+            deployment_id="dep-1",
+            organization_id="org-1",
+            connection_id="shared",
+            connection_version=1,
+            model_id="model",
+            model_family="family",
+            max_context_tokens=10_000,
+            max_output_tokens=1_000,
+        )
+    )
+    profile = service.create_profile(
+        bot_profile_id="architect-1",
+        organization_id="org-1",
+        display_name="Architect",
+        deployment_id="dep-1",
+        deployment_revision=1,
+        prompt_version="v1",
+        capabilities=("architecture.design",),
+    )
+    real_add = catalog.add_profile
+
+    def conflicting_add(value):
+        real_add(
+            replace(
+                profile.next_version(enabled=True), display_name="Changed concurrently"
+            )
+        )
+        raise BotCatalogConflictError("concurrent activation")
+
+    monkeypatch.setattr(catalog, "add_profile", conflicting_add)
+
+    with pytest.raises(BotCatalogConflictError):
+        service.activate_profile("org-1", "architect-1")
+
+
+def test_profile_activation_is_tenant_scoped(tmp_path) -> None:
+    catalog = store(tmp_path)
+    registry = AgentRegistry()
+    service = BotCatalogService(catalog, registry)
+
+    with pytest.raises(KeyError):
+        service.activate_profile("other-org", "architect-1")
+
+
+def test_active_profile_noop_rejects_agent_declaration_mismatch(
+    tmp_path, monkeypatch
+) -> None:
+    catalog = store(tmp_path)
+    registry = AgentRegistry()
+    service = BotCatalogService(catalog, registry)
+    service.create_connection(connection("org-1"))
+    service.create_deployment(
+        ModelDeployment(
+            deployment_id="dep-1",
+            organization_id="org-1",
+            connection_id="shared",
+            connection_version=1,
+            model_id="model",
+            model_family="family",
+            max_context_tokens=10_000,
+            max_output_tokens=1_000,
+        )
+    )
+    profile = service.create_profile(
+        bot_profile_id="architect-1",
+        organization_id="org-1",
+        display_name="Architect",
+        deployment_id="dep-1",
+        deployment_revision=1,
+        prompt_version="v1",
+        capabilities=("architecture.design",),
+        enabled=True,
+    )
+    record = registry.get(AgentIdentity(profile.agent_identity))
+    monkeypatch.setattr(
+        registry, "get", lambda *_args, **_kwargs: replace(record, instance_id="wrong")
+    )
+
+    with pytest.raises(BotCatalogValidationError, match="declaration mismatch"):
+        service.activate_profile("org-1", "architect-1")
+    assert catalog.get_profile("org-1", "architect-1").version == 1
+
+
+def test_active_profile_noop_requires_exact_deployment_revision(
+    tmp_path, monkeypatch
+) -> None:
+    catalog = store(tmp_path)
+    registry = AgentRegistry()
+    service = BotCatalogService(catalog, registry)
+    service.create_connection(connection("org-1"))
+    service.create_deployment(
+        ModelDeployment(
+            deployment_id="dep-1",
+            organization_id="org-1",
+            connection_id="shared",
+            connection_version=1,
+            model_id="model",
+            model_family="family",
+            max_context_tokens=10_000,
+            max_output_tokens=1_000,
+        )
+    )
+    service.create_profile(
+        bot_profile_id="architect-1",
+        organization_id="org-1",
+        display_name="Architect",
+        deployment_id="dep-1",
+        deployment_revision=1,
+        prompt_version="v1",
+        capabilities=("architecture.design",),
+        enabled=True,
+    )
+    monkeypatch.setattr(catalog, "get_deployment", lambda *_args: None)
+
+    with pytest.raises(BotCatalogValidationError, match="revision does not exist"):
+        service.activate_profile("org-1", "architect-1")
+    assert catalog.get_profile("org-1", "architect-1").version == 1
 
 
 def test_new_registration_is_compensated_when_profile_persistence_fails(

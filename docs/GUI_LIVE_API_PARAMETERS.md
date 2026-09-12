@@ -188,6 +188,12 @@ enabled: bool = True
 
 **GUI Kontrol:**
 - ✅ Kan oprettes via Multi-bot Control Plane → Botprofiler
+- ✅ Inaktive profiler kan aktiveres via Multi-bot Control Plane → AI-bots
+
+Aktivering bruger `POST /api/v1/bot-governance/profiles/{bot_profile_id}/activate`.
+Den genbruger profilens servergenererede AI-1-identitet og kræver, at både den
+eksakte agentdeklaration og den bundne deployment-revision fortsat er aktive.
+Aktivering giver ikke execution authority.
 - ✅ Kan deaktiveres
 - ✅ Kan listes
 

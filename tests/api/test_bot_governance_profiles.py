@@ -123,3 +123,100 @@ def test_post_profile_retry_and_control_errors_are_stable_4xx(
     )
     assert invalid.status_code == 422
     assert inactive.status_code < 500 and invalid.status_code < 500
+
+
+def test_post_activate_profile_preserves_configuration_and_is_idempotent(
+    tmp_path, monkeypatch
+) -> None:
+    client, store, registry = _client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/v1/bot-governance/profiles?organization_id=org-1",
+        json=_payload(enabled=False),
+    ).json()
+
+    path = "/api/v1/bot-governance/profiles/architect-1/activate?organization_id=org-1"
+    activated = client.post(path, json={"command_id": "activate-1"})
+    repeated = client.post(path, json={"command_id": "activate-2"})
+
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["enabled"] is True
+    assert activated.json()["version"] == 2
+    assert repeated.json() == activated.json()
+    for field in (
+        "agent_identity",
+        "display_name",
+        "deployment_id",
+        "deployment_revision",
+        "prompt_version",
+        "capabilities",
+        "permitted_tools",
+        "data_policy",
+        "budget_policy",
+        "concurrency_limit",
+    ):
+        assert activated.json()[field] == created[field]
+    assert registry.get(AgentIdentity(created["agent_identity"])).active is True
+    assert store.get_profile("org-1", "architect-1").enabled is True
+
+
+def test_post_activate_profile_fails_closed_for_missing_inactive_identity(
+    tmp_path, monkeypatch
+) -> None:
+    client, _, registry = _client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/v1/bot-governance/profiles?organization_id=org-1",
+        json=_payload(enabled=False),
+    ).json()
+    registry.deactivate(AgentIdentity(created["agent_identity"]), actor="test")
+
+    response = client.post(
+        "/api/v1/bot-governance/profiles/architect-1/activate?organization_id=org-1",
+        json={"command_id": "activate-1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "invalid_bot_catalog"
+
+
+def test_post_activate_profile_revalidates_identity_before_active_noop(
+    tmp_path, monkeypatch
+) -> None:
+    client, store, registry = _client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/v1/bot-governance/profiles?organization_id=org-1",
+        json=_payload(enabled=False),
+    ).json()
+    path = "/api/v1/bot-governance/profiles/architect-1/activate?organization_id=org-1"
+    activated = client.post(path, json={"command_id": "activate-1"})
+    assert activated.status_code == 200
+    assert activated.json()["version"] == 2
+    registry.deactivate(AgentIdentity(created["agent_identity"]), actor="test")
+
+    retry = client.post(path, json={"command_id": "activate-2"})
+
+    assert retry.status_code == 422
+    assert retry.json()["detail"]["error"] == "invalid_bot_catalog"
+    assert store.get_profile("org-1", "architect-1").version == 2
+
+
+def test_post_activate_profile_returns_not_found(tmp_path, monkeypatch) -> None:
+    client, _, _ = _client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/v1/bot-governance/profiles/missing/activate?organization_id=org-1",
+        json={"command_id": "activate-1"},
+    )
+    assert response.status_code == 404
+
+
+def test_post_activate_profile_uses_manage_authorization(tmp_path, monkeypatch) -> None:
+    client, _, _ = _client(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(bot_governance, "_authorize", lambda *args: calls.append(args))
+
+    client.post(
+        "/api/v1/bot-governance/profiles/missing/activate?organization_id=org-1",
+        json={"command_id": "activate-authorized"},
+    )
+
+    assert calls
+    assert calls[0][2:] == ("org-1", "activate-authorized", "missing")
