@@ -48,7 +48,7 @@ Identifies the concrete model available through one connection:
 
 Represents one selectable bot identity:
 
-- `bot_profile_id`, `organization_id`, `agent_identity`;
+- `bot_profile_id`, `organization_id`, server-afledt `agent_identity`;
 - `display_name`, `deployment_id`, `prompt_version`;
 - the exact `deployment_revision` used by the profile;
 - declared capabilities and permitted tools;

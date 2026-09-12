@@ -204,6 +204,21 @@ class BotCatalogStore:
             else tuple(value for value in values if value.enabled)
         )
 
+    def list_profiles_for_registry_rehydration(self) -> tuple[BotProfile, ...]:
+        """Return latest profiles across tenants for trusted startup rehydration."""
+        with self._sessions() as session:
+            rows = session.scalars(
+                select(BotProfileModel).order_by(
+                    BotProfileModel.organization_id,
+                    BotProfileModel.bot_profile_id,
+                    BotProfileModel.version.desc(),
+                )
+            ).all()
+            latest: dict[tuple[str, str], BotProfileModel] = {}
+            for row in rows:
+                latest.setdefault((row.organization_id, row.bot_profile_id), row)
+            return tuple(self._profile(latest[key]) for key in sorted(latest))
+
     def _insert(self, organization_id: str, row: object) -> None:
         try:
             with self._sessions() as session, session.begin():

@@ -134,7 +134,6 @@ def build_deployment_payload(
 def build_profile_payload(
     *,
     bot_profile_id: str,
-    agent_identity: str,
     display_name: str,
     deployment_id: str,
     deployment_revision: int,
@@ -152,7 +151,6 @@ def build_profile_payload(
     return {
         "command_id": f"dashboard-profile-{uuid4()}",
         "bot_profile_id": bot_profile_id.strip(),
-        "agent_identity": agent_identity.strip(),
         "display_name": display_name.strip(),
         "deployment_id": deployment_id.strip(),
         "deployment_revision": int(deployment_revision),
@@ -520,10 +518,6 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
             concurrency = st.number_input("Samtidige opgaver", min_value=1, value=1)
             enabled = st.checkbox("Aktivér bot med det samme", value=False)
             with st.expander("Avanceret"):
-                agent_identity = st.text_input(
-                    "AI-1 agent identity",
-                    help="SHA-256 identity, som allerede er registreret i DOR.",
-                )
                 data_boundary = st.selectbox(
                     "Bot-dataområde", DATA_BOUNDARIES, index=2
                 )
@@ -544,7 +538,6 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
                     resource_path("profiles"),
                     build_profile_payload(
                         bot_profile_id=bot_profile_id,
-                        agent_identity=agent_identity,
                         display_name=display_name,
                         deployment_id=str(deployment["deployment_id"]),
                         deployment_revision=int(deployment["revision"]),

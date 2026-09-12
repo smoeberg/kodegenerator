@@ -7,6 +7,7 @@ from dashboard.multi_bot_control_plane import (
     build_allocation_payload,
     build_connection_payload,
     build_deployment_payload,
+    build_profile_payload,
     build_role_payload,
 )
 from services.bot_provider_credentials import credential_reference
@@ -61,9 +62,7 @@ def test_credential_put_uses_write_only_json_payload():
     client = FakeClient()
 
     assert _put(client, "/credential", {"api_key": "secret"}) == {"ok": True}
-    assert client.calls == [
-        ("PUT", "/credential", {"json": {"api_key": "secret"}})
-    ]
+    assert client.calls == [("PUT", "/credential", {"json": {"api_key": "secret"}})]
 
 
 def test_connection_builder_passes_only_opaque_secret_reference_to_bot_catalog():
@@ -105,6 +104,20 @@ def test_deployment_builder_binds_exact_connection_version():
     assert payload["model_id"] == "gpt-5.6"
     assert payload["tool_capabilities"] == ["code"]
     assert payload["command_id"].startswith("dashboard-deployment-")
+
+
+def test_profile_builder_leaves_ai1_identity_to_the_server():
+    payload = build_profile_payload(
+        bot_profile_id="architect-primary",
+        display_name="Architect",
+        deployment_id="mistral-large",
+        deployment_revision=1,
+        prompt_version="v1",
+        capabilities=["architecture.propose"],
+    )
+
+    assert "agent_identity" not in payload
+    assert payload["capabilities"] == ["architecture.propose"]
 
 
 def test_role_builder_uses_provider_neutral_role_contract():

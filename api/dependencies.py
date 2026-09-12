@@ -91,10 +91,12 @@ def get_agent_registry() -> AgentRegistry:
 
 @lru_cache(maxsize=1)
 def get_bot_catalog_service() -> BotCatalogService:
-    return BotCatalogService(
+    service = BotCatalogService(
         BotCatalogStore(build_session_factory(os.getenv("DATABASE_URL", "sqlite:///./dor_runtime.db"))),
         get_agent_registry(),
     )
+    service.rehydrate_registry()
+    return service
 
 
 @lru_cache(maxsize=1)
