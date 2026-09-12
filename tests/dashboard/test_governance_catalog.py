@@ -25,3 +25,11 @@ def test_dashboard_examples_match_versioned_api_contracts():
     }
     for resource, schema in schemas.items():
         schema.model_validate(CREATE_EXAMPLES[resource])
+
+
+def test_profile_create_contract_does_not_accept_caller_identity():
+    assert "agent_identity" not in CREATE_EXAMPLES["profiles"]
+    with pytest.raises(ValueError, match="agent_identity"):
+        ProfileCreateRequest.model_validate(
+            CREATE_EXAMPLES["profiles"] | {"agent_identity": "1" * 64}
+        )

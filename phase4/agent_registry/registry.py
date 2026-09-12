@@ -2,10 +2,13 @@
 
 This module deliberately does not authorize capabilities. AI-3 owns authority.
 """
+
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Dict, Iterable, List, Optional
 
 from .models import AgentIdentity, AgentRecord, AgentRole, AgentVersion, Capability
@@ -33,6 +36,13 @@ class AgentRegistry:
     def __init__(self) -> None:
         self._records: Dict[str, AgentRecord] = {}
         self._audit: List[dict[str, Any]] = []
+        self._transaction_lock = RLock()
+
+    @contextmanager
+    def registration_transaction(self):
+        """Serialize a registry mutation with its caller-owned persistence step."""
+        with self._transaction_lock:
+            yield
 
     @staticmethod
     def _now() -> str:
@@ -60,7 +70,11 @@ class AgentRegistry:
         if not actor or not isinstance(actor, str):
             raise RegistrationError("actor must be a non-empty string")
 
-        caps = tuple(sorted(set(capabilities), key=lambda c: (c.name, str(c.version), c.parameters)))
+        caps = tuple(
+            sorted(
+                set(capabilities), key=lambda c: (c.name, str(c.version), c.parameters)
+            )
+        )
         if any(not isinstance(cap, Capability) for cap in caps):
             raise RegistrationError("capabilities must contain Capability values")
 
@@ -73,49 +87,76 @@ class AgentRegistry:
             instance_id=instance_id,
         )
         key = str(identity)
-        if key in self._records:
-            raise DuplicateIdentityError(key)
+        with self._transaction_lock:
+            if key in self._records:
+                raise DuplicateIdentityError(key)
 
-        record = AgentRecord(
-            identity=identity,
-            agent_type=agent_type,
-            instance_id=instance_id,
-            version=version,
-            role=role,
-            capabilities=caps,
-            trust_anchor=trust_anchor,
-            registered_by=actor,
-            registered_at=self._now(),
-            active=True,
-        )
-        self._records[key] = record
-        self._append_audit("registered", record, actor)
-        return record
+            record = AgentRecord(
+                identity=identity,
+                agent_type=agent_type,
+                instance_id=instance_id,
+                version=version,
+                role=role,
+                capabilities=caps,
+                trust_anchor=trust_anchor,
+                registered_by=actor,
+                registered_at=self._now(),
+                active=True,
+            )
+            self._records[key] = record
+            self._append_audit("registered", record, actor)
+            return record
 
-    def get(self, identity: AgentIdentity, *, include_inactive: bool = False) -> AgentRecord:
-        record = self._records.get(str(identity))
-        if record is None or (not include_inactive and not record.active):
-            raise AgentNotFoundError(str(identity))
-        return record
+    def get(
+        self, identity: AgentIdentity, *, include_inactive: bool = False
+    ) -> AgentRecord:
+        with self._transaction_lock:
+            record = self._records.get(str(identity))
+            if record is None or (not include_inactive and not record.active):
+                raise AgentNotFoundError(str(identity))
+            return record
 
-    def list(self, *, role: Optional[AgentRole] = None, capability: Optional[str] = None) -> list[AgentRecord]:
-        records = [r for r in self._records.values() if r.active]
+    def list(
+        self, *, role: Optional[AgentRole] = None, capability: Optional[str] = None
+    ) -> list[AgentRecord]:
+        with self._transaction_lock:
+            records = [r for r in self._records.values() if r.active]
         if role is not None:
             records = [r for r in records if r.role == role]
         if capability is not None:
             records = [r for r in records if r.has_capability(capability)]
         return sorted(records, key=lambda r: (r.instance_id, str(r.identity)))
 
-    def deactivate(self, identity: AgentIdentity, *, actor: str, reason: str = "") -> AgentRecord:
+    def deactivate(
+        self, identity: AgentIdentity, *, actor: str, reason: str = ""
+    ) -> AgentRecord:
         if not actor or not isinstance(actor, str):
             raise RegistrationError("actor must be a non-empty string")
-        current = self.get(identity)
-        updated = replace(current, active=False)
-        self._records[str(identity)] = updated
-        self._append_audit("deactivated", updated, actor, {"reason": reason})
-        return updated
+        with self._transaction_lock:
+            current = self.get(identity)
+            updated = replace(current, active=False)
+            self._records[str(identity)] = updated
+            self._append_audit("deactivated", updated, actor, {"reason": reason})
+            return updated
 
-    def audit_trail(self, identity: Optional[AgentIdentity] = None) -> list[dict[str, Any]]:
+    def rollback_registration(self, identity: AgentIdentity, *, actor: str) -> None:
+        """Remove one exact registration when its enclosing transaction failed.
+
+        This is compensation, not lifecycle deletion: inactive or unknown records
+        are never removed and the attempted rollback remains auditable.
+        """
+        if not actor or not isinstance(actor, str):
+            raise RegistrationError("actor must be a non-empty string")
+        with self._transaction_lock:
+            current = self.get(identity, include_inactive=True)
+            if not current.active:
+                raise RegistrationError("inactive registrations cannot be rolled back")
+            del self._records[str(identity)]
+            self._append_audit("registration_rolled_back", current, actor)
+
+    def audit_trail(
+        self, identity: Optional[AgentIdentity] = None
+    ) -> list[dict[str, Any]]:
         if identity is None:
             return [dict(entry) for entry in self._audit]
         key = str(identity)

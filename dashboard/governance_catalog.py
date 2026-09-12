@@ -44,7 +44,6 @@ CREATE_EXAMPLES: dict[str, dict[str, Any]] = {
     "profiles": {
         "command_id": "configure-profile-001",
         "bot_profile_id": "architect-mistral-1",
-        "agent_identity": "agent.architect.mistral.1",
         "display_name": "Architecture Bot 1",
         "deployment_id": "mistral-large-eu-1",
         "deployment_revision": 1,

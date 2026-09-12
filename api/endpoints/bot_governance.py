@@ -307,20 +307,22 @@ def create_profile(
     data = request.model_dump(exclude={"command_id", "data_policy", "budget_policy"})
     data["capabilities"] = tuple(sorted(set(data["capabilities"])))
     data["permitted_tools"] = tuple(sorted(set(data["permitted_tools"])))
-    value = BotProfile(
-        **data,
-        organization_id=organization_id,
-        data_policy=BotDataPolicy(
-            **request.data_policy.model_dump()
-            | {
-                "allowed_regions": tuple(
-                    sorted(set(request.data_policy.allowed_regions))
-                )
-            }
-        ),
-        budget_policy=BotBudgetPolicy(**request.budget_policy.model_dump()),
-    )
-    return _profile(_translate(lambda: service.create_profile(value)))
+    def operation() -> BotProfile:
+        return service.create_profile(
+            **data,
+            organization_id=organization_id,
+            data_policy=BotDataPolicy(
+                **request.data_policy.model_dump()
+                | {
+                    "allowed_regions": tuple(
+                        sorted(set(request.data_policy.allowed_regions))
+                    )
+                }
+            ),
+            budget_policy=BotBudgetPolicy(**request.budget_policy.model_dump()),
+        )
+
+    return _profile(_translate(operation))
 
 
 @router.get("/profiles", response_model=list[ProfileResponse])

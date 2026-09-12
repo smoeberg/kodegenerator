@@ -92,9 +92,14 @@ Add:
 | `infrastructure/persistence/bot_catalog_models.py` | SQLAlchemy rows for those values |
 | `infrastructure/persistence/bot_catalog_store.py` | Synchronous tenant-scoped store |
 
-`BotProfile.agent_identity` stores the 64-character value produced by existing
-`AgentIdentity`. Capability names must be a subset of the active AgentRecord's
-declarations. A Bot Catalog profile cannot grant a new capability.
+`BotProfile.agent_identity` stores the 64-character value automatically produced
+by the Bot Catalog through the existing AI-1 registry. The canonical declaration
+uses agent type `bot-profile`, version `1.0.0`, role `other`, sorted capability
+declarations, and trust anchor
+`organization:<organization_id>:bot-profile:<bot_profile_id>`. At composition
+startup the cached registry is rehydrated from the latest persisted profiles;
+an inconsistent persisted identity or capability declaration fails startup closed.
+Capability declarations do not grant authority.
 
 ### 4.2 Roles, templates, and allocation
 

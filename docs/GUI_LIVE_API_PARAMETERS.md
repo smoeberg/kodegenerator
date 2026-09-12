@@ -166,7 +166,6 @@ status: str = "active"  # [active, disabled, maintenance]
 
 ```python
 bot_profile_id: str = "architect-mistral-1"
-agent_identity: str = "agent.architect.mistral.1"
 display_name: str = "Architecture Bot 1"
 deployment_id: str = "mistral-large-eu-1"
 deployment_revision: int = 1
@@ -691,6 +690,10 @@ intent: dict = {
     "required_capabilities": ["domain", "code", "test"]
 }
 ```
+
+`agent_identity` er ikke brugerinput. Bot Catalog afleder og registrerer automatisk
+en tenant- og profilbundet AI-1-identitet; identiteten returneres i svaret og
+bevares på den lagrede profil.
 
 #### 9.2 Project Launch
 

@@ -88,7 +88,6 @@ class DeploymentResponse(StrictModel):
 class ProfileCreateRequest(StrictModel):
     command_id: str
     bot_profile_id: str
-    agent_identity: str
     display_name: str
     deployment_id: str
     deployment_revision: int = Field(ge=1)
