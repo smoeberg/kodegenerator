@@ -31,7 +31,7 @@ def test_non_admin_or_unknown_client_state_cannot_preserve_admin_navigation() ->
 def test_administration_exposes_single_ai_configuration_entrypoint() -> None:
     source = SETTINGS.read_text(encoding="utf-8")
     render_settings = source.split("def render_settings", 1)[1]
-    assert 'tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Redmine", "System", "AI & Governance"])' in render_settings
+    assert 'tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Formularer", "Redmine", "System", "AI & Governance"])' in render_settings
     assert '"Implementation AI"' not in render_settings
     assert "_render_ai_settings(client)" not in render_settings
     assert "render_multi_bot_control_plane(client, organization_id)" in render_settings
