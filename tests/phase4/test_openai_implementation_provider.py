@@ -52,6 +52,18 @@ def _capture_transport(captured: dict[str, object]):
         captured["headers"] = dict(headers)
         captured["body"] = json.loads(body.decode("utf-8"))
         captured["timeout"] = timeout
+        if str(url).endswith("/chat/completions"):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"unified_diff": _PATCH}),
+                        },
+                    }
+                ]
+            }
         return {
             "status": "completed",
             "output_text": json.dumps({"unified_diff": _PATCH}),
@@ -96,3 +108,49 @@ def test_base_url_with_embedded_credentials_is_rejected() -> None:
             model="gpt-test",
             base_url="https://user:pass@ai.example.test/v1",
         )
+
+
+def test_chat_completions_protocol_sends_and_parses_correctly() -> None:
+    captured: dict[str, object] = {}
+    provider = OpenAIImplementationProvider(
+        api_key="secret-key",
+        model="mistral-large-latest",
+        base_url="https://api.mistral.ai/v1",
+        wire_protocol="chat_completions",
+        transport=_capture_transport(captured),
+    )
+
+    candidate = provider.propose_patch(_request())
+
+    assert captured["url"] == "https://api.mistral.ai/v1/chat/completions"
+    assert captured["body"]["model"] == "mistral-large-latest"
+    assert captured["body"]["messages"][0]["role"] == "system"
+    assert captured["body"]["messages"][1]["role"] == "user"
+    assert candidate.unified_diff == _PATCH
+    assert provider.provider_id == "openai.chat_completions:mistral-large-latest"
+
+
+def test_chat_completions_invalid_finish_reason_is_rejected() -> None:
+    def transport(url, headers, body, timeout):
+        return {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": "{\"unified_diff\": \""},
+                }
+            ]
+        }
+
+    provider = OpenAIImplementationProvider(
+        api_key="secret-key",
+        model="mistral-large-latest",
+        wire_protocol="chat_completions",
+        transport=transport,
+    )
+
+    from phase4.implementation_agent.openai_provider import (
+        OpenAIImplementationResponseError,
+    )
+
+    with pytest.raises(OpenAIImplementationResponseError, match="finish cleanly"):
+        provider.propose_patch(_request())

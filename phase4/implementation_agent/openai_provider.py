@@ -12,6 +12,9 @@ from .models import IMPLEMENTATION_ACTION, ImplementationRequest, PatchCandidate
 
 OPENAI_IMPLEMENTATION_BASE_URL = "https://api.openai.com/v1"
 OPENAI_IMPLEMENTATION_RESPONSES_URL = f"{OPENAI_IMPLEMENTATION_BASE_URL}/responses"
+WIRE_PROTOCOL_RESPONSES = "responses"
+WIRE_PROTOCOL_CHAT_COMPLETIONS = "chat_completions"
+_SUPPORTED_WIRE_PROTOCOLS = (WIRE_PROTOCOL_RESPONSES, WIRE_PROTOCOL_CHAT_COMPLETIONS)
 _HTTP_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
@@ -41,6 +44,7 @@ class OpenAIImplementationProvider:
         api_key: str,
         model: str,
         base_url: str = OPENAI_IMPLEMENTATION_BASE_URL,
+        wire_protocol: str = WIRE_PROTOCOL_RESPONSES,
         max_input_bytes: int = 512 * 1024,
         max_output_bytes: int = 512 * 1024,
         timeout_seconds: float = 120.0,
@@ -72,9 +76,18 @@ class OpenAIImplementationProvider:
             raise ValueError("max_output_bytes must be a positive integer")
         if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if wire_protocol not in _SUPPORTED_WIRE_PROTOCOLS:
+            raise ValueError(
+                f"wire_protocol must be one of {', '.join(_SUPPORTED_WIRE_PROTOCOLS)}"
+            )
         self._api_key = api_key
         self._model = model.strip()
-        self._responses_url = f"{normalized_base}/responses"
+        self._wire_protocol = wire_protocol
+        self._responses_url = (
+            f"{normalized_base}/chat/completions"
+            if wire_protocol == WIRE_PROTOCOL_CHAT_COMPLETIONS
+            else f"{normalized_base}/responses"
+        )
         self._max_input_bytes = max_input_bytes
         self._max_output_bytes = max_output_bytes
         self._timeout_seconds = float(timeout_seconds)
@@ -90,7 +103,7 @@ class OpenAIImplementationProvider:
 
     @property
     def provider_id(self) -> str:
-        return f"openai.responses:{self._model}"
+        return f"openai.{self._wire_protocol}:{self._model}"
 
     def propose_patch(self, request: ImplementationRequest) -> PatchCandidate:
         prompt = _implementation_prompt(request)
@@ -100,30 +113,46 @@ class OpenAIImplementationProvider:
                 "complete implementation prompt exceeds max_input_bytes; "
                 "no context was sent"
             )
-        body = json.dumps(
-            {
-                "model": self._model,
-                "store": False,
-                "instructions": _SYSTEM_INSTRUCTIONS,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": prompt}],
-                    }
-                ],
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "dor_implementation_patch_candidate",
-                        "strict": True,
-                        "schema": _PATCH_CANDIDATE_SCHEMA,
-                    }
+        if self._wire_protocol == WIRE_PROTOCOL_CHAT_COMPLETIONS:
+            body = json.dumps(
+                {
+                    "model": self._model,
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "stream": False,
                 },
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        else:
+            body = json.dumps(
+                {
+                    "model": self._model,
+                    "store": False,
+                    "instructions": _SYSTEM_INSTRUCTIONS,
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": prompt}],
+                        }
+                    ],
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": "dor_implementation_patch_candidate",
+                            "strict": True,
+                            "schema": _PATCH_CANDIDATE_SCHEMA,
+                        }
+                    },
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
         response = self._transport(
             self._responses_url,
             {
@@ -134,7 +163,11 @@ class OpenAIImplementationProvider:
             body,
             self._timeout_seconds,
         )
-        output_text = _response_output_text(response)
+        output_text = (
+            _chat_completions_output_text(response)
+            if self._wire_protocol == WIRE_PROTOCOL_CHAT_COMPLETIONS
+            else _response_output_text(response)
+        )
         if len(output_text.encode("utf-8")) > self._max_output_bytes:
             raise OpenAIImplementationResponseError(
                 "OpenAI response exceeds max_output_bytes"
@@ -223,6 +256,36 @@ def _implementation_prompt(request: ImplementationRequest) -> str:
         "the structured candidate.\n\n"
         + json.dumps(payload, sort_keys=True, ensure_ascii=False)
     )
+
+
+def _chat_completions_output_text(response: Mapping[str, object]) -> str:
+    """Extract exactly one assistant message payload from a chat-completions reply."""
+    choices = response.get("choices")
+    if not _is_sequence(choices) or len(choices) != 1:
+        raise OpenAIImplementationResponseError(
+            "chat-completions response must contain exactly one choice"
+        )
+    choice = choices[0]
+    if not isinstance(choice, Mapping):
+        raise OpenAIImplementationResponseError(
+            "chat-completions response choice must be an object"
+        )
+    finish = choice.get("finish_reason")
+    if finish not in ("stop", None):
+        raise OpenAIImplementationResponseError(
+            f"chat-completions response did not finish cleanly (finish_reason={finish!r})"
+        )
+    message = choice.get("message")
+    if not isinstance(message, Mapping):
+        raise OpenAIImplementationResponseError(
+            "chat-completions response contains no message"
+        )
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise OpenAIImplementationResponseError(
+            "chat-completions response message contains no text"
+        )
+    return content
 
 
 def _response_output_text(response: Mapping[str, object]) -> str:

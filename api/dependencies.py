@@ -181,12 +181,13 @@ def _implementation_provider_config() -> tuple[str | None, str | None, str]:
         os.getenv("OPENAI_API_KEY"),
         os.getenv("DOR_IMPLEMENTATION_MODEL"),
         base_url,
+        os.getenv("DOR_IMPLEMENTATION_WIRE_PROTOCOL", "").strip().lower() or None,
     )
 
 
 def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
     """Build a fresh runtime so newly saved worker settings apply to new tasks."""
-    api_key, model, base_url = _implementation_provider_config()
+    api_key, model, base_url, wire_protocol = _implementation_provider_config()
     configured_resources = os.getenv("DOR_IMPLEMENTATION_ALLOWED_RESOURCES")
     if not api_key:
         raise ImplementationAgentConfigurationError("OPENAI_API_KEY or a saved AI API key is required for the Implementation Agent")
@@ -202,6 +203,7 @@ def get_implementation_agent_runtime() -> ImplementationAgentRuntime:
             api_key=api_key,
             model=model,
             base_url=base_url,
+            wire_protocol=wire_protocol or "responses",
             max_input_bytes=_positive_int_environment("DOR_IMPLEMENTATION_MAX_INPUT_BYTES", 512 * 1024),
             max_output_bytes=_positive_int_environment("DOR_IMPLEMENTATION_MAX_OUTPUT_BYTES", 512 * 1024),
         )
