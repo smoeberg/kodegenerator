@@ -353,3 +353,25 @@ def test_governed_coder_materializer_failure_returns_no_cached_receipt(tmp_path:
     with pytest.raises(RuntimeError, match="materialization receipt"):
         executor.execute(*_approved_change())
     assert executor.receipt is None
+
+
+def test_governance_runtime_accepts_mistral_base_url_and_model_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for PR #285 bootstrap: base URL + model override must not collide."""
+    import importlib
+
+    entrypoint = importlib.import_module("phase4.development_governance.__main__")
+    from services.llm_adapters import OpenAIAdapter
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("DOR_GOVERNANCE_LLM_BASE_URL", "https://api.mistral.ai/v1")
+    monkeypatch.setenv("DOR_GOVERNANCE_LLM_MODEL", "mistral-large-latest")
+
+    binding = RoleBinding("coder", "governed_llm", "gpt-4o-mini", "v1", "0" * 64)
+    runtime = entrypoint._runtime(binding)
+
+    adapter = getattr(runtime, "_provider", None)
+    assert adapter is not None, "expected runtime to expose its LLM provider"
+    assert isinstance(adapter, OpenAIAdapter)
+    assert adapter.model == "mistral-large-latest"
