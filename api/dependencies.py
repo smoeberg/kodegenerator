@@ -147,7 +147,7 @@ def _active_scope_resolver():
     return ActiveProjectScopeResolver(get_dor().database).require
 
 
-def _implementation_provider_config() -> tuple[str | None, str | None, str]:
+def _implementation_provider_config() -> tuple[str | None, str | None, str, str | None]:
     """Resolve tenant settings only inside a tenant-pinned worker process.
 
     The direct API dependency remains environment-backed because its requests can
@@ -171,6 +171,7 @@ def _implementation_provider_config() -> tuple[str | None, str | None, str]:
             str(config.get("api_key") or "").strip() or None,
             str(config.get("model") or "").strip() or None,
             str(config.get("base_url") or DEFAULT_OPENAI_BASE_URL),
+            os.getenv("DOR_IMPLEMENTATION_WIRE_PROTOCOL", "").strip().lower() or None,
         )
 
     base_url = normalize_openai_base_url(
