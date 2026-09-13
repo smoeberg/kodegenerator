@@ -20,6 +20,8 @@ from .models import (
 )
 from .openai_provider import (
     OPENAI_IMPLEMENTATION_RESPONSES_URL,
+    WIRE_PROTOCOL_CHAT_COMPLETIONS,
+    WIRE_PROTOCOL_RESPONSES,
     OpenAIImplementationInputLimitError,
     OpenAIImplementationProvider,
     OpenAIImplementationProviderError,
@@ -77,6 +79,8 @@ __all__ = [
     "IMPLEMENTATION_ACTION",
     "IMPLEMENTATION_APPLY_ACTION",
     "OPENAI_IMPLEMENTATION_RESPONSES_URL",
+    "WIRE_PROTOCOL_CHAT_COMPLETIONS",
+    "WIRE_PROTOCOL_RESPONSES",
     "ChangeBudget",
     "DuplicateImplementationRequestError",
     "GovernedPatchAuthorityError",

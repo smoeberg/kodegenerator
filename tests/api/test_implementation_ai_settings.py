@@ -148,7 +148,7 @@ def test_worker_runtime_resolves_saved_tenant_ai_settings(
     )
     monkeypatch.setattr(dependencies, "get_dor", lambda: runtime)
 
-    api_key, model, base_url = dependencies._implementation_provider_config()
+    api_key, model, base_url, wire_protocol = dependencies._implementation_provider_config()
 
     assert api_key == "saved-key"
     assert model == "gpt-saved"
@@ -169,7 +169,7 @@ def test_api_runtime_does_not_consume_fixed_pipeline_tenant_settings(
     )
     monkeypatch.setattr(dependencies, "get_dor", lambda: runtime)
 
-    api_key, model, base_url = dependencies._implementation_provider_config()
+    api_key, model, base_url, wire_protocol = dependencies._implementation_provider_config()
 
     assert api_key == "api-env-key"
     assert model == "api-env-model"
