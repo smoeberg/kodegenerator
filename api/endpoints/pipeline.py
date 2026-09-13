@@ -9,13 +9,17 @@ from api.dependencies import get_dor
 from api.schemas.pipeline import (
     PipelineListResponse,
     PipelineStatusResponse,
+    RequirementsResponse,
     StartPipelineRequest,
+    UpdateRequirementsRequest,
 )
 from domain.principal import Principal
 from runtime.context import ContextError
 from runtime.core import DORRuntime, NotFoundError
 from runtime.pipeline_orchestrator import PipelineOrchestrator
 from runtime.pipeline_registry import get_pipeline_registry
+
+import yaml
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -120,6 +124,55 @@ def get_pipeline_status(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
         ) from exc
+
+
+@router.get("/{workflow_id}/requirements", response_model=RequirementsResponse)
+def get_pipeline_requirements(
+    workflow_id: str,
+    runtime: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+    organization_id: str = Query(...),
+) -> RequirementsResponse:
+    """Get the requirements spec bound to a pipeline."""
+    _pipeline_context(runtime, current_user, organization_id)
+    orchestrator = _create_pipeline_orchestrator(runtime, organization_id)
+    _workflow_for_organization(orchestrator, workflow_id, organization_id)
+    try:
+        spec = orchestrator.get_requirements(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found"
+        ) from exc
+    return RequirementsResponse(
+        workflow_id=workflow_id,
+        requirements_yaml=yaml.safe_dump(spec, allow_unicode=True, sort_keys=False),
+    )
+
+
+@router.put("/{workflow_id}/requirements", response_model=RequirementsResponse)
+def update_pipeline_requirements(
+    workflow_id: str,
+    request: UpdateRequirementsRequest,
+    runtime: DORRuntime = Depends(get_dor),
+    current_user: User = Depends(get_current_active_user),
+    organization_id: str = Query(...),
+) -> RequirementsResponse:
+    """Replace the requirements spec of a pipeline in REQUIREMENTS_DRAFT."""
+    _pipeline_context(runtime, current_user, organization_id)
+    orchestrator = _create_pipeline_orchestrator(runtime, organization_id)
+    _workflow_for_organization(orchestrator, workflow_id, organization_id)
+    try:
+        spec = orchestrator.update_requirements(
+            workflow_id, request.requirements_yaml
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return RequirementsResponse(
+        workflow_id=workflow_id,
+        requirements_yaml=yaml.safe_dump(spec, allow_unicode=True, sort_keys=False),
+    )
 
 
 @router.post("/{workflow_id}/advance")
