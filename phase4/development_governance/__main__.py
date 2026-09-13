@@ -48,8 +48,6 @@ def _runtime(binding: RoleBinding) -> GovernedLLMRuntime:
     if base_url:
         kwargs["base_url"] = base_url
     model_override = os.getenv("DOR_GOVERNANCE_LLM_MODEL", "").strip()
-    if model_override:
-        kwargs["model"] = model_override
     return GovernedLLMRuntime(OpenAIAdapter(api_key=api_key, model=model_override or binding.model,
                                              max_retries=2, timeout_seconds=60,
                                              max_output_tokens=8_000, **kwargs))
