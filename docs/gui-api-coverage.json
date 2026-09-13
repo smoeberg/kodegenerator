@@ -10,7 +10,7 @@
       "internal": "Backend/worker/diagnostic/legacy API with no direct canonical GUI surface."
     }
   },
-  "summary": {"total": 108, "covered": 68, "planned": 14, "internal": 26},
+  "summary": {"total": 109, "covered": 69, "planned": 14, "internal": 26},
   "endpoints": [
     {"method":"GET","path":"/api/v1/bot-evidence/candidate-selections/{selection_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate selection"},
     {"method":"GET","path":"/api/v1/bot-evidence/candidates/{candidate_id}","surface":"soeg","status":"covered","capability":"Bot evidence: candidate"},
@@ -31,6 +31,7 @@
     {"method":"POST","path":"/api/v1/bot-governance/deployments/{deployment_id}/disable","surface":"administration","status":"covered","capability":"Bot deployments"},
     {"method":"GET","path":"/api/v1/bot-governance/profiles","surface":"administration","status":"covered","capability":"Bot profiles"},
     {"method":"POST","path":"/api/v1/bot-governance/profiles","surface":"administration","status":"covered","capability":"Bot profiles"},
+    {"method":"POST","path":"/api/v1/bot-governance/profiles/{bot_profile_id}/activate","surface":"administration","status":"covered","capability":"Bot profile activation"},
     {"method":"POST","path":"/api/v1/bot-governance/profiles/{bot_profile_id}/disable","surface":"administration","status":"covered","capability":"Bot profiles"},
     {"method":"GET","path":"/api/v1/bot-governance/roles","surface":"administration","status":"covered","capability":"Bot roles"},
     {"method":"POST","path":"/api/v1/bot-governance/roles","surface":"administration","status":"covered","capability":"Bot roles"},
