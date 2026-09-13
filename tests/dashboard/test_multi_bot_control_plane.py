@@ -199,5 +199,14 @@ def test_bot_admin_exposes_human_facing_setup_and_role_assignment():
         "Primær AI-bot",
         "Fallback AI-bot",
         "Gem tildeling",
+        "Aktivér AI-bot",
     ):
         assert label in source
+
+
+def test_bot_activation_uses_canonical_endpoint_without_identity_input():
+    source = SOURCE.read_text(encoding="utf-8")
+
+    assert "{resource_path('profiles')}/{profile['bot_profile_id']}/activate" in source
+    assert '"command_id": f"dashboard-profile-activate-' in source
+    assert "agent_identity" not in source

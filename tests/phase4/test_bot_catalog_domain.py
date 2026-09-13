@@ -80,3 +80,25 @@ def test_capabilities_must_be_canonical() -> None:
             prompt_version="v1",
             capabilities=("z", "a"),
         )
+
+
+def test_profile_activation_is_an_immutable_version_change_only() -> None:
+    profile = BotProfile(
+        bot_profile_id="profile-1",
+        organization_id="org-1",
+        agent_identity="1" * 64,
+        display_name="Architect",
+        deployment_id="dep-1",
+        deployment_revision=3,
+        prompt_version="architect-v1",
+        capabilities=("architecture.propose",),
+        permitted_tools=("repository.read",),
+    )
+
+    activated = profile.next_version(enabled=True)
+
+    assert activated.enabled is True
+    assert activated.version == profile.version + 1
+    assert replace(activated, enabled=profile.enabled, version=profile.version) == replace(
+        profile, created_at=activated.created_at, updated_at=activated.updated_at
+    )

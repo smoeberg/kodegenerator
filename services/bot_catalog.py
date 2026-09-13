@@ -257,3 +257,81 @@ class BotCatalogService:
         if current is None:
             raise BotCatalogNotFoundError(bot_profile_id)
         return self.store.add_profile(current.next_version(enabled=False))
+
+    def activate_profile(self, organization_id: str, bot_profile_id: str) -> BotProfile:
+        """Activate an existing profile without changing its declaration.
+
+        Activation only changes catalog eligibility.  It neither registers nor
+        reactivates an AI-1 identity and it grants no execution authority.
+        """
+        with self._profile_lock, self.registry.registration_transaction():
+            current = self.store.get_profile(organization_id, bot_profile_id)
+            if current is None:
+                raise BotCatalogNotFoundError(bot_profile_id)
+
+            (
+                agent_type,
+                agent_version,
+                agent_role,
+                agent_capabilities,
+                instance_id,
+                trust_anchor,
+                expected_identity,
+            ) = self._agent_declaration(
+                organization_id, bot_profile_id, current.capabilities
+            )
+            if current.agent_identity != str(expected_identity):
+                raise BotCatalogValidationError(
+                    "persisted bot profile has inconsistent agent identity"
+                )
+            try:
+                record = self.registry.get(expected_identity)
+            except AgentNotFoundError as exc:
+                raise BotCatalogValidationError(
+                    "agent identity is not actively registered"
+                ) from exc
+            expected_record = (
+                agent_type,
+                instance_id,
+                agent_version,
+                agent_role,
+                agent_capabilities,
+                trust_anchor,
+            )
+            actual_record = (
+                record.agent_type,
+                record.instance_id,
+                record.version,
+                record.role,
+                record.capabilities,
+                record.trust_anchor,
+            )
+            if actual_record != expected_record:
+                raise BotCatalogValidationError("agent identity declaration mismatch")
+
+            deployment = self.store.get_deployment(
+                organization_id,
+                current.deployment_id,
+                current.deployment_revision,
+            )
+            if deployment is None:
+                raise BotCatalogValidationError("deployment revision does not exist")
+            if deployment.status != "active":
+                raise BotCatalogValidationError("deployment revision is not active")
+
+            if current.enabled:
+                return current
+
+            activated = current.next_version(enabled=True)
+            try:
+                return self.store.add_profile(activated)
+            except BotCatalogConflictError:
+                latest = self.store.get_profile(organization_id, bot_profile_id)
+                if (
+                    latest is not None
+                    and latest.enabled
+                    and latest.version == activated.version
+                    and latest.fingerprint == activated.fingerprint
+                ):
+                    return latest
+                raise

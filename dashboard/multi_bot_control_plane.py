@@ -492,6 +492,30 @@ def _profile_tab(client: DORAPIClient, organization_id: str) -> None:
         ],
         empty="Der er ingen AI-bots endnu.",
     )
+    inactive = [row for row in profiles if not row.get("enabled")]
+    if inactive:
+        st.markdown("#### Aktivér AI-bot")
+        inactive_labels = {
+            f"{row.get('display_name') or row['bot_profile_id']} · {row['bot_profile_id']}": row
+            for row in inactive
+        }
+        selected_inactive = st.selectbox(
+            "Inaktiv AI-bot", list(inactive_labels), key="activate-bot-profile"
+        )
+        if st.button("Aktivér AI-bot", key="activate-bot-profile-submit"):
+            profile = inactive_labels[selected_inactive]
+            try:
+                _post(
+                    client,
+                    organization_id,
+                    f"{resource_path('profiles')}/{profile['bot_profile_id']}/activate",
+                    {"command_id": f"dashboard-profile-activate-{uuid4()}"},
+                )
+            except DORAPIError as exc:
+                st.error(_human_error(exc, "aktivere AI-botten"))
+            else:
+                st.success("AI-botten er aktiveret.")
+                st.rerun()
     active = [
         row
         for row in deployments
