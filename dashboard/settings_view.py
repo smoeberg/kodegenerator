@@ -7,6 +7,7 @@ from typing import Any, Literal, Mapping
 import streamlit as st
 
 from dashboard.api_client import DORAPIClient, DORAPIError
+from dashboard.editable_forms import render_editable_forms
 from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
 from dashboard.redmine_integration import render_redmine_integration
 
@@ -367,7 +368,7 @@ def render_settings(client: DORAPIClient) -> None:
         '<div class="subtitle">Organisation, brugere, projekter, integrationer og systemstatus i den samme Operator GUI.</div>',
         unsafe_allow_html=True,
     )
-    tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Redmine", "System", "AI & Governance"])
+    tabs = st.tabs(["Organisationer", "Brugere", "Projekter", "Formularer", "Redmine", "System", "AI & Governance"])
     with tabs[0]:
         _render_organization_settings(client)
     with tabs[1]:
@@ -375,9 +376,11 @@ def render_settings(client: DORAPIClient) -> None:
     with tabs[2]:
         _render_project_settings(client)
     with tabs[3]:
-        render_redmine_integration(client)
+        render_editable_forms(client)
     with tabs[4]:
-        _render_system_settings(client)
+        render_redmine_integration(client)
     with tabs[5]:
+        _render_system_settings(client)
+    with tabs[6]:
         organization_id = str(st.session_state.get("organization_id") or "").strip()
         render_multi_bot_control_plane(client, organization_id)
