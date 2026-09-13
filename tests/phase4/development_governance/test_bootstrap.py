@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from phase4.development_governance.__main__ import production_registry
+from phase4.development_governance.__main__ import _runtime, production_registry
 from phase4.development_governance.bootstrap import (
     ROLE_NAMES,
     GovernanceAuditLog,
@@ -209,6 +209,19 @@ def test_production_composition_registers_required_runtime_factories(tmp_path: P
         config, runtime_builder=lambda workspace, materialize: (object(), object())
     )
     assert registry.factory_names == ("governed_execution", "governed_llm")
+
+
+def test_governance_runtime_accepts_mistral_base_url_and_model_override(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "mistral-test-key")
+    monkeypatch.setenv("DOR_GOVERNANCE_LLM_BASE_URL", "https://api.mistral.ai/v1")
+    monkeypatch.setenv("DOR_GOVERNANCE_LLM_MODEL", "mistral-large-latest")
+
+    runtime = _runtime(
+        RoleBinding("logical.product_owner", "governed_llm", "fallback", "v1", "0" * 64)
+    )
+
+    assert runtime._provider.model == "mistral-large-latest"
+    assert runtime._provider.base_url == "https://api.mistral.ai/v1"
 
 
 def _approved_change(path: str = "change.py"):
