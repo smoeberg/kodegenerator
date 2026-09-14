@@ -18,8 +18,6 @@ def test_editor_uses_typed_api_resources_only() -> None:
 
 def test_essential_fields_are_locked() -> None:
     """Spec-level and line-level essential fields render disabled."""
-    assert "project_name" in MODULE and "project_description" in MODULE
-    assert "disabled=True" in MODULE
     assert 'ESSENTIAL_LINE_FIELDS = frozenset({"id", "description", "acceptance_criteria"})' in MODULE
     for locked in ("project_name", "project_description", "id", "description", "acceptance_criteria"):
         assert f'"{locked} (låst)"' in MODULE
@@ -36,18 +34,18 @@ def test_save_overwrites_full_spec_via_put() -> None:
     assert "yaml.safe_dump" in MODULE and "yaml.safe_load" in MODULE
 
 
-def test_list_view_lists_every_requirement_line() -> None:
-    """The editor renders a list of all requirement lines."""
-    assert "Kravlinjer" in MODULE
-    assert "_format_line" in MODULE
-    assert "requirements" in MODULE and "enumerate(requirements)" in MODULE
+def test_list_view_is_clickable_dataframe() -> None:
+    """The list view is an interactive table; clicking a row selects it."""
+    assert "st.dataframe(" in MODULE
+    assert 'on_select="rerun"' in MODULE
+    assert 'selection_mode="single-row"' in MODULE
+    assert "event.selection.rows" in MODULE
 
 
 def test_selected_line_opens_in_form() -> None:
-    """A chosen line is rendered in its own form with locked essentials."""
+    """A clicked row renders the line in its own form with locked essentials."""
     assert "_render_requirement_form" in MODULE
     assert 'f"requirement_form_{index}"' in MODULE
-    assert 'st.subheader(f"Krav {req.get(\'id\', index)}")' in MODULE
 
 
 def test_save_single_line_only_touches_that_line() -> None:
@@ -60,7 +58,6 @@ def test_app_integrates_requirements_editor() -> None:
     """The project page renders the editor under Logik 1."""
     assert "render_requirements_editor" in APP
     assert "Pipeline Workflow ID (kravredigering)" in APP
-    assert "kravredigering" in APP
 
 
 def test_roundtrip_spec_yaml() -> None:

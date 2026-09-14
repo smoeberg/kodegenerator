@@ -65,17 +65,6 @@ def is_editable(state: str) -> bool:
 LINE_KEY = "selected_requirement_index"
 
 
-def _format_line(req: Mapping[str, Any]) -> str:
-    """One-line summary of a requirement for the list view."""
-    rid = req.get("id", "?")
-    desc = str(req.get("description", "")).strip()
-    extras = [
-        f"{k}={req[k]}" for k in sorted(req) if k not in ESSENTIAL_LINE_FIELDS
-    ]
-    extra = f" ({', '.join(extras)})" if extras else ""
-    return f"**{rid}** — {desc}{extra}"
-
-
 def render_requirements_editor(
     client: DORAPIClient, workflow_id: str, org_id: str, state: str
 ) -> None:
@@ -98,20 +87,41 @@ def render_requirements_editor(
         return
 
     st.caption(
-        "Åbn en kravlinje i formularen, rediger de ikke-essentielle felter "
-        "og gem. Ved gem overskrives specifikationen via API'et."
+        "Klik på en kravlinje for at åbne den i formularen, rediger de "
+        "ikke-essentielle felter og gem. Ved gem overskrives specifikationen via API'et."
     )
 
-    options = {str(idx): _format_line(req) for idx, req in enumerate(requirements)}
-    choice = st.selectbox(
-        "Kravlinjer",
-        options=[str(i) for i in range(len(requirements))],
-        format_func=lambda key: options[key],
-        index=st.session_state.get(LINE_KEY, 0),
-        key=LINE_KEY,
+    import pandas as pd
+
+    table = pd.DataFrame(
+        [
+            {
+                "Linje": idx,
+                "ID": str(req.get("id", "")),
+                "Beskrivelse": str(req.get("description", "")),
+                "Ikke-essentielle": ", ".join(
+                    f"{k}" for k in sorted(req) if k not in ESSENTIAL_LINE_FIELDS
+                ),
+            }
+            for idx, req in enumerate(requirements)
+        ]
     )
-    selected = int(choice)
-    _render_requirement_form(client, workflow_id, org_id, spec, requirements, selected)
+    event = st.dataframe(
+        table,
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="requirement_list",
+    )
+    if event.selection.rows:
+        selected = int(event.selection.rows[0])
+        st.session_state[LINE_KEY] = selected
+        _render_requirement_form(client, workflow_id, org_id, spec, requirements, selected)
+    elif LINE_KEY in st.session_state:
+        selected = int(st.session_state[LINE_KEY])
+        if 0 <= selected < len(requirements):
+            _render_requirement_form(client, workflow_id, org_id, spec, requirements, selected)
     _render_spec_level_editor(client, workflow_id, org_id, spec)
 
 
