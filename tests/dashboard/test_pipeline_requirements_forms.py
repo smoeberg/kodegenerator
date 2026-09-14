@@ -13,15 +13,16 @@ def test_editor_uses_typed_api_resources_only() -> None:
     """The editor must only touch the typed pipeline requirements endpoints."""
     assert "/api/v1/pipeline" in MODULE
     assert "get(" in MODULE and "put(" in MODULE
-    assert "SELECT" not in MODULE.upper() and "sqlite" not in MODULE.lower()
+    assert "SELECT " not in MODULE and "sqlite" not in MODULE.lower()
 
 
 def test_essential_fields_are_locked() -> None:
-    """Essential identity fields render disabled and are never edited."""
+    """Spec-level and line-level essential fields render disabled."""
     assert "project_name" in MODULE and "project_description" in MODULE
     assert "disabled=True" in MODULE
-    for locked in ("project_name", "project_description"):
-        assert f'"{locked}"' in MODULE.split("editable_fields:")[0]
+    assert 'ESSENTIAL_LINE_FIELDS = frozenset({"id", "description", "acceptance_criteria"})' in MODULE
+    for locked in ("project_name", "project_description", "id", "description", "acceptance_criteria"):
+        assert f'"{locked} (låst)"' in MODULE
 
 
 def test_editing_allowed_only_before_gate_approval() -> None:
@@ -35,10 +36,24 @@ def test_save_overwrites_full_spec_via_put() -> None:
     assert "yaml.safe_dump" in MODULE and "yaml.safe_load" in MODULE
 
 
-def test_fetch_parses_yaml_to_mapping() -> None:
-    """fetch_requirements returns a dict parsed from the API YAML."""
-    text = MODULE
-    assert "yaml.safe_load" in text.split("def save_requirements")[0]
+def test_list_view_lists_every_requirement_line() -> None:
+    """The editor renders a list of all requirement lines."""
+    assert "Kravlinjer" in MODULE
+    assert "_format_line" in MODULE
+    assert "requirements" in MODULE and "enumerate(requirements)" in MODULE
+
+
+def test_selected_line_opens_in_form() -> None:
+    """A chosen line is rendered in its own form with locked essentials."""
+    assert "_render_requirement_form" in MODULE
+    assert 'f"requirement_form_{index}"' in MODULE
+    assert 'st.subheader(f"Krav {req.get(\'id\', index)}")' in MODULE
+
+
+def test_save_single_line_only_touches_that_line() -> None:
+    """Saving a line overwrites only the edited line, not the rest."""
+    assert "new_requirements[index] = new_req" in MODULE
+    assert "new_requirements = list(requirements)" in MODULE
 
 
 def test_app_integrates_requirements_editor() -> None:

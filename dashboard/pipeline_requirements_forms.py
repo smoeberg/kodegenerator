@@ -20,6 +20,9 @@ REQUIREMENTS_PATH = "/api/v1/pipeline"
 # Fields the backend treats as the essential identity of the spec.
 ESSENTIAL_FIELDS = frozenset({"project_name", "project_description"})
 
+# Fields the backend treats as the essential identity of one requirement line.
+ESSENTIAL_LINE_FIELDS = frozenset({"id", "description", "acceptance_criteria"})
+
 
 def fetch_requirements(client: DORAPIClient, workflow_id: str, org_id: str) -> dict[str, Any]:
     """GET the requirements YAML and parse it into a spec dict."""
@@ -59,10 +62,24 @@ def is_editable(state: str) -> bool:
     return state in ("REQUIREMENTS_DRAFT", "REQUIREMENTS_VALIDATED")
 
 
+LINE_KEY = "selected_requirement_index"
+
+
+def _format_line(req: Mapping[str, Any]) -> str:
+    """One-line summary of a requirement for the list view."""
+    rid = req.get("id", "?")
+    desc = str(req.get("description", "")).strip()
+    extras = [
+        f"{k}={req[k]}" for k in sorted(req) if k not in ESSENTIAL_LINE_FIELDS
+    ]
+    extra = f" ({', '.join(extras)})" if extras else ""
+    return f"**{rid}** — {desc}{extra}"
+
+
 def render_requirements_editor(
     client: DORAPIClient, workflow_id: str, org_id: str, state: str
 ) -> None:
-    """Render the requirements spec as editable lines."""
+    """List the requirements; open one line in a form; edit and save."""
     if not is_editable(state):
         st.info(
             "Kravene er låst: requirements-gaten er godkendt. "
@@ -75,41 +92,129 @@ def render_requirements_editor(
         st.error(f"Kunne ikke hente krav: {exc}")
         return
 
+    requirements = spec.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        st.error("Specifikationen indeholder ingen kravlinjer.")
+        return
+
     st.caption(
-        "Essentielle felter er låst. Rediger de øvrige felter og gem. "
-        "Ved gem overskrives hele krav-specifikationen via API'et."
+        "Åbn en kravlinje i formularen, rediger de ikke-essentielle felter "
+        "og gem. Ved gem overskrives specifikationen via API'et."
     )
 
-    with st.form("pipeline_requirements_form"):
-        project_name = st.text_input(
-            "Projektnavn (låst)", value=str(spec.get("project_name", "")), disabled=True
-        )
-        project_description = st.text_area(
-            "Projektbeskrivelse (låst)",
-            value=str(spec.get("project_description", "")),
+    options = {str(idx): _format_line(req) for idx, req in enumerate(requirements)}
+    choice = st.selectbox(
+        "Kravlinjer",
+        options=[str(i) for i in range(len(requirements))],
+        format_func=lambda key: options[key],
+        index=st.session_state.get(LINE_KEY, 0),
+        key=LINE_KEY,
+    )
+    selected = int(choice)
+    _render_requirement_form(client, workflow_id, org_id, spec, requirements, selected)
+    _render_spec_level_editor(client, workflow_id, org_id, spec)
+
+
+def _render_requirement_form(
+    client: DORAPIClient,
+    workflow_id: str,
+    org_id: str,
+    spec: dict[str, Any],
+    requirements: list[Any],
+    index: int,
+) -> None:
+    """Edit one requirement line: essential fields locked, others editable."""
+    req = requirements[index]
+    st.subheader(f"Krav {req.get('id', index)}")
+    with st.form(f"requirement_form_{index}"):
+        st.text_input("id (låst)", value=str(req.get("id", "")), disabled=True)
+        st.text_area(
+            "description (låst)",
+            value=str(req.get("description", "")),
             disabled=True,
         )
-        editable_fields: dict[str, str] = {}
-        for key in sorted(k for k in spec if k not in ESSENTIAL_FIELDS):
-            value = spec[key]
+        st.text_area(
+            "acceptance_criteria (låst)",
+            value=str(req.get("acceptance_criteria", "")),
+            disabled=True,
+        )
+        editable: dict[str, str] = {}
+        for key in sorted(k for k in req if k not in ESSENTIAL_LINE_FIELDS):
+            value = req[key]
             if isinstance(value, (dict, list)):
                 rendered = yaml.safe_dump(value, allow_unicode=True, sort_keys=False).strip()
-                editable_fields[key] = st.text_area(key, value=rendered, height=120)
+                editable[key] = st.text_area(key, value=rendered, height=100)
             else:
-                editable_fields[key] = st.text_input(key, value=str(value))
-        saved = st.form_submit_button("Gem krav")
-
-    if not saved:
-        return
-    new_spec = dict(spec)
-    for key, value in editable_fields.items():
+                editable[key] = st.text_input(key, value=str(value))
+        if not st.form_submit_button("Gem linje"):
+            return
+    new_req = dict(req)
+    for key, value in editable.items():
         if not value.strip():
-            new_spec[key] = spec[key]
+            continue
+        try:
+            new_req[key] = yaml.safe_load(value)
+        except yaml.YAMLError:
+            new_req[key] = value
+    new_spec = dict(spec)
+    new_requirements = list(requirements)
+    new_requirements[index] = new_req
+    new_spec["requirements"] = new_requirements
+    _save_spec(client, workflow_id, org_id, spec, new_spec)
+
+
+def _render_spec_level_editor(
+    client: DORAPIClient, workflow_id: str, org_id: str, spec: dict[str, Any]
+) -> None:
+    """Edit the spec-level non-essential fields (project identity is locked)."""
+    with st.expander("Spec-niveau felter"):
+        with st.form("spec_level_form"):
+            st.text_input(
+                "project_name (låst)",
+                value=str(spec.get("project_name", "")),
+                disabled=True,
+            )
+            st.text_area(
+                "project_description (låst)",
+                value=str(spec.get("project_description", "")),
+                disabled=True,
+            )
+            editable: dict[str, str] = {}
+            for key in sorted(k for k in spec if k not in ESSENTIAL_FIELDS):
+                if key == "requirements":
+                    continue
+                value = spec[key]
+                if isinstance(value, (dict, list)):
+                    rendered = yaml.safe_dump(
+                        value, allow_unicode=True, sort_keys=False
+                    ).strip()
+                    editable[key] = st.text_area(key, value=rendered, height=100)
+                else:
+                    editable[key] = st.text_input(key, value=str(value))
+            if not st.form_submit_button("Gem spec-niveau"):
+                return
+    new_spec = dict(spec)
+    for key, value in editable.items():
+        if not value.strip():
             continue
         try:
             new_spec[key] = yaml.safe_load(value)
         except yaml.YAMLError:
             new_spec[key] = value
+    _save_spec(client, workflow_id, org_id, spec, new_spec)
+
+
+def _save_spec(
+    client: DORAPIClient,
+    workflow_id: str,
+    org_id: str,
+    old_spec: dict[str, Any],
+    new_spec: dict[str, Any],
+) -> None:
+    """PUT the full spec and report the outcome."""
+    if new_spec == old_spec:
+        st.info("Ingen ændringer at gemme.")
+        return
     try:
         save_requirements(client, workflow_id, org_id, new_spec)
     except DORAPIError as exc:
