@@ -17,8 +17,9 @@ registry and adapts to whatever runtime it is handed:
 
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict, Optional, Protocol
+import yaml
+from datetime import datetime, timezone
+from typing import Any, Dict, Mapping, Optional, Protocol
 
 from domain.pipeline_states import PipelineState
 from domain.pipeline_task_mapping import PipelineTaskMapping
@@ -216,6 +217,49 @@ class PipelineOrchestrator:
             "Pipeline %s started (state=%s)", workflow.id, workflow.current_state
         )
         return workflow.id
+
+    def get_requirements(self, workflow_id: str) -> Dict[str, Any]:
+        """Return the requirements spec currently bound to a pipeline."""
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        requirements = (workflow.context or {}).get("requirements")
+        if not isinstance(requirements, Mapping):
+            raise ValueError("Pipeline has no requirements")
+        return dict(requirements)
+
+    def update_requirements(self, workflow_id: str, requirements_yaml: str) -> Dict[str, Any]:
+        """Replace the requirements spec of a pipeline in REQUIREMENTS_DRAFT.
+
+        Validates the exact same way as pipeline start and persists the
+        snapshot. Fail-closed: the pipeline is untouched if parsing or
+        validation fails.
+        """
+        workflow = self._get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"Pipeline {workflow_id} not found")
+        state_value = getattr(workflow.current_state, "value", workflow.current_state)
+        if state_value not in (
+            PipelineState.REQUIREMENTS_DRAFT.value,
+            PipelineState.REQUIREMENTS_VALIDATED.value,
+        ):
+            raise ValueError(
+                "Pipeline requirements kan kun redigeres foer requirements-gate godkendelse"
+            )
+        try:
+            spec = yaml.safe_load(requirements_yaml)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML: {exc}")
+        if not isinstance(spec, dict):
+            raise ValueError("Empty or invalid YAML content")
+        self._adapter._validate_spec(spec)
+        workflow.context["requirements"] = spec
+        workflow.context["project_name"] = spec.get("project_name")
+        workflow.context["requirements_version"] = spec.get("version", "1.0")
+        workflow.updated_at = datetime.now(timezone.utc)
+        self._persist()
+        logger.info("Pipeline %s requirements updated", workflow_id)
+        return dict(spec)
 
     def get_pipeline_status(self, workflow_id: str) -> Dict[str, Any]:
         workflow = self._get_workflow(workflow_id)

@@ -19,6 +19,7 @@ from dashboard.context_navigation import render_context_navigation
 from dashboard.evidence_trace import render_evidence_trace
 from dashboard.multi_bot_control_plane import render_multi_bot_control_plane
 from dashboard.operator_overview import render_operator_overview
+from dashboard.pipeline_requirements_forms import render_requirements_editor
 from dashboard.realtime import WorkflowRealtime
 from dashboard.redmine_integration import render_redmine_integration
 from dashboard.state import authenticated, clear_auth, init_state
@@ -294,6 +295,32 @@ def project_page(client: DORAPIClient) -> None:
                     st.json(events)
         except DORAPIError as exc:
             st.warning(f"Projekt kunne ikke hentes ({exc.status_code}): {exc}")
+
+    workflow_id = st.text_input(
+        "Pipeline Workflow ID (kravredigering)",
+        value=st.session_state.get("requirements_workflow_id", ""),
+    )
+    if workflow_id.strip():
+        st.session_state["requirements_workflow_id"] = workflow_id.strip()
+        _render_pipeline_requirements(client, workflow_id.strip(), organization_id)
+
+
+def _render_pipeline_requirements(
+    client: DORAPIClient, workflow_id: str, organization_id: str
+) -> None:
+    """Load pipeline state and delegate to the requirements editor."""
+    try:
+        status_response = client.get(
+            f"/api/v1/pipeline/{workflow_id}",
+            params={"organization_id": organization_id},
+        )
+    except DORAPIError as exc:
+        st.warning(f"Pipeline kunne ikke hentes ({exc.status_code}): {exc}")
+        return
+    state = str(status_response.get("state") or status_response.get("status") or "")
+    st.subheader(f"Krav for pipeline {workflow_id}")
+    st.caption(f"Pipeline-tilstand: {state or 'ukendt'}")
+    render_requirements_editor(client, workflow_id, organization_id, state)
 
 
 def development_page(client: DORAPIClient) -> None:

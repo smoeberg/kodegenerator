@@ -42,3 +42,14 @@ class PipelineListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class RequirementsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    workflow_id: str
+    requirements_yaml: str
+
+
+class UpdateRequirementsRequest(BaseModel):
+    requirements_yaml: str
