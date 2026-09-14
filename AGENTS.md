@@ -67,6 +67,26 @@ ProblemBrief
 The Human Owner is not the normal prompt router or scheduler for these roles.
 `GovernanceCoordinator` owns sequencing once distinct role providers are bound.
 
+### Provider-neutral governance resolution
+
+Governance roles (GovernanceCoordinator, Product Owner, Orchestrator, Coder,
+Auditor, Independent Reviewer) resolve their LLM provider through the
+provider-neutral connection model, never through OpenAI-specific configuration:
+
+- `GovernanceCoordinator` uses the tenant-configured provider connection
+  (for example `mistral-eu-01`).
+- The API key is resolved internally via `BotProviderCredentialStore`; it is
+  never an environment-variable contract.
+- Provider, endpoint, and model come from the Bot Catalog, not from process
+  environment variables.
+- `OPENAI_API_KEY` must not be required for governance. OpenAI remains one
+  possible provider, not a system dependency.
+- Coders and the four governance roles use the same provider-neutral
+  resolution path.
+- The five roles retain separate logical provider identities (`provider_id`
+  must remain pairwise distinct in governance bootstrap).
+- Credentials must never be returned to the GUI, logs, or audit output.
+
 A semantic change is any change to domain meaning, lifecycle/state transitions,
 persisted meaning, consistency or concurrency guarantees, dependency semantics,
 authority boundaries, acceptance invariants, explicit non-goals, or approved
