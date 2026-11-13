@@ -16,6 +16,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import jwt
 from fastapi import (
     APIRouter,
     Depends,
@@ -26,7 +27,6 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
-from jose import JWTError, jwt
 from starlette.websockets import WebSocketState
 
 from api.auth import (
@@ -74,7 +74,7 @@ def _purge_expired_sessions() -> None:
 def _token_key_id(token: str) -> str:
     try:
         key_id = jwt.get_unverified_header(token).get("kid")
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Could not validate credentials") from exc
     if not isinstance(key_id, str) or not key_id:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
