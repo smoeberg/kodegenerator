@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
+import jwt
 import pytest
 from fastapi import HTTPException
-from jose import jwt
 
 import api.auth as auth
 from services.jwt_keyring import JWTKeyConfigurationError, JWTKeyRing

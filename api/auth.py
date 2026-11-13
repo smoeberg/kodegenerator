@@ -22,8 +22,9 @@ from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel
+
+import jwt
 
 from infrastructure.runtime.db import build_session_factory
 from services.identity_store import IdentityStore
@@ -307,7 +308,7 @@ def authenticate_access_token(token: str) -> User:
         username = payload.get("sub")
         if not isinstance(username, str) or not username.strip():
             raise credentials_exception
-    except (JWTError, JWTKeyRejectedError) as exc:
+    except (jwt.PyJWTError, JWTKeyRejectedError) as exc:
         raise credentials_exception from exc
     user = get_configured_user(username=username)
     if user is None or user.disabled:
