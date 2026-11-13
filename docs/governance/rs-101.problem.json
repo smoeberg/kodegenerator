@@ -1,0 +1,64 @@
+{
+  "problem_id": "RS-101",
+  "version": 1,
+  "title": "Requirement Steward multi-agent function deliberation",
+  "observed_problem": "docs/CURRENT_STATE.json identifies requirement_steward_multi_agent_function_deliberation as the only canonical open work item. Current-main discovery found no existing canonical RequirementSteward symbol. DOR already contains the adjacent primitives that must constrain any solution: provider-neutral Council deliberation and routing; immutable/fingerprinted Council role definitions, stage templates and allocation pools; durable Council session provenance bound to organization/context/revisions; formal dispute/dissent representation; the canonical Agent Registry; the general orchestrator boundary; and Governance v0 distinct-role routing. What is not represented as a verified canonical boundary is a Requirement Steward capability that takes one exact identified requirement/problem question, obtains bounded multi-agent perspectives through the existing deliberation machinery, preserves the provenance and disagreement behind those perspectives, and emits a non-authoritative advisory artifact that downstream governance/design can inspect.",
+  "impact": "Without a canonical boundary, cross-functional requirement interpretation can become ad hoc or single-agent, provenance for perspectives can be lost, dissent can be flattened into an opaque synthesis, and downstream design/governance can receive an interpretation that is difficult to bind back to the exact input and deliberation evidence.",
+  "evidence_refs": [
+    "docs/CURRENT_STATE.json",
+    "phase4/council/orchestrator.py",
+    "phase4/council/configuration.py",
+    "phase4/council/roles.py",
+    "phase4/council/models.py",
+    "phase4/council/runtime_models.py",
+    "phase4/agent_registry/registry.py",
+    "phase4/orchestrator/engine.py",
+    "phase4/development_governance/coordinator.py",
+    "phase4/development_governance/bootstrap.py",
+    "docs/GOVERNANCE_V0.md",
+    "AGENTS.md"
+  ],
+  "affected_concepts": [
+    "Council deliberation and provider routing",
+    "Agent Registry identity and capability declarations",
+    "Development Governance v0 role separation and routing",
+    "Provenance, fingerprints, and immutable evidence",
+    "Requirement interpretation and acceptance inputs",
+    "Authority and execution boundaries"
+  ],
+  "constraints": [
+    "Reuse the canonical Council provider-neutral deliberation primitives and canonical Agent Registry; do not create a parallel agent/provider stack.",
+    "Do not create a second scheduler, Authority engine, GovernanceCoordinator, or generic orchestration system.",
+    "Requirement deliberation is advisory/evidence-producing only. It must not authorize, approve scope, mutate project state, or execute work.",
+    "Preserve exact immutable input identity and the Council configuration/provider-binding identities used for the run.",
+    "Preserve role/provider attribution, evidence references, and material dissent/disputes; synthesis must not erase disagreement provenance.",
+    "Artifact identity must bind its captured immutable contents; do not assume stochastic model runs produce identical outputs from identical prompts.",
+    "Missing, invalid, disabled, or incompatible role/provider bindings must fail closed through existing allocation/routing rules.",
+    "Preserve Governance v0 separation between Product Owner, Orchestrator, Coder, Auditor and Independent Reviewer.",
+    "Human Owner must not become a routine prompt router for deliberation roles.",
+    "Reuse existing durable Council/session persistence where it satisfies the approved design. If new durable meaning or schema is required, design must return through the semantic gate before adding persistence/migrations.",
+    "Preserve organization/project/context binding wherever the source requirement already carries those identities."
+  ],
+  "non_goals": [
+    "no majority-vote authority",
+    "no automatic requirement approval or scope mutation",
+    "no autonomous implementation or execution",
+    "no replacement of Product Owner, GovernanceCoordinator, Auditor or Independent Reviewer",
+    "no arbitrary self-spawning agents",
+    "no second provider/agent registry",
+    "no second generic orchestrator or scheduler",
+    "no persistent dependency/decision graph",
+    "no project lifecycle changes",
+    "no GUI authority",
+    "no database migration in v1 unless a later approved design proves it necessary and explicitly gates it"
+  ],
+  "proposed_scope": [
+    "Define a Requirement Steward application/service boundary that, using existing canonical primitives where possible, accepts one immutable, identified requirement/problem/function question plus bounded context/evidence references.",
+    "Resolve a bounded, approved Council role/template/allocation configuration rather than inventing agents at runtime.",
+    "Run provider-neutral Council deliberation with frozen provenance bindings.",
+    "Preserve attributable turns, evidence references and material disputes/dissent.",
+    "Expose a content-addressed advisory deliberation result (reusing/extending an existing Council artifact if sufficient, introducing only the minimum wrapper if design proves one is required).",
+    "Bind downstream consumption to the exact input and deliberation provenance.",
+    "Have no Authority or Execution capability and cannot mutate approved scope."
+  ]
+}
