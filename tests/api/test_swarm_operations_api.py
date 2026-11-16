@@ -10,13 +10,20 @@ os.environ.setdefault("DOR_ENV", "test")
 os.environ.setdefault("DOR_ADMIN_USERNAME", "admin")
 os.environ.setdefault("DOR_ADMIN_PASSWORD", "admin")
 
+import pytest
 from fastapi.testclient import TestClient
 
-from api.auth import User
+from api.auth import User, bootstrap_configured_admin
 from api.endpoints import swarm_operations
 from api.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_admin():
+    bootstrap_configured_admin()
+    yield
 
 
 def _auth_token() -> str:
