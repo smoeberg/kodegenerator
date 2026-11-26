@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StartPipelineRequest(BaseModel):
@@ -28,6 +28,9 @@ class PipelineStatusResponse(BaseModel):
     tasks: list[TaskStatusResponse]
     error: str | None
     context: dict[str, Any]
+    # Job records (completion plan, step 1); see
+    # docs/PIPELINE_PROVENANCE_AND_JOB_RECORDS.md.
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 class PipelineListItem(BaseModel):
     workflow_id: str

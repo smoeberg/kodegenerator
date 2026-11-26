@@ -60,7 +60,11 @@ class PipelineAwareQueue:
         # context required by the claimed database task.
         if isinstance(self._queue, DatabaseSwarmTaskQueue):
             self._orchestrator._restore()
-        return self._queue.claim_next_task(agent_id, capabilities)
+        claimed = self._queue.claim_next_task(agent_id, capabilities)
+        task_id = getattr(claimed, "task_id", None)
+        if task_id and task_id in self._orchestrator._tasks:
+            self._orchestrator.record_job_started(task_id, agent_id)
+        return claimed
 
     def heartbeat(self, task_id: str, agent_id: str) -> None:
         self._queue.heartbeat(task_id, agent_id)
@@ -100,6 +104,11 @@ class PipelineAwareQueue:
             else TaskStatus.FAILED
         )
         self._orchestrator._tasks[task_id] = domain_task
+        self._orchestrator.record_job_failed(
+            task_id,
+            error,
+            retrying=domain_task.status == TaskStatus.RETRYING,
+        )
 
         metadata = dict(domain_task.metadata or {})
         gate_id = str(metadata.get("rework_gate_id") or "")
