@@ -61,8 +61,11 @@ Key consequences for agents working on the completion:
 - Every artifact carries the requirement ids and the requirement
   specification version it was derived from; every agent job gets a job
   record.
-- Code is collected in milestone branches; only a milestone branch goes to
-  `main`, after human approval.
+- `main` is the shared foundation. Code is collected in short-lived
+  milestone branches that are rebased onto the latest `main` at every sprint
+  start; only a milestone branch goes to `main`, after human approval. Every
+  work package is bound to a commit, a requirements revision, and a contract
+  version, and is rebased and re-checked when any of them becomes stale.
 - Governance v0 (below) is relaxed for the completion work: the Human Owner
   approves scope and solution through the pull request, and the full
   ProblemBrief role sequence is not required. Tenant isolation, authority

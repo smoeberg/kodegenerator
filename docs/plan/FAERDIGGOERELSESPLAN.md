@@ -1,6 +1,8 @@
 # DOR – plan for færdiggørelse
 
-Version 9 · 26. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+Version 10 · 26. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+
+Nyt i version 10: milestone-branchen er kortlivet og genbaseres på den nyeste `main` ved hver sprintstart, og hver arbejdspakke bindes til commit, kravspec-revision og kontraktversion (beslutning 34 og afsnittet "Milestone-branches").
 
 Nyt i version 9: første gennemløb af hele kæden efter trin 8 (beslutning 33, afsnittet "Første gennemløb" og trin 8a). Testisolationen er løst (#292).
 
@@ -16,7 +18,7 @@ Forløbet er en lukket sløjfe, ikke en linje. DOR er styringslaget: det styrer 
 
 Analysen er lavet mod `smoeberg/kodegenerator`, branch `main`, commit `98449e2`, Alembic-head `036_runtime_settings`. Lokalt bestod 2.425 tests og 3 fejlede. De tre ligger i `test_swarm_operations_api.py` og består, når filen køres alene; de fejler kun sammen med de øvrige API-tests, fordi login med standard-administratoren afvises. Det peger på, at testene deler tilstand, og ikke på en fejl i produktet. E2E-, phase6- og acceptance-suiterne er ikke kørt.
 
-Status 26. november 2026: #292 er flettet (main `bb22186`). Standard-administratoren sættes nu op i en fælles `tests/conftest.py`, og hele suiten består lokalt med 2.473 beståede og 15 oversprungne. #293 (OpenTelemetry-sårbarhed) og #294 (CI-artefakter og CodeQL) venter på fletning. Selve koden er ellers uændret siden analysen.
+Status 26. november 2026: #292 (testisolation), #293 (OpenTelemetry-sårbarhed) og #294 (CI-artefakter og CodeQL) er flettet, og CI er grøn. Standard-administratoren sættes nu op i en fælles `tests/conftest.py`. Første del af trin 1, kravspec-revision og jobposter, ligger i #296.
 
 Byggeklodserne findes og er testet hver for sig. Sammenkoblingen til ét forløb fra kravspec til færdigt system er ikke påbegyndt.
 
@@ -42,7 +44,7 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 3. Målstakken styres af kravspec'en.
 4. Governance v0 lempes for trin 2–9. Tenant-isolation og authority-grænser står urørt.
 5. Efter kodning kommer kontrol i to niveauer, med faktakontrol forud.
-6. Kode samles i milestone-branches, ikke i én branch pr. leverance mod main.
+6. Kode samles i kortlivede milestone-branches, ikke i én branch pr. leverance mod main (se beslutning 34).
 7. Fejler niveau 2, går koden tilbage til koderen højst to gange og derefter til mennesket.
 8. Hver milestone godkendes af et menneske, før den går til main.
 9. Udviklingsreglerne skal defineres (se `docs/plan/HUSREGLER_V1_UDKAST.md`).
@@ -70,6 +72,7 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 31. Streg i sandet: hvordan repoet er blevet til, bruges der ikke tid på. Det, der ligger der, bedømmes kun på, om det fungerer sammen med resten.
 32. Under sammenbygningen skal vi være skarpe på, hvad der fungerer sammen, og hurtigt kassere og skrive nyt, når det er bedst.
 33. Hele kæden køres igennem første gang, så snart trin 3–8 er koblet sammen: husregel-registeret med to arbejdere parallelt på samme fundament. Kørslen er en måling af, om agenternes kode passer sammen, ikke en leverance og ikke en stopregel.
+34. `main` er det fælles fundament. Milestone-branchen lever kun, mens milestonen kører, og genbaseres på den nyeste `main` ved hver sprintstart, så den højst er én dag bagud. Hver arbejdspakke bindes til en commit, en kravspec-revision og en kontraktversion; bliver én af dem forældet, genbaseres og genkontrolleres pakken i stedet for at arbejde videre. Godkendelsen før `main` (beslutning 8) og kassering af en dagssprint (beslutning 18) bevares.
 
 ## Arkitektur: styringslag over færdige agenter
 
@@ -264,7 +267,7 @@ Fordi agenter ikke er en knap ressource, kan samme arbejdspakke gives til flere 
 
 | Tidspunkt | Hvad sker der |
 |---|---|
-| Sprintstart | Godkendte ændringer af opdraget træder i kraft; alle led kvitterer; dagens arbejdspakker frigives efter skaleringsplanen |
+| Sprintstart | Milestone-branchen genbaseres på den nyeste `main`, og hele suiten køres; godkendte ændringer af opdraget træder i kraft; alle led kvitterer; dagens arbejdspakker frigives efter skaleringsplanen |
 | I løbet af sprinten | Agenter leverer arbejdspakker; faktakontrol, niveau 1 og niveau 2 pr. pakke; fletning til milestone-branchen |
 | Sprintslut | Opdragskontrol på milestone-branchen; projektassistentens dagsrapport med afvigelser og indstillinger |
 | Eftersyn | Projektlederen godkender, retter eller kasserer; retrospektiv giver eventuelle regelforslag |
@@ -466,15 +469,21 @@ En anden bot end koderen, og fra en anden modelfamilie, vurderer koden mod kravs
 
 ## Milestone-branches
 
-Problemet med forældede branches følger af, at hver opgave bindes til én præcis base-commit, og at en ændret base ugyldiggør opgavens beviser.
+Problemet med forældede branches følger af, at hver opgave bindes til én præcis base-commit, og at en ændret base ugyldiggør opgavens beviser. Det forværres, hvis en milestone-branch lever længe, mens `main` flytter sig, fordi branchen så bliver et historisk øjebliksbillede. Det sker, når mennesker eller andre milestones også skriver til `main`, som når DOR udvikler sig selv eller arbejder i en kundes repo.
+
+`main` er derfor det fælles fundament, og en milestone-branch er kun et kortlivet arbejdsområde oven på det.
 
 1. Opgavekompileren grupperer opgaver i milestones og dagssprints, så hver milestone er et kørbart delsystem.
-2. Hver milestone får én branch. Opgave-branches udgår fra dens top og lever højst én sprint.
-3. Parallelle opgaver får adskilte filer; overlappende opgaver køres efter hinanden.
-4. Flytter milestone-toppen sig, genbaseres og genkontrolleres en ventende opgave i stedet for at blive kasseret. Det ændrer den nuværende regel.
-5. Hver sprint får et startmærke, så en kasseret sprint kan rulles tilbage.
-6. Kontrakter er frosne inden for en sprint. En ændring af opdraget træder i kraft ved næste sprintstart.
-7. Kun milestone-branchen går til main, efter fuld test, niveau 2 på helheden og projektlederens godkendelse.
+2. Hver milestone får én branch, der kun lever, mens milestonen kører. Opgave-branches udgår fra dens top og lever højst én sprint.
+3. **Ved hver sprintstart genbaseres milestone-branchen på den nyeste `main`**, og hele suiten køres, før dagens pakker frigives. Branchen er dermed højst én dag bagud. Giver genbaseringen konflikter eller fejl, bliver det en undtagelse til projektlederen, før sprinten starter.
+4. **Hver arbejdspakke bindes til tre versioner:** den commit, den starter fra, kravspec-revisionen og kontraktversionen. DOR registrerer alle tre på pakken og jobposten.
+5. Bliver en af de tre versioner forældet, mens pakken er i gang, markeres pakken forældet. Den genbaseres og genkontrolleres i stedet for at blive kasseret eller arbejde videre i stilhed. Det ændrer den nuværende regel.
+6. Parallelle opgaver får adskilte filer; overlappende opgaver køres efter hinanden. Når én pakke er flettet, kontrolleres den næste mod den nye milestone-top og antages ikke at passe.
+7. Hver sprint får et startmærke efter genbaseringen, så en kasseret sprint kan rulles tilbage.
+8. Kontrakter er frosne inden for en sprint. En ændring af opdraget træder i kraft ved næste sprintstart.
+9. Kun milestone-branchen går til `main`, efter fuld test på en revision, der er genbaseret på den nyeste `main`, niveau 2 på helheden og projektlederens godkendelse. Derefter slettes branchen, og milestonen markeres med et tag på `main`.
+
+En ren trunk-model, hvor hver pakke flettes direkte til `main`, er fravalgt, fordi den fjerner godkendelsen før `main` og gør kassering af en dagssprint til revert-commits på `main`. Den kan genovervejes, når kontrollerne har vist, at de kan bære det alene.
 
 ## Plan
 
@@ -487,7 +496,7 @@ Problemet med forældede branches følger af, at hver opgave bindes til én præ
 | 5 | Opgavekompiler | Kontrakter til arbejdspakker pr. milestone og dagssprint med adskilte filer, afhængigheder og opgavetype; kritisk vej; skaleringsplan til godkendelse | Opgavegraf, sprintplan og skaleringsplan |
 | 6 | Arbejder-adapter | Claude Code og Codex uden skærm i afskærmet worktree; kort branch fra milestone-toppen; omsætning af arbejdspakke til Spec Kit-format; jobpost med forbrug | Arbejdspakkers status og forbrug |
 | 7 | Kontrol | Faktakontrol, niveau 1, niveau 2; rework-sløjfe; målinger skrives på jobposten | Kontrolresultater pr. arbejdspakke |
-| 8 | Milestone-branch | Samling, sprintmærker og kassering, fuld test, projektlederens godkendelse, én PR til main | Dagseftersyn og milestone-godkendelse |
+| 8 | Milestone-branch | Kortlivet branch genbaseret på `main` ved sprintstart; binding af pakker til commit, kravspec-revision og kontraktversion med genbasering ved forældelse; samling, sprintmærker og kassering, fuld test, projektlederens godkendelse, én PR til main og tag | Dagseftersyn og milestone-godkendelse |
 | 8a | Første gennemløb | Hele kæden på husregel-registeret med Claude Code og Codex parallelt på samme kontrakter; manuelle trin registreres; målinger af integrationsfejl, kontraktbrud og indgreb (se "Første gennemløb") | Dokumenteret kørsel med målinger |
 | 9 | Opdragskontrol og ændringsløb | Kode mod kravspec begge veje, dagligt og ved main; rework eller ændringsforslag; ny kravspec-version rulles ned gennem alle led med kvittering | Opfyldelse krav for krav; ændringsforslag og konsekvensrapport |
 | 10 | Styring og erfaring | Projektassistent, dagsrapport, tolerancer og undtagelsesrapporter, retrospektiv, regelsløjfe | Dagsrapport, undtagelsesrapporter, husregler og tolerancer |
