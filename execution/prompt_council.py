@@ -120,6 +120,16 @@ def check_prompt(
                 "text",
                 f"the current prompt says {word!r}; the proposal does not",
             )
+    # Placeholders the factory fills in ({allowed_paths}) must survive; new ones
+    # would reach the agent unfilled.
+    placeholder = re.compile(r"\{[a-z_]+\}")
+    before, after = set(placeholder.findall(current)), set(placeholder.findall(text))
+    for name in sorted(before - after):
+        finding(
+            "placeholder_dropped", "text", f"the proposal drops the placeholder {name}"
+        )
+    for name in sorted(after - before):
+        finding("unknown_placeholder", "text", f"the factory does not fill {name}")
     if not str(proposal.get("change_summary") or "").strip():
         finding(
             "no_change_summary",

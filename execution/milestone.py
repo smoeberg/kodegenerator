@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from domain.prompt_registry import prompt
 from domain.role_process import (
     RoleAssignment,
     RoleCatalog,
@@ -81,14 +82,8 @@ _IDENTITY = {
     "GIT_COMMITTER_EMAIL": "milestone@dor.invalid",
 }
 
-WHOLE_LEVEL2_INSTRUCTIONS = """You are the context controller (level 2) for a whole milestone in a governed
-software factory. Every work package has passed its own controls; you now judge the integrated result.
-You see the milestone diff against main, the requirements, the module contracts and the factory's own full
-test run, never any coder's conversation. Judge whether the parts together fulfil the requirements and the
-contracts: interfaces that do not fit, criteria that fall between modules, behaviour nobody asked for.
-Return verdict "approve" or "revise" and findings that point at a changed file ("path" or "path:line"), an
-acceptance criterion id or a requirement id, with severity, issue, requirement ids and cause ("code" or
-"input")."""
+WHOLE_LEVEL2_PROMPT = prompt("context_controller", "check_milestone")
+WHOLE_LEVEL2_INSTRUCTIONS = WHOLE_LEVEL2_PROMPT.text
 
 
 class MilestoneError(RuntimeError):
@@ -855,6 +850,7 @@ class MilestoneRunner:
             organization_id=organization_id,
             actor_id=actor_id,
             run_key=f"{state['milestone_id']}:{head[:12]}:whole",
+            prompt_version=WHOLE_LEVEL2_PROMPT.ref,
         )
         verified, rejected = verify_findings(
             review,

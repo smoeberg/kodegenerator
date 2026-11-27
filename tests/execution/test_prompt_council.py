@@ -128,3 +128,24 @@ def test_fact_check_passes_a_sound_change() -> None:
         )
         == []
     )
+
+
+def test_fact_check_keeps_the_placeholders_the_factory_fills() -> None:
+    role = {"id": "coder", "name": "Koder"}
+    current = PromptRegistry.load().active("coder", "implement_module").text
+    dropped = current.replace("{allowed_paths}", "src")
+    codes = {
+        f["code"]
+        for f in check_prompt(
+            proposal(dropped), {"role": role, "current_prompt": {"text": current}}
+        )
+    }
+    assert "placeholder_dropped" in codes
+    added = current + " See {secret_dir}."
+    codes = {
+        f["code"]
+        for f in check_prompt(
+            proposal(added), {"role": role, "current_prompt": {"text": current}}
+        )
+    }
+    assert "unknown_placeholder" in codes
