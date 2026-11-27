@@ -13,6 +13,10 @@ from dashboard.api_client import DORAPIError
 
 
 APP_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "app.py"
+# Upper bound for one Streamlit script run. A passing run takes well under a
+# second; 5 s made the suite flaky when the machine was busy (CI, parallel
+# worktree tests). The bound only matters when a run is slow, not when it fails.
+APP_RUN_TIMEOUT = 30
 PROJECT_PAGE = "🏗️ Logik 1: Projekt & Krav"
 DEVELOPMENT_PAGE = "⚙️ Logik 2: Udvikling & Cockpit"
 ADMIN_PAGE = "🛡️ Logik 3: Administration & Governance"
@@ -220,12 +224,12 @@ def fake_api(monkeypatch: pytest.MonkeyPatch) -> FakeAPI:
 
 
 def _run_app(*, authenticated: bool = True) -> AppTest:
-    at = AppTest.from_file(APP_PATH, default_timeout=5)
+    at = AppTest.from_file(APP_PATH, default_timeout=APP_RUN_TIMEOUT)
     if authenticated:
         at.session_state["access_token"] = "existing-token"
         at.session_state["username"] = "controller"
         at.session_state["organization_id"] = "org-1"
-    return at.run(timeout=5)
+    return at.run(timeout=APP_RUN_TIMEOUT)
 
 
 def _by_label(elements: Any, label: str) -> Any:
@@ -240,13 +244,13 @@ def _values(elements: Any) -> list[Any]:
 
 def _navigate(at: AppTest, page: str) -> AppTest:
     assert at.sidebar.radio[0].value in {PROJECT_PAGE, DEVELOPMENT_PAGE, ADMIN_PAGE}
-    return at.sidebar.radio[0].set_value(page).run(timeout=5)
+    return at.sidebar.radio[0].set_value(page).run(timeout=APP_RUN_TIMEOUT)
 
 
 def _open_workflow(at: AppTest, workflow_id: str = "wf-1") -> AppTest:
     at = _navigate(at, DEVELOPMENT_PAGE)
     workflow_input = _by_label(at.text_input, "Aktivt Workflow ID")
-    return workflow_input.set_value(workflow_id).run(timeout=5)
+    return workflow_input.set_value(workflow_id).run(timeout=APP_RUN_TIMEOUT)
 
 
 def test_login_then_navigate_all_three_canonical_pages(fake_api: FakeAPI) -> None:
@@ -255,7 +259,7 @@ def test_login_then_navigate_all_three_canonical_pages(fake_api: FakeAPI) -> Non
     assert _values(at.title) == ["⚡ DOR Control Plane"]
     _by_label(at.text_input, "Brugernavn").set_value("anna")
     _by_label(at.text_input, "Adgangskode").set_value("secret")
-    at = _by_label(at.button, "Log ind").click().run(timeout=5)
+    at = _by_label(at.button, "Log ind").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert fake_api.login_calls == [("anna", "secret")]
     assert at.session_state["access_token"] == "token-from-login"
@@ -279,7 +283,7 @@ def test_execution_401_clears_auth_and_returns_to_login(fake_api: FakeAPI) -> No
     at = _run_app()
     at = _navigate(at, DEVELOPMENT_PAGE)
     at = _by_label(at.text_input, "Aktivt Workflow ID").set_value("wf-expired").run(
-        timeout=5
+        timeout=APP_RUN_TIMEOUT
     )
 
     assert at.session_state["access_token"] is None
@@ -307,7 +311,7 @@ def test_gate_decision_posts_exact_payload_and_rerenders_backend_state(
     expected_message: str,
 ) -> None:
     at = _open_workflow(_run_app())
-    at = _by_label(at.button, button_label).click().run(timeout=5)
+    at = _by_label(at.button, button_label).click().run(timeout=APP_RUN_TIMEOUT)
 
     assert (
         "POST",
@@ -328,7 +332,7 @@ def test_rejected_gate_retry_opens_round_two_without_advancing(
     fake_api: FakeAPI,
 ) -> None:
     at = _open_workflow(_run_app())
-    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=5)
+    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert fake_api.gates[0]["decision"] == "rejected"
     assert fake_api.gates[0]["retry_allowed"] is True
@@ -337,7 +341,7 @@ def test_rejected_gate_retry_opens_round_two_without_advancing(
     _by_label(at.text_area, "Begrundelse for genåbning").set_value(
         "Korrigeret evidens er klar til en ny human vurdering."
     )
-    at = _by_label(at.button, "↻ Åbn gate igen").click().run(timeout=5)
+    at = _by_label(at.button, "↻ Åbn gate igen").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert (
         "POST",
@@ -383,7 +387,7 @@ def test_rejected_gate_rework_stays_blocked_until_backend_opens_next_round(
         }
     )
     at = _open_workflow(_run_app())
-    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=5)
+    at = _by_label(at.button, "❌ Afvis gate").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert fake_api.gates[0]["decision"] == "rejected"
     assert fake_api.gates[0]["round"] == 1
@@ -393,7 +397,7 @@ def test_rejected_gate_rework_stays_blocked_until_backend_opens_next_round(
     _by_label(at.text_area, "Begrundelse for rework").set_value(
         "Arkitekturen skal regenereres med den nye trust boundary."
     )
-    at = _by_label(at.button, "🛠️ Genkør upstream arbejde").click().run(timeout=5)
+    at = _by_label(at.button, "🛠️ Genkør upstream arbejde").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert (
         "POST",
@@ -431,7 +435,7 @@ def test_rejected_gate_rework_stays_blocked_until_backend_opens_next_round(
             "rework_task_id": None,
         }
     )
-    at = at.run(timeout=5)
+    at = at.run(timeout=APP_RUN_TIMEOUT)
 
     assert _by_label(at.button, "✅ Godkend gate")
     assert _by_label(at.button, "❌ Afvis gate")
@@ -476,7 +480,7 @@ def test_admin_renders_governance_redmine_and_health(fake_api: FakeAPI) -> None:
     ):
         assert expected in tab_labels
 
-    at = _by_label(at.button, "Verificér Redmine-forbindelse").click().run(timeout=5)
+    at = _by_label(at.button, "Verificér Redmine-forbindelse").click().run(timeout=APP_RUN_TIMEOUT)
     metrics = {metric.label: metric.value for metric in at.metric}
     assert metrics["Konfigureret"] == "Ja"
     assert metrics["Reachable"] == "Ja"
@@ -490,7 +494,7 @@ def test_redmine_api_error_is_fail_closed(fake_api: FakeAPI) -> None:
         503, "upstream unavailable"
     )
     at = _navigate(_run_app(), ADMIN_PAGE)
-    at = _by_label(at.button, "Verificér Redmine-forbindelse").click().run(timeout=5)
+    at = _by_label(at.button, "Verificér Redmine-forbindelse").click().run(timeout=APP_RUN_TIMEOUT)
 
     assert any("Redmine health-check fejlede (503)" in value for value in _values(at.error))
     assert "Redmine-forbindelsen er verificeret af backend." not in _values(at.success)
