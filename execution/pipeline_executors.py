@@ -516,10 +516,12 @@ class ContractsExecutor:
         backend: ProjectRenderer | None = None,
         contract_backend: ContractGenerator | None = None,
         llm_runtime: GovernedLLMRuntime | None = None,
+        council_factory: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         self._backend = backend or ProjectRenderer()
         self._contract_backend = contract_backend or ContractGenerator()
         self._llm_runtime = llm_runtime
+        self._council_factory = council_factory or default_contract_council
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         architecture = payload.get("architecture") or payload.get("context", {}).get(
@@ -527,6 +529,9 @@ class ContractsExecutor:
         )
         if not isinstance(architecture, dict):
             raise ValueError("contracts payload requires architecture output")
+        council = self._council_factory(payload)
+        if council is not None:
+            return self._execute_council(council, payload, architecture)
         project = ProjectDefinition.model_validate(architecture["project"])
         plan = ScaffoldPlan(
             project=project,
@@ -573,6 +578,73 @@ class ContractsExecutor:
         if proposal is not None:
             result["contracts"]["llm_proposal"] = proposal
         return result
+
+
+    def _execute_council(
+        self, council: Any, payload: Mapping[str, Any], architecture: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Module contracts from the contract council (completion plan step 4)."""
+        approved = (architecture.get("council") or {}).get("proposal")
+        if not isinstance(approved, Mapping):
+            raise ValueError(
+                "module contracts require an architecture from the architecture council"
+            )
+        kravspec = payload.get("requirements") or payload.get("context", {}).get(
+            "requirements"
+        )
+        if not isinstance(kravspec, Mapping):
+            raise ValueError("contract council requires a structured kravspec")
+        outcome = council.run(
+            kravspec,
+            approved,
+            organization_id=str(payload.get("organization_id") or ""),
+            actor_id=str(payload.get("actor_id") or "pipeline"),
+            run_key=str(payload.get("task_id") or payload.get("workflow_id")),
+        )
+        agent_jobs = outcome.pop("agent_jobs")
+        return {
+            "status": "success",
+            "component": "execution/contract_council",
+            "agent_jobs": agent_jobs,
+            "contracts": {
+                "modules": outcome["proposal"]["modules"],
+                "acceptance_criteria": outcome["proposal"]["acceptance_criteria"],
+                "openapi": outcome["openapi"],
+                "traceability": outcome["traceability"],
+                "criteria_traceability": outcome["criteria_traceability"],
+                "contract_fingerprint": outcome["contract_fingerprint"],
+                "architecture_fingerprint": (architecture.get("council") or {}).get(
+                    "proposal_fingerprint"
+                ),
+                "council": outcome,
+            },
+        }
+
+
+def default_contract_council(payload: Mapping[str, Any]) -> Any:
+    """Build the contract council from configured Bot Catalog profiles.
+
+    Completion plan step 4. ``DOR_CONTRACT_AUTHOR_BOT_PROFILE`` and
+    ``DOR_CONTEXT_CONTROLLER_BOT_PROFILE`` name two catalog profiles from
+    different producers. Neither set: no council. Only one set: fail closed.
+    """
+    author = os.getenv("DOR_CONTRACT_AUTHOR_BOT_PROFILE", "").strip()
+    controller = os.getenv("DOR_CONTEXT_CONTROLLER_BOT_PROFILE", "").strip()
+    if not author and not controller:
+        return None
+    if not author or not controller:
+        raise PipelineExecutorConfigurationError(
+            "DOR_CONTRACT_AUTHOR_BOT_PROFILE and DOR_CONTEXT_CONTROLLER_BOT_PROFILE "
+            "must both be set for the contract council"
+        )
+    from api.dependencies import resolve_bot_model_for
+    from execution.contract_council import ContractCouncil
+
+    organization_id = str(payload.get("organization_id") or "")
+    return ContractCouncil(
+        resolve_bot_model_for(organization_id, author),
+        resolve_bot_model_for(organization_id, controller),
+    )
 
 
 class CodeExecutor:
