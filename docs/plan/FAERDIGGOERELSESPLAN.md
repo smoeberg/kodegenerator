@@ -1,6 +1,8 @@
 # DOR – plan for færdiggørelse
 
-Version 12 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+Version 13 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+
+Nyt i version 13: grundprincippet om rolle-proces-logik (beslutning 39), rollekataloget som versioneret data i `config/role_process/catalog.v1.yaml` og håndhævelsen i pipelinen.
 
 Nyt i version 12: kontrol er rolleadskillelse mellem koder, kodeauditør og kontekstkontrollant, og de to kontrolroller kommer fra en anden producent end koderen (beslutning 36); tilbagerulning frem for fejlretning (beslutning 35); agentlog for hvert job (beslutning 37); backup i fire lag (beslutning 38).
 
@@ -17,6 +19,22 @@ Et udviklingsværktøj, hvor flere AI-agenter i en stram organisation med roller
 kravspec → arkitektur → kontrakter → opgaver → kodning → kontrol → samlet system → opdragskontrol → tilbage til kravspec
 
 Forløbet er en lukket sløjfe, ikke en linje. DOR er styringslaget: det styrer og kontrollerer, mens færdige kodeagenter udfører. Den menneskelige kontrol er den overordnede: systemet anbefaler, mennesket beslutter. Systemet lærer af sine egne job: hvilke agenter og prompts der klarer hvilke opgaver bedst. På sigt udvikler DOR sig selv. Den eksisterende dokumentation i repoet er retningslinje, ikke bindende.
+
+## Grundprincip: rolle-proces-logik
+
+DOR er rolle-proces-logik. Processen er en fast kæde af roller; agenterne er udskiftelige og tildeles roller pr. job.
+
+Formålet er at skabe intelligens gennem dialog mellem flere AI-modeller: én rolle foreslår, en anden fra en anden producent udfordrer, og forslaget revideres. Modeller fra forskellige producenter har forskellige styrker og blinde vinkler, og det er i mødet mellem dem, at fejl og bedre løsninger findes. Dialogen er struktureret af rollerne, så den har et formål, et begrænset antal runder og en afslutning.
+
+- **Uenighed er et signal.** Den registreres og ender som rework, et ændringsforslag eller en beslutning hos projektlederen; den glattes aldrig ud.
+- **Enighed er ikke bevis.** Modeller kan blive enige om noget forkert. Kun det efterprøvede tæller: tests, systemet selv har kørt, og faktakontrollen.
+
+- **En rolle er en prompt plus en kontekstpakke i et frisk job.** Enhver agent kan have enhver rolle; den samme model kan være koder i ét job og kodeauditør i det næste.
+- **Intet output går videre ukontrolleret.** Hver agentrolles output kontrolleres af en anden rolle, og faktakontrollen kører på alle.
+- **Uafhængighed hvor det betyder noget.** På samme arbejdspakke kommer en kontrolrolle fra en anden producent (brand: anthropic, openai, mistral …) end den rolle, den kontrollerer, og den kører i en ny session uden dennes kontekst. Kan uafhængigheden ikke efterprøves, afvises tildelingen.
+- **Rollerne er data, ikke kode.** Rollekataloget er versioneret konfiguration (`config/role_process/catalog.v1.yaml`), godkendt af projektlederen. `domain/role_process.py` validerer det og afviser et inkonsistent katalog; pipelinen tager hvert jobs rolle fra kataloget og håndhæver reglen, når en agent bindes til et job.
+
+Alle andre beslutninger bygger på dette princip.
 
 ## Udgangspunkt
 
@@ -82,6 +100,8 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 36. Kontrol er rolleadskillelse. Hver arbejdspakke har tre roller: koder, kodeauditør og kontekstkontrollant. Kodeauditøren og kontekstkontrollanten kommer altid fra en anden producent end koderen. De arbejder ud fra en fast kontekstpakke og ser aldrig koderens samtale eller forklaring. Er der ingen anden producent til rådighed, venter kontrollen; den falder aldrig tilbage til koderens producent.
 37. Hvert agentjob gemmer en agentlog: prompt, kontekstpakke, hele agentens forløb med værktøjskald, diff og testoutput. Loggen er uforanderlig, har et fingeraftryk og knyttes til jobposten. DOR's egen log er sandheden, uanset hvad udbyderne gemmer.
 38. Backup i fire lag: kendte gode punkter som tags på `main`, beskyttelse af `main` og tags, en kopi uden for GitHub og backup af DOR's database taget sammen med hvert kendt godt punkt.
+
+39. Grundprincip: DOR er rolle-proces-logik (afsnittet "Grundprincip"). En rolle er en prompt plus en kontekstpakke i et frisk job; enhver agent kan have enhver rolle. På samme arbejdspakke kommer en kontrolrolle fra en anden producent og kører i en ny session. Rollekataloget er versioneret data, og reglen håndhæves i koden; den står ikke kun i dokumentationen.
 
 ## Arkitektur: styringslag over færdige agenter
 
@@ -479,13 +499,22 @@ Kontekstkontrollanten vurderer koden mod kravspec, arkitekturkontrakt og modulko
 
 ### Roller og kontekst
 
-Kontrollen er delt på tre roller pr. arbejdspakke (beslutning 36):
+Rollekataloget (`config/role_process/catalog.v1.yaml`, version 1) er den gældende kilde. Uddrag:
 
-| Rolle | Opgave | Producent |
-|---|---|---|
-| Koder | Skriver kode og tests til én arbejdspakke | Valgfri inden for puljen |
-| Kodeauditør | Niveau 1: holder koden op mod husregler og projektregler | Anden end koderens |
-| Kontekstkontrollant | Niveau 2 og opdragskontrol: holder koden op mod kravspec, arkitektur og kontrakt | Anden end koderens |
+| Rolle | Input | Output | Kontrolleres af | Art |
+|---|---|---|---|---|
+| Projektleder | Anbefalinger, undtagelser, ændringsforslag | Beslutninger og godkendelser | – | Menneske |
+| Kravafklarer | Opdrag eller repo-analyse | Kravspec-udkast | Faktakontrol, kontekstkontrollant, projektleder | Agent |
+| Arkitekt | Godkendt kravspec | Arkitekturforslag | Faktakontrol, arkitekturreviewer, projektleder | Agent |
+| Arkitekturreviewer | Kravspec og forslag | Fund og uenigheder | Faktakontrol | Agent |
+| Kontraktforfatter | Godkendt arkitektur | Modulkontrakter og kontrakttests | Faktakontrol, kontekstkontrollant, projektleder | Agent |
+| Opgavekompiler | Godkendte kontrakter | Arbejdspakker og skaleringsplan | Projektleder | System |
+| Koder | Arbejdspakke og kontekstpakke | Kode og tests | Faktakontrol, kodeauditør, kontekstkontrollant | Agent |
+| Kodeauditør | Diff, regler, testresultater | Niveau 1-fund | Faktakontrol | Agent |
+| Kontekstkontrollant | Diff, kravspec, arkitektur, kontrakt, testresultater | Niveau 2-fund og opdragskontrol | Faktakontrol | Agent |
+| Projektassistent | Jobposter og kontrolresultater | Dagsrapport og indstillinger | Faktakontrol, projektleder | Agent |
+| Faktakontrol og testkørsel | Leverance og egne testkørsler | Verificerede referencer, påstande og testresultater | – | System |
+| Orkestrator | Godkendte planer og gates | Fordeling, kvitteringer, frigivelse | – | System |
 
 Faktakontrollen er ikke en rolle, men en maskinel kontrol uden sprogmodel.
 
@@ -542,7 +571,7 @@ En ren trunk-model, hvor hver pakke flettes direkte til `main`, er fravalgt, for
 
 | # | Trin | Indhold | Skærmbillede |
 |---|---|---|---|
-| 1 | Rygrad, reference, regler | Pipelinen som eneste spor; gennemgående sporbarhed med krav-id og kravspec-version på hvert artefakt; jobpost for hvert agentjob; kravspec for husregel-registeret; husregler v1; `AGENTS.md` og dokumentationen rettes til denne plan | GUI-skelet: projektoverblik, indbakke, projektkonfiguration |
+| 1 | Rygrad, reference, regler | Rollekatalog og håndhævelse af grundprincippet; pipelinen som eneste spor; gennemgående sporbarhed med krav-id og kravspec-version på hvert artefakt; jobpost for hvert agentjob; kravspec for husregel-registeret; husregler v1; `AGENTS.md` og dokumentationen rettes til denne plan | GUI-skelet: projektoverblik, indbakke, projektkonfiguration |
 | 2 | Repo-analyse til kravspec | Project Audit danner et kravspec-udkast, som projektlederen godkender; DOR er første repo | Repo-tilknytning og kravspec-udkast |
 | 3 | Arkitektur via rådet | Proposer, reviewere og verifier er færdige kodeagenter med Spec Kits plan-prompts; stak vælges ud fra kravspec; moduler skal kunne bygges uafhængigt; gate | Arkitekturforslag, uenigheder, godkendelse |
 | 4 | Kontrakter pr. modul | Skemavaliderede, sporbare til krav-id'er; gate | Kontrakter og sporbarhed til krav |
