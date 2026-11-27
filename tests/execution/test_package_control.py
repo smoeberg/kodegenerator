@@ -33,6 +33,13 @@ from tests.execution.test_worker_adapter import git, repository
 
 APPROVE = {"verdict": "approve", "findings": []}
 
+#: The test designer's acceptance tests for the rules module (contract foundation).
+RULES_CONTRACT_TESTS = (
+    "def test_ac_reg_01_1_contract():\n    from src.rules.store import create\n    assert create({'id': 'x'})['id'] == 'x'\n\n\n"
+    "def test_ac_reg_01_2_contract():\n    from src.rules.store import create  # noqa: F401\n\n\n"
+    "def test_ac_reg_02_1_contract():\n    from src.rules.store import create  # noqa: F401\n"
+)
+
 GOOD_RULES = {
     "src/rules/store.py": "def create(rule):\n    return {'id': rule['id']}\n",
     "tests/rules/test_store.py": (
@@ -109,8 +116,16 @@ def line(
     *,
     auditor_brand="openai",
     controller_brand="openai",
+    security_answers: list[dict] | None = None,
+    security_brand="openai",
 ):
     root, base = repository(tmp_path)
+    # The contract foundation is merged: the test designer's acceptance tests.
+    (root / "contracts").mkdir()
+    (root / "contracts" / "test_rules_contract.py").write_text(RULES_CONTRACT_TESTS)
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "contract foundation")
+    base = git(root, "rev-parse", "HEAD")
     workspaces = FactoryWorkspaceManager(root)
     adapter = WorkerAdapter(
         workspaces, FileAgentLogStore(tmp_path / "logs"), runner=coder
@@ -122,6 +137,11 @@ def line(
         bound_model(auditor, brand=auditor_brand, bot_profile_id="auditor-bot"),
         bound_model(
             controller, brand=controller_brand, bot_profile_id="controller-bot"
+        ),
+        security=bound_model(
+            ScriptedProvider("openai", security_answers or [APPROVE] * 8),
+            brand=security_brand,
+            bot_profile_id="security-bot",
         ),
         house_rules=[{"id": "2.1", "rule": "Tests name their criterion"}],
     )
@@ -168,13 +188,16 @@ def test_a_good_delivery_passes_all_three_controls(tmp_path, plan) -> None:
     assert [j["role"] for j in outcome["agent_jobs"]] == [
         "coder",
         "code_auditor",
+        "security_reviewer",
         "context_controller",
     ]
     assert outcome["agent_jobs"][1]["agent"]["brand"] == "openai"
     assert outcome["measurements"] | {} == {
         "fact_check_passed_first_try": True,
         "level1_passed_first_try": True,
+        "security_passed_first_try": True,
         "level2_passed_first_try": True,
+        "secrets_found": 0,
         "invented_references": 0,
         "out_of_scope_changes": 0,
         "rework_rounds": 0,
@@ -231,7 +254,9 @@ def test_fact_check_findings_go_back_to_the_coder_and_rework_builds_on_the_deliv
     assert outcome["status"] == "passed"
     assert [a["decision"] for a in outcome["attempts"]] == ["rework", "passed"]
     codes = {f["code"] for f in outcome["attempts"][0]["control"]["findings"]}
-    assert codes == {"invented_reference", "criterion_without_test"}
+    # The test designer's contract tests cover the criteria the coder skipped;
+    # naming a criterion in code still does not count (see the unit test below).
+    assert codes == {"invented_reference"}
     assert len(auditor.prompts) == 1  # no model is asked while the fact check fails
     # The rework prompt carries the verified findings, and the rework starts from the delivery.
     assert (
@@ -428,3 +453,169 @@ def test_control_configuration_needs_both_profiles(tmp_path, monkeypatch) -> Non
     monkeypatch.setenv("DOR_CODE_AUDITOR_BOT_PROFILE", "auditor")
     with pytest.raises(PackageControlConfigurationError):
         default_package_control("org-1", workspaces)
+
+
+# --------------------------------------------------------------------- #
+# Decision 43: security review, secret scan, the test designer's tests
+# --------------------------------------------------------------------- #
+def test_a_security_finding_sends_the_package_back_before_level2(
+    tmp_path, plan
+) -> None:
+    risk = {"verdict": "revise", "findings": [finding("src/rules/store.py:1")]}
+    coder = ScriptedCoder(
+        GOOD_RULES, {"src/rules/store.py": GOOD_RULES["src/rules/store.py"] + "\n"}
+    )
+    _, base, pipeline, _, controller = line(
+        tmp_path, coder, [APPROVE] * 2, [APPROVE], security_answers=[risk, APPROVE]
+    )
+    outcome = deliver(pipeline, plan, base)
+    assert [a["control"]["stage"] for a in outcome["attempts"]] == [
+        "security",
+        "level2",
+    ]
+    assert len(controller.prompts) == 1
+    assert outcome["measurements"]["security_passed_first_try"] is False
+    assert outcome["status"] == "passed"
+
+
+def test_the_secret_scan_stops_a_delivery_with_a_key(tmp_path, plan) -> None:
+    leaky = {
+        **GOOD_RULES,
+        "src/rules/config.py": 'API_KEY = "sk-ant-abcdefghijklmnopqrstuvwxyz123456"\n',
+    }
+    coder = ScriptedCoder(leaky, {"src/rules/config.py": "API_KEY = None\n"})
+    _, base, pipeline, auditor, _ = line(tmp_path, coder, [APPROVE], [APPROVE])
+    outcome = deliver(pipeline, plan, base)
+    first = outcome["attempts"][0]["control"]
+    assert {f["code"] for f in first["findings"]} == {"secret_in_delivery"}
+    assert first["findings"][0]["target"] == "src/rules/config.py:1"
+    assert (
+        len(auditor.prompts) == 1
+    )  # no model saw the key; the second delivery is clean
+    assert outcome["measurements"]["secrets_found"] == 1
+    assert outcome["status"] == "passed"
+
+
+def test_a_module_needs_the_test_designers_acceptance_tests(tmp_path, plan) -> None:
+    coder = ScriptedCoder(*[GOOD_RULES] * 4)
+    root, base, pipeline, _, _ = line(tmp_path, coder, [APPROVE], [APPROVE])
+    git(root, "rm", "-q", "contracts/test_rules_contract.py")
+    git(root, "commit", "-qm", "no acceptance tests")
+    base = git(root, "rev-parse", "HEAD")
+    outcome = deliver(pipeline, plan, base)
+    codes = {f["code"] for f in outcome["attempts"][0]["control"]["findings"]}
+    assert codes == {"criterion_without_acceptance_test"}
+
+
+def test_naming_a_criterion_in_code_is_not_a_test(tmp_path, plan) -> None:
+    contract_tests = "def test_ac_reg_01_1():\n    pass\n"
+    named = "# AC-REG-01-2 AC-REG-02-1 AC-REG-03-1\nclass RulesApi: ...\n"
+    coder = ScriptedCoder(
+        *[{"contracts/test_x.py": contract_tests, "contracts/api.py": named}] * 4
+    )
+    _, base, pipeline, _, _ = line(tmp_path, coder, [APPROVE], [APPROVE])
+    outcome = deliver(pipeline, plan, base, task_id="contract-foundation")
+    missing = {
+        f["target"]
+        for f in outcome["attempts"][0]["control"]["findings"]
+        if f["code"] == "criterion_without_test"
+    }
+    assert missing == {"AC-REG-01-2", "AC-REG-02-1", "AC-REG-03-1"}
+
+
+def test_a_coder_from_the_test_designers_producer_never_starts(tmp_path, plan) -> None:
+    coder = ScriptedCoder(GOOD_RULES)
+    _, base, pipeline, auditor, _ = line(
+        tmp_path,
+        coder,
+        [APPROVE],
+        [APPROVE],
+        auditor_brand="google",
+        controller_brand="google",
+        security_brand="google",
+    )
+    outcome = pipeline.deliver(
+        package(plan, "module-rules"),
+        contracts(),
+        KRAVSPEC,
+        coder=AgentChoice("claude-code", "sk-a"),
+        base_sha=base,
+        execution_id="wf-1",
+        organization_id="org-1",
+        actor_id="pm",
+        test_designer={"brand": "anthropic", "session_id": "td-1"},
+    )
+    assert outcome["status"] == "waiting" and "producer" in outcome["reason"]
+    assert coder.prompts == [] and auditor.prompts == []
+    outcome = pipeline.deliver(
+        package(plan, "module-rules"),
+        contracts(),
+        KRAVSPEC,
+        coder=AgentChoice("claude-code", "sk-a"),
+        base_sha=base,
+        execution_id="wf-1",
+        organization_id="org-1",
+        actor_id="pm",
+        test_designer={"brand": "openai", "session_id": "td-1"},
+    )
+    assert outcome["status"] == "passed", outcome["reason"]
+
+
+def test_without_a_security_reviewer_nothing_passes(tmp_path, plan) -> None:
+    root, _ = repository(tmp_path)
+    workspaces = FactoryWorkspaceManager(root)
+    control = PackageControl(
+        workspaces,
+        bound_model(
+            ScriptedProvider("openai", [APPROVE]), brand="openai", bot_profile_id="a"
+        ),
+        bound_model(
+            ScriptedProvider("openai", [APPROVE]), brand="openai", bot_profile_id="c"
+        ),
+    )
+    assert "security reviewer" in control.independence_problem(
+        "module-rules", "coder", "anthropic", "s", "k"
+    )
+
+
+def test_control_configuration_needs_all_three_profiles(tmp_path, monkeypatch) -> None:
+    root, _ = repository(tmp_path)
+    workspaces = FactoryWorkspaceManager(root)
+    for name in (
+        "DOR_CODE_AUDITOR_BOT_PROFILE",
+        "DOR_CONTEXT_CONTROLLER_BOT_PROFILE",
+        "DOR_SECURITY_REVIEWER_BOT_PROFILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DOR_CODE_AUDITOR_BOT_PROFILE", "a")
+    monkeypatch.setenv("DOR_CONTEXT_CONTROLLER_BOT_PROFILE", "c")
+    with pytest.raises(PackageControlConfigurationError, match="SECURITY"):
+        default_package_control("org-1", workspaces)
+
+
+def test_the_control_itself_rechecks_the_test_designers_producer(tmp_path) -> None:
+    root, _ = repository(tmp_path)
+    control = PackageControl(
+        FactoryWorkspaceManager(root),
+        bound_model(ScriptedProvider("openai", []), brand="openai", bot_profile_id="a"),
+        bound_model(ScriptedProvider("openai", []), brand="openai", bot_profile_id="c"),
+        security=bound_model(
+            ScriptedProvider("openai", []), brand="openai", bot_profile_id="s"
+        ),
+    )
+    same = {"brand": "anthropic", "session_id": "td"}
+    assert "producer" in control.independence_problem(
+        "module-rules", "coder", "anthropic", "s", "k", test_designer=same
+    )
+    # The test designer's own foundation is not judged against itself.
+    assert (
+        control.independence_problem(
+            "contract-foundation",
+            "test_designer",
+            "anthropic",
+            "s",
+            "k",
+            test_designer=same,
+        )
+        is None
+    )

@@ -54,6 +54,7 @@ from domain.role_process import (
 from execution.role_dialogue import REVIEW_SCHEMA, call_role, fingerprint
 from execution.task_compiler import CONTRACT_ROOT
 from execution.worker_adapter import (
+    AGENT_COMMANDS,
     CODER_ROLE,
     HOUSE_RULES_VERSION,
     WorkerAdapter,
@@ -64,6 +65,8 @@ from services.bot_llm_runtime import BoundModel
 from services.factory_workspace import FactoryWorkspaceError, FactoryWorkspaceManager
 
 CODE_AUDITOR_ROLE = "code_auditor"
+SECURITY_REVIEWER_ROLE = "security_reviewer"
+TEST_DESIGNER_ROLE = "test_designer"
 CONTEXT_CONTROLLER_ROLE = "context_controller"
 CONTROL_FORMAT_VERSION = "dor-control-v1"
 MAX_REWORK_ROUNDS = 2
@@ -75,6 +78,27 @@ CRITERION_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])AC[-_][A-Z]+[-_]\d+[-_]\d+(?!\d)", re.IGNORECASE
 )
 _TEST_NAME = re.compile(r"(^test_|_test\.|\.test\.|\.spec\.|^conftest\.py$)")
+#: The factory's own secret scan (deterministic; the security reviewer sees its result).
+SECRET_PATTERNS = (
+    (
+        "private_key",
+        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+    ),
+    ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
+    ("api_key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b")),
+    (
+        "assigned_secret",
+        re.compile(
+            r"(?i)\b(?:password|passwd|secret|api[_-]?key|token)\b\s*[:=]\s*[\"'][^\"'\s]{12,}[\"']"
+        ),
+    ),
+)
+DEPENDENCY_FILES = re.compile(
+    r"(^|/)(requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|setup\.(py|cfg)"
+    r"|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|go\.(mod|sum)|Cargo\.(toml|lock)"
+    r"|Gemfile(\.lock)?|composer\.(json|lock))$"
+)
 _ASSUMPTION_LINE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+\S")
 
 LEVEL1_SCHEMA: dict[str, Any] = REVIEW_SCHEMA
@@ -88,6 +112,8 @@ LEVEL1_PROMPT = prompt("code_auditor", "audit_package")
 LEVEL1_INSTRUCTIONS = LEVEL1_PROMPT.text
 
 LEVEL2_PROMPT = prompt("context_controller", "check_package")
+SECURITY_PROMPT = prompt("security_reviewer", "audit_package")
+SECURITY_INSTRUCTIONS = SECURITY_PROMPT.text
 LEVEL2_INSTRUCTIONS = LEVEL2_PROMPT.text
 
 
@@ -301,6 +327,32 @@ def fact_check(
                 for ref in refs & criteria:
                     tested.setdefault(ref, set()).add(path)
 
+    if package.get("task_type") != "contract_foundation":
+        # Decision 43: a module's criteria are judged by the test designer's
+        # acceptance tests in contracts/, not only by the coder's own tests.
+        accepted = {
+            ref for ref, paths in tested.items() if set(paths) & set(contract_tests)
+        }
+        for criterion in sorted(criteria - accepted):
+            finding(
+                "criterion_without_acceptance_test",
+                criterion,
+                f"no acceptance test from the contract foundation names {criterion}",
+            )
+
+    secrets = []
+    for path, text in contents.items():
+        for number, line in enumerate(text.splitlines(), 1):
+            for kind, pattern in SECRET_PATTERNS:
+                if pattern.search(line):
+                    secrets.append({"path": path, "line": number, "kind": kind})
+                    finding(
+                        "secret_in_delivery",
+                        f"{path}:{number}",
+                        f"the factory's secret scan found a {kind.replace('_', ' ')}",
+                    )
+                    break  # one finding per line
+
     for criterion in sorted(criteria - set(tested)):
         finding(
             "criterion_without_test",
@@ -351,12 +403,15 @@ def fact_check(
         "affected_paths": list(affected),
         "test_files": list(test_files),
         "criteria_tested": {k: sorted(v) for k, v in sorted(tested.items())},
+        "secret_scan": {"patterns": [k for k, _ in SECRET_PATTERNS], "hits": secrets},
+        "dependency_changes": sorted(p for p in affected if DEPENDENCY_FILES.search(p)),
         "measurements": {
             "invented_references": invented,
             "out_of_scope_changes": sum(
                 1 for f in findings if f["code"] == "out_of_scope"
             ),
             "assumptions": assumptions,
+            "secrets_found": len(secrets),
         },
     }
 
@@ -411,6 +466,7 @@ class PackageControl:
         auditor: BoundModel,
         controller: BoundModel,
         *,
+        security: BoundModel | None = None,
         catalog: RoleCatalog | None = None,
         runner: CheckRunner = run_python_checks,
         house_rules: list[dict[str, str]] | None = None,
@@ -419,34 +475,52 @@ class PackageControl:
         self._workspaces = workspaces
         self._auditor = auditor
         self._controller = controller
+        self._security = security
         self._catalog = catalog or default_catalog()
         self._runner = runner
         self._house_rules = house_rules
         self._project_rules = [dict(r) for r in project_rules]
 
     def independence_problem(
-        self, package_id: str, coder_brand: str, coder_session: str, run_key: str
+        self,
+        package_id: str,
+        delivered_role: str,
+        brand: str,
+        session: str,
+        run_key: str,
+        *,
+        test_designer: Mapping[str, Any] | None = None,
     ) -> str | None:
         """Why the controls cannot run now, or ``None``."""
-        coder = RoleAssignment(
-            "coder", package_id, CODER_ROLE, coder_brand, coder_session
+        if self._security is None:
+            return "no security reviewer is configured; a delivery is not controlled without one"
+        delivered = RoleAssignment(
+            delivered_role, package_id, delivered_role, brand, session
         )
-        try:
+        assignments = [
+            RoleAssignment(
+                role, package_id, role, model.identity.brand, f"{run_key}:{role}"
+            )
             for role, model in (
                 (CODE_AUDITOR_ROLE, self._auditor),
+                (SECURITY_REVIEWER_ROLE, self._security),
                 (CONTEXT_CONTROLLER_ROLE, self._controller),
-            ):
-                validate_assignment(
-                    self._catalog,
-                    RoleAssignment(
-                        role,
-                        package_id,
-                        role,
-                        model.identity.brand,
-                        f"{run_key}:{role}",
-                    ),
-                    [coder],
+            )
+        ]
+        if test_designer is not None and delivered_role == CODER_ROLE:
+            # The acceptance tests the coder is judged by come from another producer.
+            assignments.append(
+                RoleAssignment(
+                    TEST_DESIGNER_ROLE,
+                    package_id,
+                    TEST_DESIGNER_ROLE,
+                    str(test_designer["brand"]),
+                    str(test_designer["session_id"]),
                 )
+            )
+        try:
+            for assignment in assignments:
+                validate_assignment(self._catalog, assignment, [delivered])
         except RoleProcessError as exc:
             return str(exc)
         return None
@@ -463,6 +537,7 @@ class PackageControl:
         actor_id: str,
         run_key: str,
         architecture: Mapping[str, Any] | None = None,
+        test_designer: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if delivery.status != "delivered" or not delivery.head_sha:
             raise PackageControlError("only a delivered package can be controlled")
@@ -470,9 +545,11 @@ class PackageControl:
         coder_job = delivery.agent_job
         waiting = self.independence_problem(
             package_id,
+            str(coder_job.get("role") or CODER_ROLE),
             str(coder_job["agent"]["brand"]),
             str(coder_job["session_id"]),
             run_key,
+            test_designer=test_designer,
         )
         if waiting:
             return {
@@ -488,6 +565,7 @@ class PackageControl:
             "head_sha": delivery.head_sha,
             "agent_jobs": [],
             "level1": None,
+            "security": None,
             "level2": None,
         }
         facts = fact_check(
@@ -574,6 +652,42 @@ class PackageControl:
                 "findings": [{**f, "cause": "code"} for f in level1["open_findings"]],
             }
 
+        security = self._review(
+            result,
+            SECURITY_REVIEWER_ROLE,
+            self._security,
+            SECURITY_INSTRUCTIONS,
+            LEVEL1_SCHEMA,
+            {
+                "control_format": CONTROL_FORMAT_VERSION,
+                "work_package": work_package,
+                "diff": diff,
+                "dependency_changes": facts["dependency_changes"],
+                "secret_scan": facts["secret_scan"],
+                "house_rules": {
+                    "version": HOUSE_RULES_VERSION,
+                    "active": self._house_rules
+                    if self._house_rules is not None
+                    else active_house_rules(),
+                },
+                "factory_test_results": test_results,
+            },
+            files=files,
+            other_targets=set(),
+            requirement_ids=all_requirement_ids,
+            organization_id=organization_id,
+            actor_id=actor_id,
+            run_key=run_key,
+        )
+        if security["open_findings"]:
+            return {
+                **result,
+                "status": "failed",
+                "stage": "security",
+                "cause": "code",
+                "findings": [{**f, "cause": "code"} for f in security["open_findings"]],
+            }
+
         criteria = {str(c["id"]): c for c in contracts.get("acceptance_criteria") or []}
         module_id = package.get("module_id")
         level2 = self._review(
@@ -648,7 +762,7 @@ class PackageControl:
             organization_id=organization_id,
             actor_id=actor_id,
             run_key=run_key,
-            prompt_version=(LEVEL1_PROMPT if role == CODE_AUDITOR_ROLE else LEVEL2_PROMPT).ref,
+            prompt_version=_PROMPTS[role].ref,
         )
         result["agent_jobs"].append(turn.job())
         verified, rejected = verify_findings(
@@ -674,8 +788,20 @@ class PackageControl:
             and not open_findings,
             "passed": not open_findings,
         }
-        result["level1" if role == CODE_AUDITOR_ROLE else "level2"] = level
+        result[_LEVELS[role]] = level
         return level
+
+
+_PROMPTS = {
+    CODE_AUDITOR_ROLE: LEVEL1_PROMPT,
+    SECURITY_REVIEWER_ROLE: SECURITY_PROMPT,
+    CONTEXT_CONTROLLER_ROLE: LEVEL2_PROMPT,
+}
+_LEVELS = {
+    CODE_AUDITOR_ROLE: "level1",
+    SECURITY_REVIEWER_ROLE: "security",
+    CONTEXT_CONTROLLER_ROLE: "level2",
+}
 
 
 # --------------------------------------------------------------------- #
@@ -732,6 +858,11 @@ class PackageLine:
         self._workspaces = workspaces
         self._max_rework = max_rework
 
+    def _test_designer_conflict(self, package, choice, test_designer) -> str | None:
+        return _test_designer_conflict_check(
+            self._control._catalog, package, choice, test_designer
+        )
+
     def deliver(
         self,
         package: Mapping[str, Any],
@@ -747,6 +878,7 @@ class PackageLine:
         architecture: Mapping[str, Any] | None = None,
         timeout_seconds: int = 3600,
         run_id: str = "",
+        test_designer: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """``run_id`` names this run of the package (a sprint run, a rebuild): model
         calls are idempotent per run, so a new run must not reuse an old one's keys."""
@@ -762,6 +894,22 @@ class PackageLine:
         while True:
             attempt += 1
             choice = coder if generation == 1 else (fresh_coder or coder)
+            conflict = self._test_designer_conflict(package, choice, test_designer)
+            if conflict:
+                # Checked before any code is written: a coder from the test
+                # designer's producer would be judged by its own producer's tests.
+                return {
+                    "status": "waiting",
+                    "work_package": task_id,
+                    "branch": None,
+                    "head_sha": None,
+                    "base_sha": base_sha,
+                    "delivery": None,
+                    "reason": f"coder {choice.agent}: {conflict}",
+                    "attempts": attempts,
+                    "agent_jobs": agent_jobs,
+                    "measurements": _measurements(attempts),
+                }
             kind = (
                 "initial" if attempt == 1 else ("rework" if start_sha else "regenerate")
             )
@@ -792,6 +940,7 @@ class PackageLine:
                     actor_id=actor_id,
                     run_key=f"{execution_id}:{run_id or base_sha[:12]}:{task_id}:a{attempt}:control",
                     architecture=architecture,
+                    test_designer=test_designer,
                 )
                 agent_jobs.extend(control.get("agent_jobs") or [])
             decision = triage(
@@ -859,6 +1008,39 @@ class PackageLine:
         }
 
 
+def _test_designer_conflict_check(
+    catalog: RoleCatalog,
+    package: Mapping[str, Any],
+    choice: AgentChoice,
+    test_designer: Mapping[str, Any] | None,
+) -> str | None:
+    if test_designer is None or package.get("task_type") == "contract_foundation":
+        return None
+    command = AGENT_COMMANDS.get(choice.agent)
+    if command is None:
+        return None
+    package_id = str(package["logical_task_id"])
+    try:
+        validate_assignment(
+            catalog,
+            RoleAssignment(
+                TEST_DESIGNER_ROLE,
+                package_id,
+                TEST_DESIGNER_ROLE,
+                str(test_designer["brand"]),
+                str(test_designer["session_id"]),
+            ),
+            [
+                RoleAssignment(
+                    CODER_ROLE, package_id, CODER_ROLE, command.brand, "planned"
+                )
+            ],
+        )
+    except RoleProcessError as exc:
+        return str(exc)
+    return None
+
+
 def _control_summary(control: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if control is None:
         return None
@@ -875,14 +1057,15 @@ def _control_summary(control: Mapping[str, Any] | None) -> dict[str, Any] | None
         ],
         "fact_check_measurements": dict(facts.get("measurements") or {}),
         "level1_passed": (control.get("level1") or {}).get("passed"),
+        "security_passed": (control.get("security") or {}).get("passed"),
         "level2_passed": (control.get("level2") or {}).get("passed"),
         "rejected_reviewer_findings": sum(
             len((control.get(level) or {}).get("rejected_findings") or [])
-            for level in ("level1", "level2")
+            for level in ("level1", "security", "level2")
         ),
         "unsupported_verdicts": sum(
             1
-            for level in ("level1", "level2")
+            for level in ("level1", "security", "level2")
             if (control.get(level) or {}).get("unsupported_verdict")
         ),
     }
@@ -920,7 +1103,11 @@ def _measurements(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if first is None
         else first["stage"] != "fact_check",
         "level1_passed_first_try": first_try("level1"),
+        "security_passed_first_try": first_try("security"),
         "level2_passed_first_try": first_try("level2"),
+        "secrets_found": sum(
+            c["fact_check_measurements"].get("secrets_found", 0) for c in controls
+        ),
         "invented_references": sum(
             c["fact_check_measurements"].get("invented_references", 0) for c in controls
         ),
@@ -959,19 +1146,20 @@ def default_package_control(
 ) -> PackageControl | None:
     """Build the controls from configured Bot Catalog profiles.
 
-    ``DOR_CODE_AUDITOR_BOT_PROFILE`` and ``DOR_CONTEXT_CONTROLLER_BOT_PROFILE``
-    name the two control roles. Neither set: no controls configured (a
-    delivery is then not controlled and cannot pass). Only one set: fail
-    closed. Independence from the coder is checked per delivery.
+    ``DOR_CODE_AUDITOR_BOT_PROFILE``, ``DOR_SECURITY_REVIEWER_BOT_PROFILE`` and
+    ``DOR_CONTEXT_CONTROLLER_BOT_PROFILE`` name the three control roles. None
+    set: no controls configured (a delivery is then not controlled and cannot
+    pass). Only some set: fail closed. Independence from the coder is checked per delivery.
     """
     auditor = os.getenv("DOR_CODE_AUDITOR_BOT_PROFILE", "").strip()
     controller = os.getenv("DOR_CONTEXT_CONTROLLER_BOT_PROFILE", "").strip()
-    if not auditor and not controller:
+    security = os.getenv("DOR_SECURITY_REVIEWER_BOT_PROFILE", "").strip()
+    if not auditor and not controller and not security:
         return None
-    if not auditor or not controller:
+    if not auditor or not controller or not security:
         raise PackageControlConfigurationError(
-            "DOR_CODE_AUDITOR_BOT_PROFILE and DOR_CONTEXT_CONTROLLER_BOT_PROFILE "
-            "must both be set for the package controls"
+            "DOR_CODE_AUDITOR_BOT_PROFILE, DOR_SECURITY_REVIEWER_BOT_PROFILE and "
+            "DOR_CONTEXT_CONTROLLER_BOT_PROFILE must all be set for the package controls"
         )
     from api.dependencies import resolve_bot_model_for
 
@@ -979,4 +1167,5 @@ def default_package_control(
         workspaces,
         resolve_bot_model_for(organization_id, auditor),
         resolve_bot_model_for(organization_id, controller),
+        security=resolve_bot_model_for(organization_id, security),
     )

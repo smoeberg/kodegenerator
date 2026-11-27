@@ -2,7 +2,7 @@
 role: coder
 purpose: build_contract_foundation
 version: 1
-status: active
+status: retired
 approved_by: project_board
 approval_ref: "PR #312, #314"
 author: extracted from code

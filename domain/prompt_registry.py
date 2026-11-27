@@ -13,8 +13,8 @@ the change that makes a version ``trial`` or ``active``.
 
 Loading fails closed: the role must be an agent role in the role catalog,
 a ``trial`` or ``active`` version needs an approval by a deciding role, and
-each role and purpose has exactly one active version and at most one on
-trial. A prompt's identity on every job record is ``role/purpose@vN``
+each role and purpose in use has exactly one active version and at most one
+on trial (a purpose whose versions are all retired is out of use). A prompt's identity on every job record is ``role/purpose@vN``
 plus the fingerprint of its text, so statistics can be kept per prompt
 version.
 """
@@ -135,6 +135,9 @@ class PromptRegistry:
                 raise PromptRegistryError(f"{role}/{purpose}: duplicate version")
             active = [p for p in versions if p.status is PromptStatus.ACTIVE]
             trial = [p for p in versions if p.status is PromptStatus.TRIAL]
+            if all(p.status is PromptStatus.RETIRED for p in versions):
+                versions.sort(key=lambda p: p.version)
+                continue
             if len(active) != 1:
                 raise PromptRegistryError(
                     f"{role}/{purpose}: needs exactly one active version, has {len(active)}"
@@ -156,7 +159,10 @@ class PromptRegistry:
         versions = self._by_key.get((role, purpose))
         if not versions:
             raise PromptRegistryError(f"no prompt for {role}/{purpose}")
-        return next(p for p in versions if p.status is PromptStatus.ACTIVE)
+        active = next((p for p in versions if p.status is PromptStatus.ACTIVE), None)
+        if active is None:
+            raise PromptRegistryError(f"{role}/{purpose} is retired; no active prompt")
+        return active
 
     def trial(self, role: str, purpose: str) -> PromptVersion | None:
         return next(
