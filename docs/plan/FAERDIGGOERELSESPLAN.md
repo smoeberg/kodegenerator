@@ -1,6 +1,8 @@
 # DOR – plan for færdiggørelse
 
-Version 11 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+Version 12 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+
+Nyt i version 12: kontrol er rolleadskillelse mellem koder, kodeauditør og kontekstkontrollant, og de to kontrolroller kommer fra en anden producent end koderen (beslutning 36); tilbagerulning frem for fejlretning (beslutning 35); agentlog for hvert job (beslutning 37); backup i fire lag (beslutning 38).
 
 Nyt i version 11: husregler v1 og kravspec'en for husregel-registeret er godkendt (`docs/plan/HUSREGLER_V1.md`, `docs/plan/kravspec/husregel-register.yaml`). #297, #298 og #299 er flettet; repoet er offentligt.
 
@@ -47,7 +49,7 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 4. Governance v0 lempes for trin 2–9. Tenant-isolation og authority-grænser står urørt.
 5. Efter kodning kommer kontrol i to niveauer, med faktakontrol forud.
 6. Kode samles i kortlivede milestone-branches, ikke i én branch pr. leverance mod main (se beslutning 34).
-7. Fejler niveau 2, går koden tilbage til koderen højst to gange og derefter til mennesket.
+7. Fejler niveau 2, går koden tilbage til koderen højst to gange. Derefter bygges pakken ny af en frisk agent (beslutning 35), og først hvis det også fejler, går den til mennesket.
 8. Hver milestone godkendes af et menneske, før den går til main.
 9. Udviklingsreglerne er defineret og godkendt som husregler v1 (`docs/plan/HUSREGLER_V1.md`).
 10. Husreglerne er dynamiske: et versioneret regelsæt, der udvikles ud fra egen empiri og ekstern best practice.
@@ -75,6 +77,11 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 32. Under sammenbygningen skal vi være skarpe på, hvad der fungerer sammen, og hurtigt kassere og skrive nyt, når det er bedst.
 33. Hele kæden køres igennem første gang, så snart trin 3–8 er koblet sammen: husregel-registeret med to arbejdere parallelt på samme fundament. Kørslen er en måling af, om agenternes kode passer sammen, ikke en leverance og ikke en stopregel.
 34. `main` er det fælles fundament. Milestone-branchen lever kun, mens milestonen kører, og genbaseres på den nyeste `main` ved hver sprintstart, så den højst er én dag bagud. Hver arbejdspakke bindes til en commit, en kravspec-revision og en kontraktversion; bliver én af dem forældet, genbaseres og genkontrolleres pakken i stedet for at arbejde videre. Godkendelsen før `main` (beslutning 8) og kassering af en dagssprint (beslutning 18) bevares.
+
+35. Tilbagerulning frem for fejlretning. Når genereret kode fejler, er udgangspunktet at kassere og bygge på ny med en frisk agent, ikke at fejlrette. Det forudsætter, at årsagen findes i inputtet (kravspec, kontrakt, prompt) og rettes først. Valget følger en fast sortering (afsnittet "Tilbagerulning frem for fejlretning"). Den beskyttede kerne fejlrettes under projektlederens godkendelse.
+36. Kontrol er rolleadskillelse. Hver arbejdspakke har tre roller: koder, kodeauditør og kontekstkontrollant. Kodeauditøren og kontekstkontrollanten kommer altid fra en anden producent end koderen. De arbejder ud fra en fast kontekstpakke og ser aldrig koderens samtale eller forklaring. Er der ingen anden producent til rådighed, venter kontrollen; den falder aldrig tilbage til koderens producent.
+37. Hvert agentjob gemmer en agentlog: prompt, kontekstpakke, hele agentens forløb med værktøjskald, diff og testoutput. Loggen er uforanderlig, har et fingeraftryk og knyttes til jobposten. DOR's egen log er sandheden, uanset hvad udbyderne gemmer.
+38. Backup i fire lag: kendte gode punkter som tags på `main`, beskyttelse af `main` og tags, en kopi uden for GitHub og backup af DOR's database taget sammen med hvert kendt godt punkt.
 
 ## Arkitektur: styringslag over færdige agenter
 
@@ -262,7 +269,7 @@ Fordi agenter ikke er en knap ressource, kan samme arbejdspakke gives til flere 
 
 - **Mængde:** Få job pr. agent og opgavetype giver støj. Statistikken påvirker først valget efter et mindste antal job.
 - **Sammenlign ens med ens:** Samme opgavetype, promptversion og sværhedsgrad. Udbydere opdaterer modeller uden varsel, så modelversionen skal med.
-- **Uafhængig dommer:** Niveau 2 må ikke bedømmes af samme modelfamilie som koderen, ellers bliver tallene skæve.
+- **Uafhængig dommer:** Kodeauditøren og kontekstkontrollanten kommer fra en anden producent end koderen (beslutning 36), ellers bliver tallene skæve.
 - **Opgavetyper skal defineres:** De fastlægges i opgavekompileren og er selv versionerede.
 
 ## Rytme: dagssprints
@@ -420,7 +427,8 @@ Regelsæt og prompts er frosne inden for en sprint.
 | Projektassistent | Agent | Foreslår sprintplan, skaleringsplan og prioritering; skriver dagsrapporter, undtagelsesrapporter og konsekvensrapporter med muligheder og anbefaling |
 | Orkestrator | System (DOR) | Fordeler arbejdspakker efter den godkendte skaleringsplan; vælger agent inden for puljen; håndhæver tolerancer, rækkefølge og kvittering for ny kravspec-version |
 | Koder | Færdig kodeagent via arbejder-adapter | Leverer én arbejdspakke ad gangen |
-| Kontrollant | Færdig kodeagent, en anden end koderen | Niveau 1, niveau 2 og opdragskontrol |
+| Kodeauditør | Færdig kodeagent fra en anden producent end koderen | Niveau 1: koden mod husregler og projektregler |
+| Kontekstkontrollant | Færdig kodeagent fra en anden producent end koderen | Niveau 2: koden mod kravspec, arkitektur og kontrakt; opdragskontrol |
 
 Projektassistenten kan ikke godkende, ændre omfang, ændre opdraget, ændre skaleringen, ændre puljer eller ændre regler.
 
@@ -463,11 +471,54 @@ Faktakontrollen bygger ikke selv på en sprogmodel. Den gælder også projektass
 
 ### Niveau 1 – teknisk
 
-Koden holdes op mod udviklingsreglerne. Maskinelle checks først; resten vurderes af en review-bot.
+Kodeauditøren holder koden op mod husreglerne og projektreglerne. Maskinelle checks kører først; vurderingsreglerne bedømmes af kodeauditøren.
 
 ### Niveau 2 – krav og arkitektur
 
-En anden bot end koderen, og fra en anden modelfamilie, vurderer koden mod kravspec, arkitekturkontrakt og modulkontrakt. Niveau 2 kører kun efter bestået niveau 1 og kan ikke omgøre en teknisk fejl. Det kører pr. opgave før fletning og igen på hele milestonen før main.
+Kontekstkontrollanten vurderer koden mod kravspec, arkitekturkontrakt og modulkontrakt. Niveau 2 kører kun efter bestået niveau 1 og kan ikke omgøre en teknisk fejl. Det kører pr. opgave før fletning og igen på hele milestonen før main.
+
+### Roller og kontekst
+
+Kontrollen er delt på tre roller pr. arbejdspakke (beslutning 36):
+
+| Rolle | Opgave | Producent |
+|---|---|---|
+| Koder | Skriver kode og tests til én arbejdspakke | Valgfri inden for puljen |
+| Kodeauditør | Niveau 1: holder koden op mod husregler og projektregler | Anden end koderens |
+| Kontekstkontrollant | Niveau 2 og opdragskontrol: holder koden op mod kravspec, arkitektur og kontrakt | Anden end koderens |
+
+Faktakontrollen er ikke en rolle, men en maskinel kontrol uden sprogmodel.
+
+Kontrolrollerne får en fast kontekstpakke: kravspec-revisionen, kontrakten, de gældende regler, diffen og de testresultater, systemet selv har kørt. De får ikke koderens samtale, ræsonnement eller rapport, så de efterprøver koden i stedet for koderens fortolkning af den.
+
+Med to producenter kontrollerer den ene den andens kode. Med flere producenter kan kodeauditør og kontekstkontrollant komme fra hver sin. Modeller fra forskellige producenter kan stadig tage fejl på samme måde; de maskinelle kontroller kommer derfor først, og projektlederens godkendelse ved milestonen er sidste værn.
+
+### Tilbagerulning frem for fejlretning
+
+At generere kode er billigt; at forstå og rette fremmed kode er dyrt, og en agent, der retter sin egen kode, bygger ofte videre på sin forkerte antagelse. Udgangspunktet er derfor at kassere og bygge på ny (beslutning 35). Men en ny agent laver samme fejl, hvis årsagen ligger i inputtet. Årsagen findes derfor i agentloggen og rettes i inputtet først: fejlretning flytter fra koden til kravspec, kontrakt og prompt.
+
+| Situation | Handling |
+|---|---|
+| Lokal fejl i pakken, og årsagen er forstået | Rework, højst to runder (beslutning 7) |
+| Ikke forstået, eller to runders rework hjalp ikke | Kassér pakken; byg den ny med en frisk agent |
+| Fejlen ligger i en antagelse, kontrakt eller kravspec | Ret inputtet gennem ændringsløbet; byg de berørte pakker ny |
+| Projektet er kørt af sporet: flere pakker eller opdragskontrollen røde | Rul tilbage til seneste kendte gode punkt; find årsagen i agentloggen; ret inputtet; byg ny |
+| Den beskyttede kerne | Fejlret, med projektlederens godkendelse |
+
+Hver kassering og tilbagerulning registrerer årsagen på jobposten, så agentstatistikken, husreglerne og promptversionerne lærer af den. Tilbagerulning er billig, så længe fejlen findes tidligt; derfor hænger princippet sammen med dagssprints og den daglige opdragskontrol.
+
+### Agentlog og backup
+
+**Agentlog (beslutning 37).** Arbejder-adapteren gemmer for hvert job prompt, kontekstpakke, hele agentens forløb som maskinlæsbar strøm (Claude Code `--output-format stream-json`, Codex `exec --json`), diff og testoutput. Udbydernes egne logs kan ikke bruges som revisionsspor: Claude API'et gemmer ingen samtaler, og OpenAI gemmer svar i en begrænset periode.
+
+**Backup i fire lag (beslutning 38):**
+
+| Lag | Hvad | Beskytter mod |
+|---|---|---|
+| Kendte gode punkter | Hver godkendt milestone får et tag `known-good/<milestone>` på `main` med release-bevis. Tilbagerulning er en ny branch fra tagget, aldrig omskrivning af historikken. | Et projekt, der er kørt af sporet |
+| Beskyttelse | Branch protection på `main` og beskyttelse af tags: ingen force-push, ingen sletning, krævede checks | At en agent eller et uheld omskriver historikken |
+| Kopi uden for GitHub | Natlig `git bundle` af hele repoet | Tab af repo eller konto |
+| Tilstand | Backup af DOR's database (kravspec-versioner, godkendelser, jobposter, agentlogs), taget sammen med hvert tag | At kode og beslutninger ikke passer sammen efter en tilbagerulning |
 
 ## Milestone-branches
 
@@ -496,9 +547,9 @@ En ren trunk-model, hvor hver pakke flettes direkte til `main`, er fravalgt, for
 | 3 | Arkitektur via rådet | Proposer, reviewere og verifier er færdige kodeagenter med Spec Kits plan-prompts; stak vælges ud fra kravspec; moduler skal kunne bygges uafhængigt; gate | Arkitekturforslag, uenigheder, godkendelse |
 | 4 | Kontrakter pr. modul | Skemavaliderede, sporbare til krav-id'er; gate | Kontrakter og sporbarhed til krav |
 | 5 | Opgavekompiler | Kontrakter til arbejdspakker pr. milestone og dagssprint med adskilte filer, afhængigheder og opgavetype; kritisk vej; skaleringsplan til godkendelse | Opgavegraf, sprintplan og skaleringsplan |
-| 6 | Arbejder-adapter | Claude Code og Codex uden skærm i afskærmet worktree; kort branch fra milestone-toppen; omsætning af arbejdspakke til Spec Kit-format; jobpost med forbrug | Arbejdspakkers status og forbrug |
-| 7 | Kontrol | Faktakontrol, niveau 1, niveau 2; rework-sløjfe; målinger skrives på jobposten | Kontrolresultater pr. arbejdspakke |
-| 8 | Milestone-branch | Kortlivet branch genbaseret på `main` ved sprintstart; binding af pakker til commit, kravspec-revision og kontraktversion med genbasering ved forældelse; samling, sprintmærker og kassering, fuld test, projektlederens godkendelse, én PR til main og tag | Dagseftersyn og milestone-godkendelse |
+| 6 | Arbejder-adapter | Claude Code og Codex uden skærm i afskærmet worktree; kort branch fra milestone-toppen; omsætning af arbejdspakke til Spec Kit-format; jobpost med forbrug; agentlog for hvert job | Arbejdspakkers status og forbrug |
+| 7 | Kontrol | Faktakontrol; kodeauditør (niveau 1) og kontekstkontrollant (niveau 2) fra en anden producent end koderen med fast kontekstpakke; rework-sløjfe og sortering mellem rework, ny udvikling og ændring af input; målinger og årsager skrives på jobposten | Kontrolresultater pr. arbejdspakke |
+| 8 | Milestone-branch | Kortlivet branch genbaseret på `main` ved sprintstart; binding af pakker til commit, kravspec-revision og kontraktversion med genbasering ved forældelse; samling, sprintmærker og kassering, fuld test, projektlederens godkendelse, én PR til main og tag `known-good/<milestone>`; backup af database og kopi uden for GitHub ved hvert tag; tilbagerulning til kendt godt punkt | Dagseftersyn, milestone-godkendelse og tilbagerulning |
 | 8a | Første gennemløb | Hele kæden på husregel-registeret med Claude Code og Codex parallelt på samme kontrakter; manuelle trin registreres; målinger af integrationsfejl, kontraktbrud og indgreb (se "Første gennemløb") | Dokumenteret kørsel med målinger |
 | 9 | Opdragskontrol og ændringsløb | Kode mod kravspec begge veje, dagligt og ved main; rework eller ændringsforslag; ny kravspec-version rulles ned gennem alle led med kvittering | Opfyldelse krav for krav; ændringsforslag og konsekvensrapport |
 | 10 | Styring og erfaring | Projektassistent, dagsrapport, tolerancer og undtagelsesrapporter, retrospektiv, regelsløjfe | Dagsrapport, undtagelsesrapporter, husregler og tolerancer |
@@ -519,3 +570,4 @@ V2: økonomilag. Venter til senere: autonominiveauer, Redmine, deploy.
 - Hvem der kan bedømme kode og arkitektur fagligt, når kontrollerne er uenige.
 - Om DeepSeek og Rool kan køre som kodeagenter gennem et åbent værktøj.
 - Om GUI'en skal blive i Streamlit.
+- Hvor kopien uden for GitHub skal ligge (UpCloud er foreslået).
