@@ -43,6 +43,10 @@ def test_every_prompt_belongs_to_an_agent_role_and_has_one_active_version() -> N
     assert registry.purposes()
     for role, purpose in registry.purposes():
         assert catalog.role(role).kind is RoleKind.AGENT
+        if all(
+            p.status is PromptStatus.RETIRED for p in registry.versions(role, purpose)
+        ):
+            continue  # out of use, e.g. coder/build_contract_foundation (now the test designer's)
         active = registry.active(role, purpose)
         assert (
             active.status is PromptStatus.ACTIVE
@@ -160,3 +164,17 @@ def test_a_trial_version_runs_beside_the_active_one(tmp_path) -> None:
     )
     with pytest.raises(PromptRegistryError, match="trial"):
         PromptRegistry.load(root)
+
+
+def test_the_contract_foundation_prompt_moved_to_the_test_designer() -> None:
+    registry = default_registry()
+    assert (
+        registry.versions("coder", "build_contract_foundation")[-1].status
+        is PromptStatus.RETIRED
+    )
+    assert (
+        "test designer"
+        in registry.active("test_designer", "build_contract_foundation").text
+    )
+    with pytest.raises(PromptRegistryError, match="retired"):
+        registry.active("coder", "build_contract_foundation")

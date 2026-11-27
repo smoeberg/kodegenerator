@@ -68,7 +68,7 @@ from execution.package_control import (
 )
 from execution.role_dialogue import call_role, fingerprint
 from execution.task_compiler import CONTRACT_ROOT
-from execution.worker_adapter import CODER_ROLE, WorkerResult
+from execution.worker_adapter import CODER_ROLE, TEST_DESIGNER_ROLE, WorkerResult
 from services.bot_llm_runtime import BoundModel
 from services.factory_workspace import FactoryWorkspaceError, FactoryWorkspaceManager
 
@@ -523,6 +523,7 @@ class MilestoneRunner:
                 status=result["status"],
                 binding=result.get("binding"),
                 merged_sha=result.get("merged_sha"),
+                delivered_by=result.get("delivered_by"),
             )
             if result["status"] != "merged":
                 exceptions.append(task_id)
@@ -556,6 +557,7 @@ class MilestoneRunner:
             organization_id=context["organization_id"],
             actor_id=context["actor_id"],
             architecture=context["architecture"],
+            test_designer=self._test_designer(state),
             run_id=f"{milestone_id}-{context['run_id']}"
             + ("-rebuild" if redelivered else ""),
         )
@@ -643,6 +645,7 @@ class MilestoneRunner:
                     actor_id=context["actor_id"],
                     run_key=f"{context['execution_id']}:{package['logical_task_id']}:recheck:{rebased[:12]}",
                     architecture=context["architecture"],
+                    test_designer=self._test_designer(state),
                 )
                 result["agent_jobs"] = list(recheck.get("agent_jobs") or [])
                 result["recheck"] = {
@@ -669,12 +672,29 @@ class MilestoneRunner:
                 **result,
                 "status": "merged",
                 "merged_sha": head,
+                "delivered_by": {
+                    "role": outcome["delivery"]["coder_job"].get("role"),
+                    "brand": outcome["delivery"]["coder_job"]["agent"]["brand"],
+                    "tool": outcome["delivery"]["coder_job"]["agent"].get("tool"),
+                    "session_id": outcome["delivery"]["coder_job"]["session_id"],
+                },
                 "binding": {**binding, "start_sha": top}
                 if result["rechecked"]
                 else dict(binding),
                 "reason": "merged"
                 + (" after rebase and recheck" if result["rechecked"] else ""),
             }
+
+    @staticmethod
+    def _test_designer(state: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Who wrote the merged contract foundation, the acceptance tests modules are judged by."""
+        for item in state["packages"].values():
+            if (
+                item.get("task_type") == "contract_foundation"
+                and item["status"] == "merged"
+            ):
+                return item.get("delivered_by")
+        return None
 
     def _rebase_package(self, head: str, *, onto: str, upstream: str) -> str | None:
         with self._workspaces.checkout(head) as path:
@@ -800,7 +820,7 @@ class MilestoneRunner:
             for result in (sprint.get("packages") or {}).values()
             if result.get("status") == "merged"
             for job in result.get("agent_jobs") or []
-            if job.get("role") == CODER_ROLE
+            if job.get("role") in {CODER_ROLE, TEST_DESIGNER_ROLE}
         }
         try:
             validate_assignment(

@@ -130,8 +130,8 @@ def factory(tmp_path):
     def build(
         coder: DispatchCoder,
         *,
-        whole_brand="openai",
-        controller_brand="openai",
+        whole_brand="google",
+        controller_brand="google",
         answers=40,
     ):
         workspaces = FactoryWorkspaceManager(root)
@@ -141,14 +141,19 @@ def factory(tmp_path):
         control = PackageControl(
             workspaces,
             bound_model(
-                ScriptedProvider("openai", [APPROVE] * answers),
-                brand="openai",
+                ScriptedProvider("google", [APPROVE] * answers),
+                brand="google",
                 bot_profile_id="auditor",
             ),
             bound_model(
                 ScriptedProvider("openai", [APPROVE] * answers),
                 brand=controller_brand,
                 bot_profile_id="controller",
+            ),
+            security=bound_model(
+                ScriptedProvider("google", [APPROVE] * answers),
+                brand="google",
+                bot_profile_id="security",
             ),
             house_rules=[],
         )
@@ -175,12 +180,19 @@ def run_sprint(runner, plan, sprint):
         plan,
         contracts(),
         KRAVSPEC,
-        coder=AgentChoice("claude-code", "sk-a"),
+        coder=CODERS,
         fresh_coder=None,
         execution_id="wf-1",
         organization_id="org-1",
         actor_id="pm",
     )
+
+
+def CODERS(package):
+    """The test designer (Anthropic) writes the foundation; coders (OpenAI) the modules."""
+    if package["task_type"] == "contract_foundation":
+        return AgentChoice("claude-code", "sk-a")
+    return AgentChoice("codex", "sk-o")
 
 
 def start(runner, plan, **kwargs):
@@ -256,10 +268,19 @@ def test_a_milestone_from_main_to_known_good(factory, plan, tmp_path) -> None:
     assert sorted(r["rechecked"] for r in results.values()) == [False, True]
     rechecked = next(r for r in results.values() if r["rechecked"])
     assert rechecked["recheck"]["status"] == "passed"
-    assert [j["role"] for j in rechecked["agent_jobs"]][-2:] == [
+    assert [j["role"] for j in rechecked["agent_jobs"]][-3:] == [
         "code_auditor",
+        "security_reviewer",
         "context_controller",
     ]
+    # The foundation was the test designer's; the modules were coded by another producer.
+    assert (
+        state["packages"]["contract-foundation"]["delivered_by"]["role"]
+        == "test_designer"
+    )
+    assert {state["packages"][t]["delivered_by"]["brand"] for t in results} == {
+        "openai"
+    }
     assert git(root, "branch", "--list", "factory/*") == ""
     for path in ("src/rules/store.py", "src/metrics/record.py", "contracts/rules.py"):
         assert git(root, "cat-file", "-t", f"milestone/M1:{path}") == "blob"

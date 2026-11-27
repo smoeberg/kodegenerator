@@ -139,8 +139,8 @@ roles:
     layer: production
     authority: produces
     input: Acceptkriterier og kontrakter
-    output: Accepttests skrevet før kodningen, uafhængigt af koderen
-    controlled_by: [fact_check, context_controller, system_architect]
+    output: Kontraktfundamentet (grænseflader, typer og accepttests) skrevet før kodningen, uafhængigt af koderen
+    controlled_by: [fact_check, code_auditor, security_reviewer, context_controller, system_architect]
 
   - id: prompt_producer
     name: Promptproducent
@@ -245,6 +245,7 @@ pipeline_task_roles:
   generate_contracts: contract_author
   generate_code: coder
   generate_tests: coder
+  build_contract_foundation: test_designer
   run_tests: fact_check
   deploy: orchestrator
   release: orchestrator

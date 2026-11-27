@@ -43,6 +43,7 @@ from services.agent_log_store import FileAgentLogStore
 from services.factory_workspace import FactoryWorkspaceError, FactoryWorkspaceManager
 
 CODER_ROLE = "coder"
+TEST_DESIGNER_ROLE = "test_designer"
 HOUSE_RULES_PATH = (
     Path(__file__).resolve().parents[1] / "docs" / "plan" / "HUSREGLER_V1.md"
 )
@@ -134,6 +135,15 @@ def active_house_rules(path: Path = HOUSE_RULES_PATH) -> list[dict[str, str]]:
     ]
 
 
+def role_for(package: Mapping[str, Any]) -> str:
+    """The contract foundation is the test designer's (decision 43); modules are the coder's."""
+    return (
+        TEST_DESIGNER_ROLE
+        if package.get("task_type") == "contract_foundation"
+        else CODER_ROLE
+    )
+
+
 def build_task(
     package: Mapping[str, Any],
     contracts: Mapping[str, Any],
@@ -188,7 +198,8 @@ def build_task(
     allowed = ", ".join(package["write_scope"]["allowed_paths"])
     foundation = package.get("task_type") == "contract_foundation"
     task_prompt = prompt_for(
-        CODER_ROLE, "build_contract_foundation" if foundation else "implement_module"
+        TEST_DESIGNER_ROLE if foundation else CODER_ROLE,
+        "build_contract_foundation" if foundation else "implement_module",
     )
     used = [task_prompt]
     sections = [
@@ -198,7 +209,9 @@ def build_task(
         "",
     ]
     if rework_findings:
-        rework_prompt = prompt_for(CODER_ROLE, "rework_package")
+        rework_prompt = prompt_for(
+            CODER_ROLE, "rework_package"
+        )  # same rules for both roles
         used.append(rework_prompt)
         sections += [rework_prompt.text.strip(), ""]
     packet["prompt_versions"] = [p.ref for p in used]
@@ -455,7 +468,7 @@ class WorkerAdapter:
             reference = self._logs.put(
                 {
                     "task_format": TASK_FORMAT_VERSION,
-                    "role": CODER_ROLE,
+                    "role": role_for(package),
                     "agent": {
                         "tool": command.tool,
                         "brand": command.brand,
@@ -493,7 +506,7 @@ class WorkerAdapter:
             patch_fingerprint=attestation.get("patch_fingerprint"),
             log_reference=reference,
             agent_job={
-                "role": CODER_ROLE,
+                "role": role_for(package),
                 "session_id": session_id,
                 "agent": {
                     "tool": command.tool,
