@@ -21,8 +21,13 @@ import yaml
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Protocol
 
+from domain.agent_job import AgentJobRecord, AgentJobStatus, job_id_for
 from domain.pipeline_states import PipelineState
 from domain.pipeline_task_mapping import PipelineTaskMapping
+from domain.requirements_provenance import (
+    RequirementsRef,
+    requirements_fingerprint,
+)
 from domain.task import Task, TaskStatus
 from domain.workflow import Workflow
 from runtime.core import DORRuntime
@@ -43,6 +48,16 @@ _SUPPORTED_GATE_DECISIONS = frozenset({"approved", "rejected"})
 _REWORK_GATE_TASK_STATES = {
     "gate_architecture_approval": PipelineState.ARCHITECTURE_GENERATING,
     "gate_contracts_approval": PipelineState.CONTRACTS_GENERATING,
+}
+# Role of the agent that performs each pipeline task type (job records).
+_TASK_ROLES = {
+    "generate_architecture": "architect",
+    "generate_contracts": "contract_author",
+    "generate_code": "coder",
+    "generate_tests": "test_author",
+    "run_tests": "verifier",
+    "deploy": "release",
+    "release": "release",
 }
 _ACTIVE_REWORK_TASK_STATUSES = frozenset(
     {
@@ -78,6 +93,7 @@ class PipelineOrchestrator:
         # In-memory workflow/task registry (independent of DORRuntime).
         self._workflows: Dict[str, Workflow] = {}
         self._tasks: Dict[str, Task] = {}
+        self._jobs: dict[str, AgentJobRecord] = {}
         self._task_queue = task_queue
         self._state_store = state_store or self._configured_state_store()
         self._restore()
@@ -206,6 +222,7 @@ class PipelineOrchestrator:
             created_by=created_by,
         )
         self._workflows[workflow.id] = workflow
+        self._bind_requirements(workflow, workflow.context["requirements"])
         # Validate requirements => REQUIREMENTS_VALIDATED
         self._transition(
             workflow,
@@ -253,6 +270,7 @@ class PipelineOrchestrator:
         if not isinstance(spec, dict):
             raise ValueError("Empty or invalid YAML content")
         self._adapter._validate_spec(spec)
+        self._bind_requirements(workflow, spec)
         workflow.context["requirements"] = spec
         workflow.context["project_name"] = spec.get("project_name")
         workflow.context["requirements_version"] = spec.get("version", "1.0")
@@ -292,6 +310,7 @@ class PipelineOrchestrator:
             "created_at": workflow.created_at.isoformat(),
             "updated_at": workflow.updated_at.isoformat(),
             "error": (workflow.context or {}).get("error"),
+            "jobs": [job.to_dict() for job in self.list_job_records(workflow_id)],
         }
 
     def advance_pipeline(self, workflow_id: str) -> None:
@@ -340,7 +359,7 @@ class PipelineOrchestrator:
                 },
             )
             task.status = TaskStatus.PENDING
-            self._tasks[task.id] = task
+            self._register_task(workflow, task)
             self._publish_task(task)
             self._persist()
             logger.info("Created task %s for pipeline %s", task.name, workflow_id)
@@ -366,12 +385,17 @@ class PipelineOrchestrator:
         if workflow is None:
             return
 
+        if self._is_stale_against_requirements(workflow, task):
+            return
+
         if (task.metadata or {}).get("rework_gate_id"):
             self._handle_rework_task_completion(workflow, task)
             return
 
         if getattr(task, "result", None):
             workflow.context.update(task.result)
+        self._record_artifact_provenance(workflow, task, task_type)
+        self._close_job(task, AgentJobStatus.SUCCEEDED)
 
         # A completed task clears its pending gate (if any).
         task.status = TaskStatus.SUCCEEDED
@@ -650,7 +674,7 @@ class PipelineOrchestrator:
             },
         )
         task.status = TaskStatus.PENDING
-        self._tasks[task.id] = task
+        self._register_task(workflow, task)
         history.append(
             {
                 "gate_id": gate_id,
@@ -774,6 +798,11 @@ class PipelineOrchestrator:
                 task.id,
                 status="stale_completion",
             )
+            self._close_job(
+                task,
+                AgentJobStatus.REJECTED_STALE,
+                error="stale gate round",
+            )
             self._persist()
             logger.warning(
                 "Ignoring stale rework completion %s for gate %s (from_round=%s, current_round=%s, decision=%s)",
@@ -787,6 +816,10 @@ class PipelineOrchestrator:
 
         if getattr(task, "result", None):
             workflow.context.update(task.result)
+        self._record_artifact_provenance(
+            workflow, task, str(metadata.get("task_type") or task.name)
+        )
+        self._close_job(task, AgentJobStatus.SUCCEEDED)
 
         next_round = current_round + 1
         self._replace_rework_history_record(
@@ -916,6 +949,160 @@ class PipelineOrchestrator:
             return None
         return next_state
 
+    # ------------------------------------------------------------------ #
+    # Requirements provenance and job records (completion plan, step 1)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def current_requirements_ref(workflow: Workflow) -> RequirementsRef | None:
+        raw = (workflow.context or {}).get("requirements_ref")
+        return RequirementsRef.from_dict(raw) if raw else None
+
+    def _bind_requirements(self, workflow: Workflow, spec: Mapping[str, Any]) -> None:
+        """Bind ``spec`` as the current requirements revision.
+
+        An unchanged spec keeps its revision; a changed spec becomes a new
+        revision and the previous reference is kept in the history.
+        """
+        context = workflow.context
+        current = self.current_requirements_ref(workflow)
+        if current is not None and current.fingerprint == requirements_fingerprint(spec):
+            return
+        revision = 1 if current is None else current.revision + 1
+        ref = RequirementsRef.derive(spec, revision)
+        if current is not None:
+            history = list(context.get("requirements_history", []) or [])
+            history.append(
+                {
+                    **current.to_dict(),
+                    "superseded_by": revision,
+                    "superseded_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            context["requirements_history"] = history
+        context["requirements_ref"] = ref.to_dict()
+
+    def _register_task(self, workflow: Workflow, task: Task) -> None:
+        """Stamp a new task with the current requirements and open its job."""
+        ref = self.current_requirements_ref(workflow)
+        spec = (workflow.context or {}).get("requirements")
+        if ref is None and isinstance(spec, Mapping):
+            # Pipeline restored from a snapshot written before provenance
+            # existed: its current requirements become revision 1.
+            self._bind_requirements(workflow, spec)
+            ref = self.current_requirements_ref(workflow)
+        metadata = dict(task.metadata or {})
+        if ref is not None:
+            metadata["requirements_ref"] = ref.to_dict()
+        else:
+            logger.warning(
+                "Task %s created without requirements provenance: pipeline %s "
+                "has no requirements spec",
+                task.id,
+                workflow.id,
+            )
+        task.metadata = metadata
+        self._tasks[task.id] = task
+        self._open_job(task, attempt=1)
+
+    def _open_job(self, task: Task, *, attempt: int) -> AgentJobRecord:
+        metadata = dict(task.metadata or {})
+        task_type = str(metadata.get("task_type") or task.name)
+        raw_ref = metadata.get("requirements_ref")
+        record = AgentJobRecord(
+            job_id=job_id_for(task.id, attempt),
+            organization_id=metadata.get("organization_id"),
+            workflow_id=str(task.workflow_id),
+            task_id=task.id,
+            task_type=task_type,
+            role=_TASK_ROLES.get(task_type, task_type),
+            attempt=attempt,
+            requirements=RequirementsRef.from_dict(raw_ref) if raw_ref else None,
+        )
+        self._jobs[record.job_id] = record
+        return record
+
+    def _current_job(self, task_id: str) -> AgentJobRecord | None:
+        jobs = [job for job in self._jobs.values() if job.task_id == task_id]
+        return max(jobs, key=lambda job: job.attempt) if jobs else None
+
+    def record_job_started(self, task_id: str, worker_id: str) -> None:
+        job = self._current_job(task_id)
+        if job is None or job.closed:
+            return
+        self._jobs[job.job_id] = job.start(worker_id)
+        self._persist()
+
+    def record_job_failed(self, task_id: str, error: str, *, retrying: bool) -> None:
+        """Close the current attempt as failed; open the next one on retry."""
+        job = self._current_job(task_id)
+        if job is None or job.closed:
+            return
+        self._jobs[job.job_id] = job.close(AgentJobStatus.FAILED, error=error)
+        task = self._tasks.get(task_id)
+        if retrying and task is not None:
+            self._open_job(task, attempt=job.attempt + 1)
+        self._persist()
+
+    def _close_job(
+        self, task: Task, status: AgentJobStatus, *, error: str | None = None
+    ) -> None:
+        job = self._current_job(task.id)
+        if job is None or job.closed:
+            return
+        result = getattr(task, "result", None)
+        usage = result.get("usage") if isinstance(result, Mapping) else None
+        self._jobs[job.job_id] = job.close(
+            status,
+            error=error,
+            usage=usage if isinstance(usage, Mapping) else None,
+        )
+
+    def _is_stale_against_requirements(self, workflow: Workflow, task: Task) -> bool:
+        """Reject a result produced from a superseded requirements revision.
+
+        Tasks created before provenance existed carry no reference and are
+        accepted unchanged.
+        """
+        raw = (task.metadata or {}).get("requirements_ref")
+        current = self.current_requirements_ref(workflow)
+        if not raw or current is None:
+            return False
+        task_ref = RequirementsRef.from_dict(raw)
+        if task_ref.same_revision(current):
+            return False
+        task.status = TaskStatus.FAILED
+        task.last_error = (
+            f"stale requirements: task built on revision {task_ref.revision}, "
+            f"current revision is {current.revision}"
+        )
+        self._tasks[task.id] = task
+        self._close_job(task, AgentJobStatus.REJECTED_STALE, error=task.last_error)
+        self._persist()
+        logger.warning("Rejected stale result of task %s: %s", task.id, task.last_error)
+        return True
+
+    @staticmethod
+    def _record_artifact_provenance(
+        workflow: Workflow, task: Task, task_type: str
+    ) -> None:
+        raw = (task.metadata or {}).get("requirements_ref")
+        provenance = dict(workflow.context.get("artifact_provenance", {}) or {})
+        provenance[task_type] = {
+            "task_id": task.id,
+            "requirements_ref": dict(raw) if raw else None,
+            "result_keys": sorted((getattr(task, "result", None) or {}).keys())
+            if isinstance(getattr(task, "result", None), Mapping)
+            else [],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        workflow.context["artifact_provenance"] = provenance
+
+    def list_job_records(self, workflow_id: str) -> list[AgentJobRecord]:
+        return sorted(
+            (job for job in self._jobs.values() if job.workflow_id == workflow_id),
+            key=lambda job: (job.created_at, job.attempt),
+        )
+
     def list_tasks(self, workflow_id: str) -> list[Task]:
         return [t for t in self._tasks.values() if t.workflow_id == workflow_id]
 
@@ -954,6 +1141,7 @@ class PipelineOrchestrator:
                     key: self._task_snapshot(value)
                     for key, value in self._tasks.items()
                 },
+                "jobs": {key: value.to_dict() for key, value in self._jobs.items()},
             }
         )
 
@@ -972,10 +1160,16 @@ class PipelineOrchestrator:
                 key: self._task_from_snapshot(value)
                 for key, value in dict(snapshot.get("tasks", {})).items()
             }
+            # Snapshots written before job records existed have no "jobs".
+            self._jobs = {
+                key: AgentJobRecord.from_dict(value)
+                for key, value in dict(snapshot.get("jobs", {}) or {}).items()
+            }
         except (KeyError, TypeError, ValueError):
             logger.exception("invalid pipeline snapshot; refusing partial restore")
             self._workflows = {}
             self._tasks = {}
+            self._jobs = {}
             raise
 
     @staticmethod
