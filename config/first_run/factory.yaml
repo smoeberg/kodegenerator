@@ -1,0 +1,78 @@
+# First end-to-end run (completion plan step 8a): who holds which role.
+#
+# Decided by the project board on 2026-11-27: workers on a new UpCloud
+# machine, Mistral as the third producer, backup in UpCloud Object Storage.
+# Three producers are the minimum: the test designer, the coders and every
+# control and governance role must each come from a different producer.
+#
+#   Anthropic  - test designer (Claude Code) and the producing council roles
+#   OpenAI     - coders (Codex)
+#   Mistral    - every control and governance role
+#
+# This file is data. `python -m execution.first_run check` validates it
+# against the role catalog before anything is created. API keys are never in
+# this file: each connection names the environment variable the operator
+# sets on the worker host, and `setup` stores the key encrypted through the
+# DOR API.
+
+first_run_version: 1
+project: husregel-register
+
+connections:
+  - connection_id: anthropic-api
+    brand: anthropic
+    adapter_type: anthropic
+    endpoint: https://api.anthropic.com/v1
+    key_env: ANTHROPIC_API_KEY
+    data_boundary: global
+  - connection_id: mistral-api
+    brand: mistral
+    adapter_type: mistral
+    endpoint: https://api.mistral.ai/v1
+    key_env: MISTRAL_API_KEY
+    region: eu
+    data_boundary: eu
+
+deployments:
+  - deployment_id: claude-opus
+    connection_id: anthropic-api
+    model_id: claude-opus-5-5
+    model_family: claude
+    max_context_tokens: 200000
+    max_output_tokens: 16000
+  - deployment_id: mistral-large
+    connection_id: mistral-api
+    model_id: mistral-large-latest
+    model_family: mistral
+    max_context_tokens: 128000
+    max_output_tokens: 16000
+
+# One bot profile per council or control role; env is the variable DOR reads.
+profiles:
+  - {role: architect, bot_profile_id: fr-architect, deployment_id: claude-opus, env: DOR_ARCHITECT_BOT_PROFILE}
+  - {role: architecture_reviewer, bot_profile_id: fr-architecture-reviewer, deployment_id: mistral-large, env: DOR_ARCHITECTURE_REVIEWER_BOT_PROFILE}
+  - {role: contract_author, bot_profile_id: fr-contract-author, deployment_id: claude-opus, env: DOR_CONTRACT_AUTHOR_BOT_PROFILE}
+  - {role: context_controller, bot_profile_id: fr-context-controller, deployment_id: mistral-large, env: DOR_CONTEXT_CONTROLLER_BOT_PROFILE}
+  - {role: task_producer, bot_profile_id: fr-task-producer, deployment_id: claude-opus, env: DOR_TASK_PRODUCER_BOT_PROFILE}
+  - {role: system_architect, bot_profile_id: fr-system-architect, deployment_id: mistral-large, env: DOR_SYSTEM_ARCHITECT_BOT_PROFILE}
+  - {role: code_auditor, bot_profile_id: fr-code-auditor, deployment_id: mistral-large, env: DOR_CODE_AUDITOR_BOT_PROFILE}
+  - {role: security_reviewer, bot_profile_id: fr-security-reviewer, deployment_id: mistral-large, env: DOR_SECURITY_REVIEWER_BOT_PROFILE}
+  - {role: product_owner, bot_profile_id: fr-product-owner, deployment_id: mistral-large, env: DOR_PRODUCT_OWNER_BOT_PROFILE}
+  - {role: release_manager, bot_profile_id: fr-release-manager, deployment_id: mistral-large, env: DOR_RELEASE_MANAGER_BOT_PROFILE}
+
+# Ready-made coding agents run by the worker adapter on the worker host.
+agents:
+  test_designer: {agent: claude-code, brand: anthropic, key_env: ANTHROPIC_API_KEY}
+  coder: {agent: codex, brand: openai, key_env: OPENAI_API_KEY}
+
+budget:
+  max_input_tokens: 120000
+  max_output_tokens: 16000
+
+backup:
+  # UpCloud Object Storage (S3-compatible). Credentials come from the
+  # environment of the worker host, never from this file.
+  endpoint_env: DOR_BACKUP_S3_ENDPOINT
+  bucket_env: DOR_BACKUP_S3_BUCKET
+  access_key_env: DOR_BACKUP_S3_ACCESS_KEY
+  secret_key_env: DOR_BACKUP_S3_SECRET_KEY

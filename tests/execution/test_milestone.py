@@ -27,7 +27,9 @@ from execution.worker_adapter import AgentRun, WorkerAdapter
 from services.agent_log_store import FileAgentLogStore
 from services.bot_llm_runtime import bound_model
 from services.factory_workspace import FactoryWorkspaceManager
+from services.offsite_backup import OffsiteBackup
 from tests.execution.test_contract_council import KRAVSPEC, ScriptedProvider, contracts
+from tests.execution.test_first_run import FakeBucket
 
 APPROVE = {"verdict": "approve", "findings": []}
 READY = {
@@ -328,9 +330,23 @@ def test_a_milestone_from_main_to_known_good(factory, plan, tmp_path) -> None:
     # The one PR to main (merged here by hand).
     git(root, "merge", "-q", "--no-ff", "-m", "Merge milestone M1", "milestone/M1")
     merged = git(root, "rev-parse", "main")
+    bucket = FakeBucket()
     state = runner.mark_merged(
-        "M1", main_sha=merged, actor="pm", backup_dir=tmp_path / "backup"
+        "M1",
+        main_sha=merged,
+        actor="pm",
+        backup_dir=tmp_path / "backup",
+        offsite=OffsiteBackup(bucket, "dor-backup"),
     )
+    # Decision 38: bundle, state and release evidence also outside GitHub.
+    assert sorted(bucket.objects) == sorted(
+        [
+            "dor/M1/M1-release-evidence.json",
+            "dor/M1/M1-state.json",
+            f"dor/M1/M1-{merged[:12]}.bundle",
+        ]
+    )
+    assert len(state["backup"]["offsite"]) == 3
 
     assert state["status"] == "merged"
     assert git(root, "rev-parse", "known-good/M1") == merged
