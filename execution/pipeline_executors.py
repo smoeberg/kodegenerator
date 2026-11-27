@@ -580,6 +580,8 @@ class ContractsExecutor:
         return result
 
 
+    _compile_work_plan = staticmethod(lambda *args: _compile_contract_work_plan(*args))
+
     def _execute_council(
         self, council: Any, payload: Mapping[str, Any], architecture: Mapping[str, Any]
     ) -> dict[str, Any]:
@@ -602,10 +604,12 @@ class ContractsExecutor:
             run_key=str(payload.get("task_id") or payload.get("workflow_id")),
         )
         agent_jobs = outcome.pop("agent_jobs")
+        work_plan = self._compile_work_plan(payload, architecture, outcome)
         return {
             "status": "success",
             "component": "execution/contract_council",
             "agent_jobs": agent_jobs,
+            "work_plan": work_plan,
             "contracts": {
                 "modules": outcome["proposal"]["modules"],
                 "acceptance_criteria": outcome["proposal"]["acceptance_criteria"],
@@ -619,6 +623,35 @@ class ContractsExecutor:
                 "council": outcome,
             },
         }
+
+
+def _compile_contract_work_plan(
+    payload: Mapping[str, Any],
+    architecture: Mapping[str, Any],
+    outcome: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Step 5: compile approved-shape contracts into a work plan.
+
+    Only contracts that pass the deterministic fact check are compiled; with
+    open fact-check findings there is nothing safe to plan, and the contracts
+    gate shows the disagreement instead.
+    """
+    from execution.task_compiler import compile_work_plan
+
+    if any(f.get("source") == "fact_check" for f in outcome.get("open_findings") or []):
+        return None
+    context = payload.get("context") or {}
+    requirements_ref = payload.get("requirements_ref") or context.get("requirements_ref") or {}
+    limit = os.getenv("DOR_MAX_PARALLEL_PACKAGES", "").strip()
+    return compile_work_plan(
+        outcome["proposal"],
+        workflow_id=str(payload.get("workflow_id") or ""),
+        organization_id=str(payload.get("organization_id") or ""),
+        contract_fingerprint=str(outcome["contract_fingerprint"]),
+        architecture_fingerprint=str((architecture.get("council") or {}).get("proposal_fingerprint") or ""),
+        requirements_fingerprint=str(requirements_ref.get("fingerprint") or ""),
+        max_parallel_packages=int(limit) if limit else None,
+    )
 
 
 def default_contract_council(payload: Mapping[str, Any]) -> Any:
