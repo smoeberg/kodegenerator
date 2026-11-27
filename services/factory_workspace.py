@@ -153,13 +153,18 @@ class FactoryWorkspaceManager:
             operation=lambda: self._push(workspace, remote, request["head_sha"]),
         )
 
-    def cleanup(self, workspace: CandidateWorkspace) -> None:
+    def cleanup(
+        self, workspace: CandidateWorkspace, *, discard_branch: bool = False
+    ) -> None:
+        """Remove the worktree; ``discard_branch`` also drops a rejected candidate."""
         with self._repository_admin():
             try:
                 self._git("worktree", "remove", "--force", str(workspace.path))
             finally:
                 shutil.rmtree(workspace.path, ignore_errors=True)
                 self._git("worktree", "prune")
+                if discard_branch:
+                    self._git("branch", "-D", workspace.branch)
 
     def _push(self, workspace: CandidateWorkspace, remote: str, head_sha: str) -> dict:
         existing = self._git_at(
