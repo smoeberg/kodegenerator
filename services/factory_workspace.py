@@ -6,8 +6,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+try:  # POSIX; DOR runs on Linux. Without it only the in-process lock applies.
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None  # type: ignore[assignment]
 
 from domain.factory_work import WriteScope, fingerprint
 
@@ -15,6 +23,14 @@ from .side_effects import SideEffectCoordinator
 
 _SHA = re.compile(r"^[a-f0-9]{40}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+# Git does not support concurrent `worktree add/remove/prune` or branch
+# creation in one repository: parallel calls can read another call's
+# half-written `.git/worktrees/*` files ("failed to read ... commondir").
+# These operations are therefore serialized per repository, in-process with a
+# thread lock and across processes with an advisory lock in the git dir.
+_ADMIN_LOCKS: dict[Path, threading.Lock] = {}
+_ADMIN_LOCKS_GUARD = threading.Lock()
 
 
 class FactoryWorkspaceError(RuntimeError):
@@ -33,7 +49,26 @@ class CandidateWorkspace:
 class FactoryWorkspaceManager:
     def __init__(self, repository: str | Path) -> None:
         self._repository = Path(repository).resolve()
-        self._git("rev-parse", "--git-dir")
+        common_dir = Path(self._git("rev-parse", "--git-common-dir").strip())
+        if not common_dir.is_absolute():
+            common_dir = (self._repository / common_dir).resolve()
+        self._admin_lock_path = common_dir / "dor-worktree-admin.lock"
+        with _ADMIN_LOCKS_GUARD:
+            self._admin_lock = _ADMIN_LOCKS.setdefault(common_dir, threading.Lock())
+
+    @contextmanager
+    def _repository_admin(self) -> Iterator[None]:
+        """Serialize git operations that change shared repository metadata."""
+        with self._admin_lock:
+            if fcntl is None:
+                yield
+                return
+            with open(self._admin_lock_path, "a+") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def create(
         self, *, execution_id: str, candidate_id: str, base_sha: str
@@ -46,11 +81,12 @@ class FactoryWorkspaceManager:
         if resolved != base_sha:
             raise FactoryWorkspaceError("base SHA did not resolve exactly")
         branch = f"factory/{execution_id}/{candidate_id}".lower().replace(":", "-")
-        if self._git("branch", "--list", branch).strip():
-            raise FactoryWorkspaceError("candidate branch already exists")
         path = Path(tempfile.mkdtemp(prefix="dor-candidate-"))
         try:
-            self._git("worktree", "add", "-b", branch, str(path), base_sha)
+            with self._repository_admin():
+                if self._git("branch", "--list", branch).strip():
+                    raise FactoryWorkspaceError("candidate branch already exists")
+                self._git("worktree", "add", "-b", branch, str(path), base_sha)
         except Exception:
             shutil.rmtree(path, ignore_errors=True)
             raise
@@ -118,11 +154,12 @@ class FactoryWorkspaceManager:
         )
 
     def cleanup(self, workspace: CandidateWorkspace) -> None:
-        try:
-            self._git("worktree", "remove", "--force", str(workspace.path))
-        finally:
-            shutil.rmtree(workspace.path, ignore_errors=True)
-            self._git("worktree", "prune")
+        with self._repository_admin():
+            try:
+                self._git("worktree", "remove", "--force", str(workspace.path))
+            finally:
+                shutil.rmtree(workspace.path, ignore_errors=True)
+                self._git("worktree", "prune")
 
     def _push(self, workspace: CandidateWorkspace, remote: str, head_sha: str) -> dict:
         existing = self._git_at(
