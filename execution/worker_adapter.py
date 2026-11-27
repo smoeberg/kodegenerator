@@ -214,7 +214,8 @@ def build_task(
             ),
             (
                 "Write the interfaces, types and contract tests for every module contract below. "
-                "Tests must fail until the modules are implemented. Do not implement modules."
+                "Put each module's contract tests in a file of their own under contracts/; "
+                "they must fail until the module is implemented. Do not implement modules."
                 if foundation
                 else "Implement the module against its contract and the shared interfaces under contracts/. "
                 "Do not change contracts/."
