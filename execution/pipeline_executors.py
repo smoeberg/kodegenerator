@@ -517,11 +517,13 @@ class ContractsExecutor:
         contract_backend: ContractGenerator | None = None,
         llm_runtime: GovernedLLMRuntime | None = None,
         council_factory: Callable[[Mapping[str, Any]], Any] | None = None,
+        task_council_factory: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         self._backend = backend or ProjectRenderer()
         self._contract_backend = contract_backend or ContractGenerator()
         self._llm_runtime = llm_runtime
         self._council_factory = council_factory or default_contract_council
+        self._task_council_factory = task_council_factory or default_task_council
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         architecture = payload.get("architecture") or payload.get("context", {}).get(
@@ -604,12 +606,32 @@ class ContractsExecutor:
             run_key=str(payload.get("task_id") or payload.get("workflow_id")),
         )
         agent_jobs = outcome.pop("agent_jobs")
-        work_plan = self._compile_work_plan(payload, architecture, outcome)
+        split, task_council = None, None
+        tasks = self._task_council_factory(payload)
+        if tasks is not None and not _has_fact_check_findings(outcome):
+            # Decision 41: the task producer splits, the compiler checks, the
+            # system architect challenges. No agreed split, no work plan.
+            task_council = tasks.run(
+                outcome["proposal"],
+                approved,
+                kravspec,
+                organization_id=str(payload.get("organization_id") or ""),
+                actor_id=str(payload.get("actor_id") or "pipeline"),
+                run_key=str(payload.get("task_id") or payload.get("workflow_id")),
+            )
+            agent_jobs = [*agent_jobs, *task_council.pop("agent_jobs")]
+            split = task_council["proposal"] if task_council["status"] == "agreed" else None
+        work_plan = (
+            None
+            if task_council is not None and split is None
+            else self._compile_work_plan(payload, architecture, outcome, split)
+        )
         return {
             "status": "success",
             "component": "execution/contract_council",
             "agent_jobs": agent_jobs,
             "work_plan": work_plan,
+            "task_council": task_council,
             "contracts": {
                 "modules": outcome["proposal"]["modules"],
                 "acceptance_criteria": outcome["proposal"]["acceptance_criteria"],
@@ -625,10 +647,21 @@ class ContractsExecutor:
         }
 
 
+def _has_fact_check_findings(outcome: Mapping[str, Any]) -> bool:
+    return any(f.get("source") == "fact_check" for f in outcome.get("open_findings") or [])
+
+
+def default_task_council(payload: Mapping[str, Any]) -> Any:
+    from execution.task_council import default_task_council as build
+
+    return build(str(payload.get("organization_id") or ""))
+
+
 def _compile_contract_work_plan(
     payload: Mapping[str, Any],
     architecture: Mapping[str, Any],
     outcome: Mapping[str, Any],
+    split: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Step 5: compile approved-shape contracts into a work plan.
 
@@ -638,7 +671,7 @@ def _compile_contract_work_plan(
     """
     from execution.task_compiler import compile_work_plan
 
-    if any(f.get("source") == "fact_check" for f in outcome.get("open_findings") or []):
+    if _has_fact_check_findings(outcome):
         return None
     context = payload.get("context") or {}
     requirements_ref = payload.get("requirements_ref") or context.get("requirements_ref") or {}
@@ -651,6 +684,7 @@ def _compile_contract_work_plan(
         architecture_fingerprint=str((architecture.get("council") or {}).get("proposal_fingerprint") or ""),
         requirements_fingerprint=str(requirements_ref.get("fingerprint") or ""),
         max_parallel_packages=int(limit) if limit else None,
+        split=split,
     )
 
 
