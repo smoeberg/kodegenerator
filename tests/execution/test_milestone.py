@@ -30,6 +30,12 @@ from services.factory_workspace import FactoryWorkspaceManager
 from tests.execution.test_contract_council import KRAVSPEC, ScriptedProvider, contracts
 
 APPROVE = {"verdict": "approve", "findings": []}
+READY = {
+    "recommendation": "ready",
+    "release_notes": "Delivers REG-01, REG-02 and REG-03 through module-rules and module-metrics.",
+    "reasons": [],
+    "risks": [],
+}
 REQUIREMENTS = "d" * 64
 
 FOUNDATION = {
@@ -133,6 +139,11 @@ def factory(tmp_path):
         whole_brand="google",
         controller_brand="google",
         answers=40,
+        governance_brand="google",
+        architect_answers=None,
+        owner_answers=None,
+        release_answers=None,
+        governance=True,
     ):
         workspaces = FactoryWorkspaceManager(root)
         adapter = WorkerAdapter(
@@ -158,6 +169,23 @@ def factory(tmp_path):
             house_rules=[],
         )
         whole = ScriptedProvider("openai", [APPROVE] * 4)
+        providers = {
+            "system_architect": ScriptedProvider(
+                "google", architect_answers or [APPROVE] * 2
+            ),
+            "product_owner": ScriptedProvider("google", owner_answers or [APPROVE] * 2),
+            "release_manager": ScriptedProvider(
+                "google", release_answers or [READY] * 2
+            ),
+        }
+        board = (
+            {
+                role: bound_model(provider, brand=governance_brand, bot_profile_id=role)
+                for role, provider in providers.items()
+            }
+            if governance
+            else None
+        )
         runner = MilestoneRunner(
             workspaces,
             PackageLine(adapter, control, workspaces),
@@ -167,7 +195,9 @@ def factory(tmp_path):
                 whole, brand=whole_brand, bot_profile_id="whole"
             ),
             max_parallel=2,
+            governance=board,
         )
+        runner.governance_providers = providers
         return runner, control, whole
 
     return root, build
@@ -526,3 +556,130 @@ def test_whole_level2_waits_for_a_controller_independent_of_every_coder(
     assert state["status"] == "running"
     assert state["milestone_review"]["status"] == "waiting"
     assert whole.prompts == []
+
+
+# --------------------------------------------------------------------- #
+# Decision 40: governance on the milestone
+# --------------------------------------------------------------------- #
+def finished(build, plan, **kwargs):
+    coder = DispatchCoder(
+        {
+            "contract-foundation": [FOUNDATION],
+            "module-rules": [RULES],
+            "module-metrics": [METRICS],
+        }
+    )
+    runner, _, _ = build(coder, **kwargs)
+    start(runner, plan)
+    foundation_sprint(runner, plan)
+    runner.start_sprint("M1", 2, actor="pm")
+    run_sprint(runner, plan, 2)
+    runner.review_sprint("M1", 2, "approved", reviewer="pm")
+    state = runner.finish(
+        "M1",
+        contracts(),
+        KRAVSPEC,
+        organization_id="org-1",
+        actor_id="pm",
+        architecture={"modules": [{"module_id": "rules"}, {"module_id": "metrics"}]},
+    )
+    return runner, state
+
+
+def test_the_board_gets_the_architect_the_owner_and_the_release_manager(
+    factory, plan
+) -> None:
+    _, build = factory
+    runner, state = finished(build, plan)
+    review = state["milestone_review"]
+    assert state["status"] == "awaiting_approval", review.get("reason")
+    assert list(review["stages"]) == [
+        "level2",
+        "architecture",
+        "mandate",
+        "checklist",
+        "release",
+    ]
+    assert all(item["holds"] for item in review["stages"]["checklist"]["items"])
+    assert review["stages"]["release"]["recommendation"] == "ready"
+    roles = [j["role"] for j in review["agent_jobs"]]
+    assert roles == [
+        "context_controller",
+        "system_architect",
+        "product_owner",
+        "release_manager",
+    ]
+    # The owner sees which criteria the factory's tests cover; the architect the architecture.
+    owner = runner.governance_providers["product_owner"].prompts[0]
+    assert "criteria_tested" in owner and "contracts/test_rules_contract.py" in owner
+    assert (
+        "approved_architecture"
+        in runner.governance_providers["system_architect"].prompts[0]
+    )
+    stats = review["statistics"]
+    assert stats["packages"]["merged"] == 3
+    assert {(r["role"], r["brand"]) for r in stats["by_role_and_producer"]} >= {
+        ("test_designer", "anthropic"),
+        ("coder", "openai"),
+        ("security_reviewer", "google"),
+        ("release_manager", "google"),
+    }
+    assert any(
+        ref.startswith("product_owner/check_mandate@v1+")
+        for ref in stats["by_prompt_version"]
+    )
+
+
+def test_without_the_governance_roles_the_milestone_waits(factory, plan) -> None:
+    _, build = factory
+    _, state = finished(build, plan, governance=False)
+    assert state["status"] == "running"
+    assert state["milestone_review"]["status"] == "waiting"
+    assert "system_architect" in state["milestone_review"]["reason"]
+
+
+def test_governance_from_a_builders_producer_waits(factory, plan) -> None:
+    _, build = factory
+    runner, state = finished(build, plan, governance_brand="openai")
+    assert state["milestone_review"]["status"] == "waiting"
+    assert "different producer" in state["milestone_review"]["reason"]
+    assert runner.governance_providers["system_architect"].prompts == []
+
+
+def test_a_mandate_finding_in_the_input_stops_the_milestone(factory, plan) -> None:
+    _, build = factory
+    contradiction = {
+        "verdict": "revise",
+        "findings": [
+            {
+                "id": "PO-1",
+                "severity": "blocking",
+                "target": "REG-02",
+                "issue": "contradicts REG-01",
+                "requirement_ids": ["REG-02"],
+                "cause": "input",
+            }
+        ],
+    }
+    runner, state = finished(build, plan, owner_answers=[contradiction])
+    review = state["milestone_review"]
+    assert (state["status"], review["status"]) == ("running", "failed")
+    assert review["stages"]["mandate"]["cause"] == "input"
+    assert "release" not in review["stages"]
+    assert runner.governance_providers["release_manager"].prompts == []
+
+
+def test_release_notes_that_invent_ids_are_not_accepted(factory, plan) -> None:
+    _, build = factory
+    invented = {
+        **READY,
+        "release_notes": "Delivers REG-01 and REG-99 through module-ghost.",
+    }
+    _, state = finished(build, plan, release_answers=[invented])
+    release = state["milestone_review"]["stages"]["release"]
+    assert (
+        release["status"] == "failed"
+        and "REG-99" in release["reason"]
+        and "module-ghost" in release["reason"]
+    )
+    assert state["status"] == "running"

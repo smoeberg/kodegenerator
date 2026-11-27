@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -66,7 +67,8 @@ from execution.package_control import (
     is_test_path,
     verify_findings,
 )
-from execution.role_dialogue import call_role, fingerprint
+from execution.role_dialogue import REVIEW_SCHEMA, call_role, fingerprint
+from execution.statistics import milestone_statistics
 from execution.task_compiler import CONTRACT_ROOT
 from execution.worker_adapter import CODER_ROLE, TEST_DESIGNER_ROLE, WorkerResult
 from services.bot_llm_runtime import BoundModel
@@ -83,6 +85,26 @@ _IDENTITY = {
 }
 
 WHOLE_LEVEL2_PROMPT = prompt("context_controller", "check_milestone")
+SYSTEM_ARCHITECT_ROLE = "system_architect"
+PRODUCT_OWNER_ROLE = "product_owner"
+RELEASE_MANAGER_ROLE = "release_manager"
+SYSTEM_ARCHITECT_PROMPT = prompt(SYSTEM_ARCHITECT_ROLE, "check_milestone")
+PRODUCT_OWNER_PROMPT = prompt(PRODUCT_OWNER_ROLE, "check_mandate")
+RELEASE_MANAGER_PROMPT = prompt(RELEASE_MANAGER_ROLE, "prepare_release")
+RELEASE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "recommendation": {"type": "string", "enum": ["ready", "not_ready"]},
+        "release_notes": {"type": "string"},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "risks": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["recommendation", "release_notes", "reasons", "risks"],
+}
+#: Requirement ids (REG-01) and work package ids (module-rules) in free text.
+_ID_IN_TEXT = re.compile(
+    r"\b(?:[A-Z]{2,}-\d{2,}|module-[a-z0-9-]+|contract-foundation)\b"
+)
 WHOLE_LEVEL2_INSTRUCTIONS = WHOLE_LEVEL2_PROMPT.text
 
 
@@ -236,6 +258,7 @@ class MilestoneRunner:
         *,
         suite_runner: SuiteRunner = run_full_suite,
         whole_controller: BoundModel | None = None,
+        governance: Mapping[str, BoundModel] | None = None,
         catalog: RoleCatalog | None = None,
         main_ref: str = "main",
         max_parallel: int | None = None,
@@ -246,6 +269,9 @@ class MilestoneRunner:
         self._store = store
         self._suite = suite_runner
         self._whole_controller = whole_controller
+        #: Governance agents on the milestone (decision 40): system_architect,
+        #: product_owner, release_manager. They recommend; the board decides.
+        self._governance = dict(governance or {})
         self._catalog = catalog or default_catalog()
         self._main_ref = main_ref
         self._max_parallel = max_parallel or int(
@@ -761,8 +787,10 @@ class MilestoneRunner:
         *,
         organization_id: str,
         actor_id: str,
+        architecture: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Rebase onto the newest ``main``, full suite, level 2 on the whole."""
+        """Rebase onto the newest ``main``, full suite, level 2 on the whole, the
+        system architect, the product owner and the release manager."""
         state = self._store.get(milestone_id)
         self._require_running(state)
         open_packages = [
@@ -787,8 +815,15 @@ class MilestoneRunner:
                 )
             review.update(
                 head_sha=new_top,
-                **self._whole_level2(
-                    state, new_top, main, contracts, kravspec, organization_id, actor_id
+                **self._milestone_stages(
+                    state,
+                    new_top,
+                    main,
+                    contracts,
+                    kravspec,
+                    organization_id,
+                    actor_id,
+                    architecture or {},
                 ),
             )
         state["milestone_review"] = review
@@ -798,7 +833,7 @@ class MilestoneRunner:
         _event(state, "milestone_reviewed", actor_id, status=review["status"])
         return self._store.put(state)
 
-    def _whole_level2(
+    def _milestone_stages(
         self,
         state: Mapping[str, Any],
         head: str,
@@ -807,40 +842,12 @@ class MilestoneRunner:
         kravspec: Mapping[str, Any],
         organization_id: str,
         actor_id: str,
+        architecture: Mapping[str, Any],
     ) -> dict[str, Any]:
-        controller = self._whole_controller
-        if controller is None:
-            return {
-                "status": "waiting",
-                "reason": "no context controller for the whole milestone",
-            }
-        coder_brands = {
-            (job["agent"]["brand"], job["session_id"])
-            for sprint in state["sprints"]
-            for result in (sprint.get("packages") or {}).values()
-            if result.get("status") == "merged"
-            for job in result.get("agent_jobs") or []
-            if job.get("role") in {CODER_ROLE, TEST_DESIGNER_ROLE}
-        }
-        try:
-            validate_assignment(
-                self._catalog,
-                RoleAssignment(
-                    "whole",
-                    state["milestone_id"],
-                    CONTEXT_CONTROLLER_ROLE,
-                    controller.identity.brand,
-                    f"{state['milestone_id']}:whole",
-                ),
-                [
-                    RoleAssignment(
-                        f"coder-{i}", state["milestone_id"], CODER_ROLE, brand, session
-                    )
-                    for i, (brand, session) in enumerate(sorted(coder_brands))
-                ],
-            )
-        except RoleProcessError as exc:
-            return {"status": "waiting", "reason": str(exc)}
+        """Level 2 on the whole, then the system architect and the product owner,
+        then the release checklist and the release manager. Each stage runs only
+        when the one before it passed; every model comes from a producer
+        independent of all coders and the test designer."""
         paths = self._workspaces.changed_paths(main, head)
         files = {
             p: t
@@ -851,39 +858,355 @@ class MilestoneRunner:
         criterion_ids = {
             str(c["id"]) for c in contracts.get("acceptance_criteria") or []
         }
-        packet = {
+        module_ids = {str(m.get("module_id")) for m in contracts.get("modules") or []}
+        diff = self._workspaces.diff(main, head)
+        base_packet = {
             "milestone_id": state["milestone_id"],
-            "diff": self._workspaces.diff(main, head),
+            "diff": diff,
+            "changed_paths": list(paths),
             "requirements": list(kravspec.get("requirements") or []),
             "acceptance_criteria": list(contracts.get("acceptance_criteria") or []),
             "contracts": list(contracts.get("modules") or []),
             "factory_test_results": {"full_suite": "passed"},
         }
+        stages: dict[str, Any] = {}
+        jobs: list[dict[str, Any]] = []
+
+        def outcome(status: str, reason: str | None = None) -> dict[str, Any]:
+            last = next(reversed(stages.values()), {}) if stages else {}
+            return {
+                "status": status,
+                "reason": reason or last.get("reason"),
+                "stages": stages,
+                "findings": [
+                    f for st in stages.values() for f in st.get("findings") or []
+                ],
+                "open_findings": [
+                    f for st in stages.values() for f in st.get("open_findings") or []
+                ],
+                "rejected_findings": [
+                    f
+                    for st in stages.values()
+                    for f in st.get("rejected_findings") or []
+                ],
+                "agent_jobs": jobs,
+            }
+
+        reviews = (
+            (
+                "level2",
+                CONTEXT_CONTROLLER_ROLE,
+                self._whole_controller,
+                WHOLE_LEVEL2_PROMPT,
+                LEVEL2_SCHEMA,
+                {},
+            ),
+            (
+                "architecture",
+                SYSTEM_ARCHITECT_ROLE,
+                self._governance.get(SYSTEM_ARCHITECT_ROLE),
+                SYSTEM_ARCHITECT_PROMPT,
+                REVIEW_SCHEMA,
+                {"approved_architecture": dict(architecture)},
+            ),
+            (
+                "mandate",
+                PRODUCT_OWNER_ROLE,
+                self._governance.get(PRODUCT_OWNER_ROLE),
+                PRODUCT_OWNER_PROMPT,
+                LEVEL2_SCHEMA,
+                {"criteria_tested": self._criteria_tested(head, criterion_ids)},
+            ),
+        )
+        for name, role, model, role_prompt, schema, extra in reviews:
+            packet = {
+                **base_packet,
+                **extra,
+                "earlier_stages": {
+                    k: {key: v.get(key) for key in ("status", "findings")}
+                    for k, v in stages.items()
+                },
+            }
+            stage = self._stage_review(
+                state,
+                head,
+                role,
+                model,
+                role_prompt,
+                schema,
+                packet,
+                files,
+                requirement_ids | criterion_ids | module_ids,
+                requirement_ids,
+                organization_id,
+                actor_id,
+                name,
+            )
+            jobs.extend(stage.pop("agent_jobs", []))
+            stages[name] = stage
+            if stage["status"] != "passed":
+                return outcome(stage["status"])
+
+        checklist = self._release_checklist(state, head, criterion_ids, stages)
+        statistics = milestone_statistics(
+            {**state, "milestone_review": {"agent_jobs": jobs}}
+        )
+        stages["checklist"] = {
+            "status": "passed" if all(i["holds"] for i in checklist) else "failed",
+            "items": checklist,
+            "reason": None
+            if all(i["holds"] for i in checklist)
+            else "release checklist: "
+            + ", ".join(i["item"] for i in checklist if not i["holds"]),
+        }
+        if stages["checklist"]["status"] != "passed":
+            return outcome("failed")
+        release = self._release_notes(
+            state,
+            head,
+            checklist,
+            statistics,
+            stages,
+            kravspec,
+            organization_id,
+            actor_id,
+        )
+        jobs.extend(release.pop("agent_jobs", []))
+        stages["release"] = release
+        result = outcome(release["status"])
+        # Final numbers include the release manager's own job.
+        result["statistics"] = milestone_statistics(
+            {**state, "milestone_review": {"agent_jobs": jobs}}
+        )
+        return result
+
+    def _independence(
+        self, state: Mapping[str, Any], role: str, model: BoundModel
+    ) -> str | None:
+        builders = {
+            (job["agent"]["brand"], job["session_id"])
+            for sprint in state["sprints"]
+            for result in (sprint.get("packages") or {}).values()
+            if result.get("status") == "merged"
+            for job in result.get("agent_jobs") or []
+            if job.get("role") in {CODER_ROLE, TEST_DESIGNER_ROLE}
+        }
+        for brand, session in sorted(builders):
+            if brand == model.identity.brand:
+                return (
+                    f"{role} must come from a different producer than the code it judges "
+                    f"({brand} built part of the milestone, session {session})"
+                )
+        try:
+            validate_assignment(
+                self._catalog,
+                RoleAssignment(
+                    role,
+                    state["milestone_id"],
+                    role,
+                    model.identity.brand,
+                    f"{state['milestone_id']}:{role}",
+                ),
+                [
+                    RoleAssignment(
+                        f"coder-{i}", state["milestone_id"], CODER_ROLE, brand, session
+                    )
+                    for i, (brand, session) in enumerate(sorted(builders))
+                ],
+            )
+        except RoleProcessError as exc:
+            return str(exc)
+        return None
+
+    def _stage_review(
+        self,
+        state,
+        head,
+        role,
+        model,
+        role_prompt,
+        schema,
+        packet,
+        files,
+        targets,
+        requirement_ids,
+        organization_id,
+        actor_id,
+        name,
+    ) -> dict[str, Any]:
+        if model is None:
+            return {"status": "waiting", "reason": f"no {role} for the milestone"}
+        problem = self._independence(state, role, model)
+        if problem:
+            return {"status": "waiting", "reason": problem}
         review, turn = call_role(
-            controller,
-            purpose=f"milestone:{CONTEXT_CONTROLLER_ROLE}",
-            role=CONTEXT_CONTROLLER_ROLE,
+            model,
+            purpose=f"milestone:{role}",
+            role=role,
             round_number=1,
-            instructions=WHOLE_LEVEL2_INSTRUCTIONS,
-            schema=LEVEL2_SCHEMA,
+            instructions=role_prompt.text,
+            schema=schema,
             context_packet=packet,
             organization_id=organization_id,
             actor_id=actor_id,
-            run_key=f"{state['milestone_id']}:{head[:12]}:whole",
-            prompt_version=WHOLE_LEVEL2_PROMPT.ref,
+            run_key=f"{state['milestone_id']}:{head[:12]}:{name}",
+            prompt_version=role_prompt.ref,
         )
         verified, rejected = verify_findings(
-            review,
-            files=files,
-            other_targets=requirement_ids | criterion_ids,
-            requirement_ids=requirement_ids,
+            review, files=files, other_targets=targets, requirement_ids=requirement_ids
         )
-        open_findings = [f for f in verified if f["severity"] in {"blocking", "major"}]
+        open_findings = [
+            {**f, "source": role}
+            for f in verified
+            if f["severity"] in {"blocking", "major"}
+        ]
+        causes = {f.get("cause") for f in open_findings}
         return {
             "status": "passed" if not open_findings else "failed",
+            "role": role,
+            "verdict": review.get("verdict"),
+            "cause": None
+            if not open_findings
+            else ("input" if "input" in causes else "code"),
+            "reason": None
+            if not open_findings
+            else f"{name}: {len(open_findings)} open findings",
             "findings": verified,
             "open_findings": open_findings,
             "rejected_findings": rejected,
+            "agent_jobs": [turn.job()],
+        }
+
+    def _criteria_tested(
+        self, head: str, criterion_ids: set[str]
+    ) -> dict[str, list[str]]:
+        """Which acceptance tests at the milestone head name each criterion."""
+        tested: dict[str, list[str]] = {c: [] for c in sorted(criterion_ids)}
+        for path in self._workspaces.list_files(head):
+            if not is_test_path(path):
+                continue
+            text = self._workspaces.read_file(head, path) or ""
+            for ref in {
+                criterion_ref(m.group(0)) for m in CRITERION_PATTERN.finditer(text)
+            }:
+                if ref in tested:
+                    tested[ref].append(path)
+        return tested
+
+    def _release_checklist(
+        self,
+        state: Mapping[str, Any],
+        head: str,
+        criterion_ids: set[str],
+        stages: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Computed by the system; the release manager only writes from it."""
+        tested = self._criteria_tested(head, criterion_ids)
+        acceptance = {
+            c: [p for p in paths if p.startswith(f"{CONTRACT_ROOT}/")]
+            for c, paths in tested.items()
+        }
+        secrets = sum(
+            ((result.get("package_outcome") or {}).get("measurements") or {}).get(
+                "secrets_found"
+            )
+            or 0
+            for sprint in state["sprints"]
+            for result in (sprint.get("packages") or {}).values()
+            if result.get("status") == "merged"
+        )
+        return [
+            {
+                "item": "all packages merged",
+                "holds": all(
+                    p["status"] == "merged" for p in state["packages"].values()
+                ),
+            },
+            {"item": "full suite passed on the rebased milestone", "holds": True},
+            {
+                "item": "level 2 on the whole passed",
+                "holds": stages["level2"]["status"] == "passed",
+            },
+            {
+                "item": "system architect passed",
+                "holds": stages["architecture"]["status"] == "passed",
+            },
+            {
+                "item": "product owner passed",
+                "holds": stages["mandate"]["status"] == "passed",
+            },
+            {
+                "item": "every acceptance criterion has an acceptance test",
+                "holds": all(acceptance.values()),
+                "missing": sorted(c for c, paths in acceptance.items() if not paths),
+            },
+            {"item": "no secrets in merged deliveries", "holds": secrets == 0},
+        ]
+
+    def _release_notes(
+        self,
+        state,
+        head,
+        checklist,
+        statistics,
+        stages,
+        kravspec,
+        organization_id,
+        actor_id,
+    ) -> dict[str, Any]:
+        model = self._governance.get(RELEASE_MANAGER_ROLE)
+        if model is None:
+            return {
+                "status": "waiting",
+                "reason": f"no {RELEASE_MANAGER_ROLE} for the milestone",
+            }
+        value, turn = call_role(
+            model,
+            purpose=f"milestone:{RELEASE_MANAGER_ROLE}",
+            role=RELEASE_MANAGER_ROLE,
+            round_number=1,
+            instructions=RELEASE_MANAGER_PROMPT.text,
+            schema=RELEASE_SCHEMA,
+            context_packet={
+                "milestone_id": state["milestone_id"],
+                "checklist": checklist,
+                "statistics": {k: v for k, v in statistics.items() if k != "packages"}
+                | {
+                    "packages": {
+                        k: v for k, v in statistics["packages"].items() if k != "detail"
+                    }
+                },
+                "stages": {
+                    k: {key: v.get(key) for key in ("status", "findings")}
+                    for k, v in stages.items()
+                },
+                "work_packages": sorted(state["packages"]),
+                "requirements": list(kravspec.get("requirements") or []),
+            },
+            organization_id=organization_id,
+            actor_id=actor_id,
+            run_key=f"{state['milestone_id']}:{head[:12]}:release",
+            prompt_version=RELEASE_MANAGER_PROMPT.ref,
+        )
+        known = {str(r.get("id")) for r in kravspec.get("requirements") or []} | set(
+            state["packages"]
+        )
+        mentioned = set(_ID_IN_TEXT.findall(value["release_notes"]))
+        invented = sorted(m for m in mentioned if m not in known)
+        checklist_holds = all(i["holds"] for i in checklist)
+        problems = []
+        if invented:
+            problems.append(f"release notes name ids that do not exist: {invented}")
+        if value["recommendation"] == "ready" and not checklist_holds:
+            problems.append("recommends ready although the checklist does not hold")
+        return {
+            # The recommendation goes to the board; it is not a decision.
+            "status": "failed" if problems else "passed",
+            "reason": "; ".join(problems) or None,
+            "recommendation": value["recommendation"],
+            "release_notes": value["release_notes"],
+            "reasons": list(value.get("reasons") or []),
+            "risks": list(value.get("risks") or []),
             "agent_jobs": [turn.job()],
         }
 
@@ -942,8 +1265,12 @@ class MilestoneRunner:
             "approved_by": state["approved_by"],
             "approved_head_sha": state["approved_head_sha"],
             "milestone_review": {
-                k: v for k, v in state["milestone_review"].items() if k != "suite"
+                k: v
+                for k, v in state["milestone_review"].items()
+                if k not in {"suite", "statistics", "agent_jobs"}
             },
+            "release": (state["milestone_review"].get("stages") or {}).get("release"),
+            "statistics": state["milestone_review"].get("statistics"),
             "bundle": str(bundle),
             "state_backup": [str(state_copy), *extra],
         }
