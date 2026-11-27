@@ -171,7 +171,7 @@ Beslutningen træffes hurtigt og på, hvad der virker sammen. Arbejde, der aller
 | Pipelinens tilstandsmaskine med gates og rework | Behold, tilpas til milestones og sprints |
 | Opgavesynteser, scheduler, worktree-styring | Behold |
 | Integrationscontroller | Tilpas til milestone-branches |
-| Rådet og bot-konfiguration | Tilpas til færdige kodeagenter |
+| Rådet og bot-konfiguration | Udfald i trin 3: rådet i `phase4/council` vurderer, om en handling er klar, og producerer ikke et arkitekturdokument, så det bruges ikke til arkitekturen. Arkitekturen kører som en smal dialog mellem arkitekt og arkitekturreviewer (`execution/architecture_council.py`) på `GovernedLLMRuntime`, modeladapterne og bot-kataloget, som beholdes. Skabelon-arkitekturen kører ved siden af, indtil trin 4 kasserer den |
 | Lint/test/build-adaptere, arkitekturregel-evaluatorer | Behold |
 | Evalueringskoordinator og evalueringsposter | Tilpas til jobposter og statistik |
 | Egen patch-agent (`phase4/implementation_agent`) | Kassér |

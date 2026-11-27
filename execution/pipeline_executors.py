@@ -390,9 +390,11 @@ class ArchitectureExecutor:
         self,
         backend: ScaffoldEngine | None = None,
         llm_runtime: GovernedLLMRuntime | None = None,
+        council_factory: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         self._backend = backend or ScaffoldEngine()
         self._llm_runtime = llm_runtime
+        self._council_factory = council_factory or default_architecture_council
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         raw_name = str(
@@ -455,7 +457,52 @@ class ArchitectureExecutor:
         )
         if proposal is not None:
             result["architecture"]["llm_proposal"] = proposal
+        council = self._council_factory(payload)
+        if council is not None:
+            kravspec = payload.get("requirements") or payload.get("context", {}).get(
+                "requirements"
+            )
+            if not isinstance(kravspec, Mapping):
+                raise ValueError("architecture council requires a structured kravspec")
+            outcome = council.run(
+                kravspec,
+                organization_id=str(payload.get("organization_id") or ""),
+                actor_id=str(payload.get("actor_id") or "pipeline"),
+                run_key=str(payload.get("task_id") or payload.get("workflow_id")),
+            )
+            # Agent jobs become job records in the orchestrator; they are not
+            # part of the architecture artifact in the pipeline context.
+            result["agent_jobs"] = outcome.pop("agent_jobs")
+            result["architecture"]["council"] = outcome
         return result
+
+
+def default_architecture_council(payload: Mapping[str, Any]) -> Any:
+    """Build the architecture council from configured Bot Catalog profiles.
+
+    Completion plan step 3. ``DOR_ARCHITECT_BOT_PROFILE`` and
+    ``DOR_ARCHITECTURE_REVIEWER_BOT_PROFILE`` name two catalog profiles; the
+    council enforces that they come from different producers. With neither
+    set, no council runs. With only one set, configuration is incomplete and
+    the step fails closed.
+    """
+    architect = os.getenv("DOR_ARCHITECT_BOT_PROFILE", "").strip()
+    reviewer = os.getenv("DOR_ARCHITECTURE_REVIEWER_BOT_PROFILE", "").strip()
+    if not architect and not reviewer:
+        return None
+    if not architect or not reviewer:
+        raise PipelineExecutorConfigurationError(
+            "DOR_ARCHITECT_BOT_PROFILE and DOR_ARCHITECTURE_REVIEWER_BOT_PROFILE "
+            "must both be set for the architecture council"
+        )
+    from api.dependencies import resolve_bot_model_for
+    from execution.architecture_council import ArchitectureCouncil
+
+    organization_id = str(payload.get("organization_id") or "")
+    return ArchitectureCouncil(
+        resolve_bot_model_for(organization_id, architect),
+        resolve_bot_model_for(organization_id, reviewer),
+    )
 
 
 class ContractsExecutor:

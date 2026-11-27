@@ -394,6 +394,9 @@ class PipelineOrchestrator:
         if self._is_stale_against_requirements(workflow, task):
             return
 
+        if not self._record_agent_jobs(task):
+            return
+
         if (task.metadata or {}).get("rework_gate_id"):
             self._handle_rework_task_completion(workflow, task)
             return
@@ -1097,6 +1100,71 @@ class PipelineOrchestrator:
             error=error,
             usage=usage if isinstance(usage, Mapping) else None,
         )
+
+    def _record_agent_jobs(self, task: Task) -> bool:
+        """Turn the agent calls a task reports into job records.
+
+        A task such as the architecture council runs several agents; each
+        call becomes its own job record on the task's work package, and the
+        role-process principle is checked again before anything is accepted.
+        A violation rejects the whole result (fail closed).
+        """
+        result = getattr(task, "result", None)
+        if not isinstance(result, Mapping) or "agent_jobs" not in result:
+            return True
+        result = dict(result)
+        reported = list(result.pop("agent_jobs") or [])
+        task.result = result
+        parent = self._current_job(task.id)
+        metadata = dict(task.metadata or {})
+        raw_ref = metadata.get("requirements_ref")
+        records: list[AgentJobRecord] = []
+        try:
+            for index, item in enumerate(reported, start=1):
+                role = self._role_catalog.role(str(item["role"])).id
+                attempt = parent.attempt if parent else 1
+                records.append(
+                    AgentJobRecord(
+                        job_id=f"job-{task.id}-a{attempt}-{index:02d}-{role}",
+                        organization_id=metadata.get("organization_id"),
+                        workflow_id=str(task.workflow_id),
+                        task_id=task.id,
+                        task_type=str(metadata.get("task_type") or task.name),
+                        role=role,
+                        attempt=attempt,
+                        requirements=RequirementsRef.from_dict(raw_ref) if raw_ref else None,
+                        agent=AgentIdentity.from_dict(item["agent"]),
+                        status=AgentJobStatus.SUCCEEDED,
+                        prompt_version=item.get("prompt_version"),
+                        work_package_id=task.id,
+                        created_at=datetime.fromisoformat(item["started_at"]),
+                        started_at=datetime.fromisoformat(item["started_at"]),
+                        finished_at=datetime.fromisoformat(item["finished_at"]),
+                        usage=dict(item.get("usage") or {}),
+                        provenance=dict(item.get("provenance") or {}),
+                    )
+                )
+            existing = [
+                self._role_assignment(job)
+                for job in self._jobs.values()
+                if job.task_id == task.id and job.agent.tool != DOR_PIPELINE_EXECUTOR
+            ]
+            for record in records:
+                validate_assignment(
+                    self._role_catalog, self._role_assignment(record), existing
+                )
+                existing.append(self._role_assignment(record))
+        except (KeyError, TypeError, ValueError) as exc:
+            task.status = TaskStatus.FAILED
+            task.last_error = f"agent jobs rejected: {exc}"
+            self._tasks[task.id] = task
+            self._close_job(task, AgentJobStatus.FAILED, error=task.last_error)
+            self._persist()
+            logger.warning("Rejected result of task %s: %s", task.id, task.last_error)
+            return False
+        for record in records:
+            self._jobs[record.job_id] = record
+        return True
 
     def _is_stale_against_requirements(self, workflow: Workflow, task: Task) -> bool:
         """Reject a result produced from a superseded requirements revision.
