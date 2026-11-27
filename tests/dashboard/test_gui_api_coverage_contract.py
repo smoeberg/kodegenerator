@@ -43,15 +43,22 @@ def test_coverage_summary_is_derived_from_classifications() -> None:
     }
     assert coverage["summary"] == {
         "total": 111,
-        "covered": 69,
-        "planned": 14,
-        "internal": 28,
+        "covered": 75,
+        "planned": 15,
+        "internal": 21,
     }
 
 
 def test_surface_and_status_contract_is_fail_closed() -> None:
     coverage = _load(COVERAGE_PATH)
-    allowed_surfaces = {"sag", "soeg", "administration", "internal"}
+    allowed_surfaces = {"sag", "soeg", "administration", "fabrik", "internal"}
+    assert coverage["classification_rule"]["surface"] == [
+        "sag",
+        "soeg",
+        "administration",
+        "fabrik",
+        "internal",
+    ]
     allowed_statuses = {"covered", "planned", "internal"}
 
     for item in coverage["endpoints"]:
@@ -152,3 +159,25 @@ def test_worker_and_legacy_protocols_remain_internal() -> None:
     for key in internal_keys:
         assert by_key[key]["status"] == "internal"
         assert by_key[key]["surface"] == "internal"
+
+
+def test_pipeline_backbone_is_covered_by_the_factory_console() -> None:
+    """Completion plan decision 1: the pipeline is the backbone, so its
+    user-facing endpoints are reachable from the factory console (step 1 GUI
+    skeleton). Advancing stays internal: the orchestrator advances, not a
+    human. Changing requirements arrives with the change loop (step 9)."""
+    coverage = _load(COVERAGE_PATH)
+    by_key = {_key(item): item for item in coverage["endpoints"]}
+    covered = {
+        ("GET", "/pipeline/"),
+        ("POST", "/pipeline/start"),
+        ("GET", "/pipeline/{workflow_id}"),
+        ("GET", "/pipeline/{workflow_id}/requirements"),
+        ("GET", "/api/v1/pipeline-gates/{workflow_id}"),
+        ("POST", "/api/v1/pipeline-gates/approve"),
+    }
+    for key in covered:
+        assert by_key[key]["status"] == "covered", key
+        assert by_key[key]["surface"] == "fabrik", key
+    planned = by_key[("PUT", "/pipeline/{workflow_id}/requirements")]
+    assert (planned["status"], planned["surface"]) == ("planned", "fabrik")

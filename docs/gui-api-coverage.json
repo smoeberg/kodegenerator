@@ -6,6 +6,7 @@
       "sag",
       "soeg",
       "administration",
+      "fabrik",
       "internal"
     ],
     "status": [
@@ -14,16 +15,16 @@
       "internal"
     ],
     "meaning": {
-      "covered": "Reachable from the canonical operator_center GUI today.",
+      "covered": "Reachable from the canonical GUI today (operator_center or the factory console).",
       "planned": "User-relevant capability that must be integrated before legacy retirement.",
       "internal": "Backend/worker/diagnostic/legacy API with no direct canonical GUI surface."
     }
   },
   "summary": {
     "total": 111,
-    "covered": 69,
-    "planned": 14,
-    "internal": 28
+    "covered": 75,
+    "planned": 15,
+    "internal": 21
   },
   "endpoints": [
     {
@@ -603,16 +604,16 @@
     {
       "method": "POST",
       "path": "/api/v1/pipeline-gates/approve",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline gate command"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: godkend eller afvis gate"
     },
     {
       "method": "GET",
       "path": "/api/v1/pipeline-gates/{workflow_id}",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline gate read"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: godkendelsesindbakke (gates)"
     },
     {
       "method": "GET",
@@ -736,23 +737,23 @@
     {
       "method": "GET",
       "path": "/pipeline/",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline API"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: projektoverblik (pipelines)"
     },
     {
       "method": "POST",
       "path": "/pipeline/start",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline API"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: start pipeline fra kravspec"
     },
     {
       "method": "GET",
       "path": "/pipeline/{workflow_id}",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline API"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: pipeline-status, jobposter og artefakter"
     },
     {
       "method": "POST",
@@ -792,16 +793,16 @@
     {
       "method": "GET",
       "path": "/pipeline/{workflow_id}/requirements",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline API"
+      "surface": "fabrik",
+      "status": "covered",
+      "capability": "Fabrik: projektets kravspec"
     },
     {
       "method": "PUT",
       "path": "/pipeline/{workflow_id}/requirements",
-      "surface": "internal",
-      "status": "internal",
-      "capability": "Legacy pipeline API"
+      "surface": "fabrik",
+      "status": "planned",
+      "capability": "Fabrik: ændring af kravspec (ændringsløb, trin 9)"
     }
   ]
 }
