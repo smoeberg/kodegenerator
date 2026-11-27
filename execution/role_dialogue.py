@@ -150,7 +150,9 @@ class DialogueSpec:
 
 
 @dataclass
-class _Turn:
+class RoleTurn:
+    """One model call in one role: the agent job it becomes."""
+
     role: str
     round: int
     model: BoundModel
@@ -232,7 +234,7 @@ class RoleDialogue:
         run_key: str,
     ) -> dict[str, Any]:
         spec = self._spec
-        turns: list[_Turn] = []
+        turns: list[RoleTurn] = []
         rounds: list[dict[str, Any]] = []
         open_findings: list[dict[str, Any]] = []
         proposal: dict[str, Any] | None = None
@@ -323,7 +325,7 @@ class RoleDialogue:
 
     def _call(
         self,
-        turns: list[_Turn],
+        turns: list[RoleTurn],
         role: str,
         round_number: int,
         model: BoundModel,
@@ -334,37 +336,66 @@ class RoleDialogue:
         actor_id: str,
         run_key: str,
     ) -> dict[str, Any]:
-        session_id = f"{run_key}:{role}:r{round_number}"
-        turn = _Turn(
+        value, turn = call_role(
+            model,
+            purpose=f"{self._spec.name}:{role}",
             role=role,
-            round=round_number,
-            model=model,
-            session_id=session_id,
-            started_at=_now(),
+            round_number=round_number,
+            instructions=instructions,
+            schema=schema,
+            context_packet=context_packet,
+            organization_id=organization_id,
+            actor_id=actor_id,
+            run_key=run_key,
         )
-        result = model.runtime.generate(
-            GovernedLLMRequest(
-                organization_id=organization_id,
-                actor_id=actor_id,
-                idempotency_key=session_id,
-                purpose=f"{self._spec.name}:{role}",
-                model=model.model,
-                instructions=instructions,
-                untrusted_input=context_packet,
-                output_schema=schema,
-                max_input_tokens=model.max_input_tokens,
-                max_output_tokens=model.max_output_tokens,
-            )
-        )
-        turn.finished_at = _now()
-        turn.provenance = dict(result.provenance.__dict__)
-        turn.replayed = result.replayed
         turns.append(turn)
-        value = dict(result.value)
-        try:
-            validators.validator_for(schema)(schema).validate(value)
-        except ValidationError as exc:
-            raise RoleDialogueError(
-                f"{role} answer in round {round_number} does not match its schema: {exc.message}"
-            ) from exc
         return value
+
+
+def call_role(
+    model: BoundModel,
+    *,
+    purpose: str,
+    role: str,
+    round_number: int,
+    instructions: str,
+    schema: Mapping[str, Any],
+    context_packet: Mapping[str, Any],
+    organization_id: str,
+    actor_id: str,
+    run_key: str,
+) -> tuple[dict[str, Any], RoleTurn]:
+    """One schema-validated call in one role; the turn is its agent job."""
+    session_id = f"{run_key}:{role}:r{round_number}"
+    turn = RoleTurn(
+        role=role,
+        round=round_number,
+        model=model,
+        session_id=session_id,
+        started_at=_now(),
+    )
+    result = model.runtime.generate(
+        GovernedLLMRequest(
+            organization_id=organization_id,
+            actor_id=actor_id,
+            idempotency_key=session_id,
+            purpose=purpose,
+            model=model.model,
+            instructions=instructions,
+            untrusted_input=context_packet,
+            output_schema=schema,
+            max_input_tokens=model.max_input_tokens,
+            max_output_tokens=model.max_output_tokens,
+        )
+    )
+    turn.finished_at = _now()
+    turn.provenance = dict(result.provenance.__dict__)
+    turn.replayed = result.replayed
+    value = dict(result.value)
+    try:
+        validators.validator_for(schema)(schema).validate(value)
+    except ValidationError as exc:
+        raise RoleDialogueError(
+            f"{role} answer in round {round_number} does not match its schema: {exc.message}"
+        ) from exc
+    return value, turn

@@ -1,0 +1,8 @@
+{
+  "base": "origin/main",
+  "head": "HEAD",
+  "files_inspected": 6,
+  "errors": [],
+  "warnings": [],
+  "status": "PASSED"
+}

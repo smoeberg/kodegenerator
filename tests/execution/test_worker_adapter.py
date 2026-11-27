@@ -279,6 +279,49 @@ def test_failed_attempts_are_rolled_back_and_regenerated(setup, plan) -> None:
     assert store.get(regenerated.log_reference)["attempt"] == 2
 
 
+def test_a_rework_round_starts_from_the_delivery_and_attests_from_the_base(
+    setup, plan
+) -> None:
+    root, base, bin_dir, store, adapter = setup
+    fake_agent(bin_dir, "claude", CLAUDE_WRITES_RULES)
+    first = run(adapter, plan, base)
+    fake_agent(
+        bin_dir,
+        "claude",
+        "assert pathlib.Path('src/rules/store.py').exists()\n"
+        "pathlib.Path('src/rules/store.py').write_text('def create():\\n    return 2\\n')\n",
+    )
+    findings = [{"id": "L-1", "target": "src/rules/store.py:2", "issue": "returns 1"}]
+    rework = run(
+        adapter,
+        plan,
+        base,
+        attempt=2,
+        start_sha=first.head_sha,
+        rework_findings=findings,
+    )
+    assert rework.status == "delivered", rework.reason
+    assert rework.affected_paths == ("src/rules/store.py", "tests/rules/test_store.py")
+    assert (
+        git(root, "merge-base", "--is-ancestor", first.head_sha, rework.head_sha) == ""
+    )
+    log = store.get(rework.log_reference)
+    assert log["start_sha"] == first.head_sha and log["base_sha"] == base
+    assert log["context_packet"]["rework"]["findings"] == findings
+    assert "This is a rework round" in log["prompt"]
+    # Writing outside the scope in a rework round fails like any other delivery.
+    fake_agent(bin_dir, "claude", "pathlib.Path('README.md').write_text('x')\n")
+    outside = run(
+        adapter,
+        plan,
+        base,
+        attempt=3,
+        start_sha=rework.head_sha,
+        rework_findings=findings,
+    )
+    assert outside.status == "failed" and "write scope" in outside.reason
+
+
 def test_codex_runs_through_the_same_format(setup, plan) -> None:
     _, base, bin_dir, _, adapter = setup
     fake_agent(

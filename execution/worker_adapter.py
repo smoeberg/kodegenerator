@@ -139,8 +139,14 @@ def build_task(
     kravspec: Mapping[str, Any],
     *,
     house_rules: list[dict[str, str]] | None = None,
+    rework_findings: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """The task prompt and the context packet it was built from."""
+    """The task prompt and the context packet it was built from.
+
+    ``rework_findings`` turns the task into a rework round: the coder gets
+    the verified control findings (never the controllers' conversation) and
+    fixes them in its existing delivery.
+    """
     module_id = package.get("module_id")
     criteria = {str(c["id"]): c for c in contracts.get("acceptance_criteria") or []}
     if package.get("task_type") == "contract_foundation":
@@ -176,6 +182,8 @@ def build_task(
             "active": house_rules if house_rules is not None else active_house_rules(),
         },
     }
+    if rework_findings:
+        packet["rework"] = {"findings": [dict(f) for f in rework_findings]}
     allowed = ", ".join(package["write_scope"]["allowed_paths"])
     foundation = package.get("task_type") == "contract_foundation"
     prompt = "\n".join(
@@ -192,6 +200,18 @@ def build_task(
             "- Your own report is not evidence; the factory checks the files you leave behind.",
             "",
             "## Task",
+            *(
+                [
+                    (
+                        "This is a rework round. Your earlier delivery is in the worktree. "
+                        "Fix every finding under `rework.findings` in the context packet "
+                        "and change nothing else."
+                    ),
+                    "",
+                ]
+                if rework_findings
+                else []
+            ),
             (
                 "Write the interfaces, types and contract tests for every module contract below. "
                 "Tests must fail until the modules are implemented. Do not implement modules."
@@ -387,10 +407,17 @@ class WorkerAdapter:
         timeout_seconds: int = 3600,
         house_rules: list[dict[str, str]] | None = None,
         attempt: int = 1,
+        start_sha: str | None = None,
+        rework_findings: Sequence[Mapping[str, Any]] | None = None,
     ) -> WorkerResult:
         """Run one attempt. A failed attempt is rolled back, not repaired:
         its branch is discarded (the diff stays in the agent log) and the
-        caller regenerates with ``attempt + 1``."""
+        caller regenerates with ``attempt + 1``.
+
+        A rework round starts from ``start_sha`` (the earlier delivery) with
+        ``rework_findings``; the write scope is still attested against the
+        package's ``base_sha``.
+        """
         if attempt < 1:
             raise WorkerAdapterError("attempt must be 1 or more")
         command = AGENT_COMMANDS.get(agent)
@@ -401,12 +428,16 @@ class WorkerAdapter:
             tuple(package["write_scope"].get("denied_paths") or ()),
         )
         prompt, packet = build_task(
-            package, contracts, kravspec, house_rules=house_rules
+            package,
+            contracts,
+            kravspec,
+            house_rules=house_rules,
+            rework_findings=rework_findings,
         )
         workspace = self._workspaces.create(
             execution_id=execution_id,
             candidate_id=f"{package['logical_task_id']}-{agent}-a{attempt}",
-            base_sha=base_sha,
+            base_sha=start_sha or base_sha,
         )
         started = _now()
         run: AgentRun | None = None
@@ -426,7 +457,7 @@ class WorkerAdapter:
                 reason = f"agent exited with code {run.exit_code}"
             else:
                 status, reason, attestation, diff = self._collect(
-                    workspace, scope, package
+                    workspace, scope, package, base_sha
                 )
         except WorkerAdapterError as exc:
             reason = str(exc)
@@ -449,6 +480,7 @@ class WorkerAdapter:
                     "work_package": package["logical_task_id"],
                     "attempt": attempt,
                     "base_sha": base_sha,
+                    "start_sha": start_sha or base_sha,
                     "prompt": prompt,
                     "prompt_fingerprint": prompt_fingerprint,
                     "context_packet": packet,
@@ -499,8 +531,14 @@ class WorkerAdapter:
             },
         )
 
-    def _collect(self, workspace, scope: WriteScope, package: Mapping[str, Any]):
-        """Commit what the agent left behind and attest the write scope."""
+    def _collect(
+        self, workspace, scope: WriteScope, package: Mapping[str, Any], base_sha: str
+    ):
+        """Commit what the agent left behind and attest the write scope.
+
+        The attestation covers the whole package from ``base_sha``, also in a
+        rework round that started from an earlier delivery.
+        """
         _git(workspace.path, "add", "--all")
         if not _git(workspace.path, "status", "--porcelain").strip():
             if _git(workspace.path, "rev-parse", "HEAD").strip() == workspace.base_sha:
@@ -518,9 +556,16 @@ class WorkerAdapter:
                 "-m",
                 f"{package['logical_task_id']}: delivery from coder",
             )
-        diff = _git(workspace.path, "diff", workspace.base_sha, "HEAD")
+        diff = _git(workspace.path, "diff", base_sha, "HEAD")
         try:
             attestation = self._workspaces.attest(workspace, scope)
+            head = attestation["head_sha"]
+            attestation["affected_paths"] = self._workspaces.changed_paths(
+                base_sha, head, scope
+            )
+            attestation["patch_fingerprint"] = self._workspaces.patch_fingerprint(
+                base_sha, head
+            )
         except FactoryWorkspaceError as exc:
             return "failed", f"write scope violated: {exc}", None, diff
         return "delivered", None, attestation, diff
