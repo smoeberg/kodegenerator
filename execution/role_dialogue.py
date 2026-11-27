@@ -144,6 +144,9 @@ class DialogueSpec:
     fact_check: Callable[[Mapping[str, Any], Mapping[str, Any]], list[dict[str, Any]]]
     #: Everything a reviewer finding may point at in a proposal.
     review_targets: Callable[[Mapping[str, Any]], set[str]]
+    #: Versioned prompt refs (``role/purpose@vN+fingerprint``) for the job records.
+    proposer_prompt_version: str | None = None
+    reviewer_prompt_version: str | None = None
     #: Context packet keys: what the proposer and the reviewer see.
     input_key: str = "requirements_specification"
     proposal_key: str = "proposal"
@@ -161,6 +164,9 @@ class RoleTurn:
     finished_at: datetime | None = None
     provenance: Mapping[str, Any] = field(default_factory=dict)
     replayed: bool = False
+    #: The versioned prompt the role ran with (decision 42); falls back to
+    #: the bot profile's prompt version for callers without a registry prompt.
+    prompt_version: str | None = None
 
     def job(self) -> dict[str, Any]:
         provenance = dict(self.provenance)
@@ -169,7 +175,7 @@ class RoleTurn:
             "round": self.round,
             "session_id": self.session_id,
             "agent": {**self.model.identity.to_dict(), "session_id": self.session_id},
-            "prompt_version": self.model.prompt_version,
+            "prompt_version": self.prompt_version or self.model.prompt_version,
             "started_at": self.started_at.isoformat(),
             "finished_at": (self.finished_at or self.started_at).isoformat(),
             "usage": {
@@ -336,6 +342,7 @@ class RoleDialogue:
         actor_id: str,
         run_key: str,
     ) -> dict[str, Any]:
+        spec = self._spec
         value, turn = call_role(
             model,
             purpose=f"{self._spec.name}:{role}",
@@ -347,6 +354,9 @@ class RoleDialogue:
             organization_id=organization_id,
             actor_id=actor_id,
             run_key=run_key,
+            prompt_version=spec.proposer_prompt_version
+            if role == spec.proposer_role
+            else spec.reviewer_prompt_version,
         )
         turns.append(turn)
         return value
@@ -364,6 +374,7 @@ def call_role(
     organization_id: str,
     actor_id: str,
     run_key: str,
+    prompt_version: str | None = None,
 ) -> tuple[dict[str, Any], RoleTurn]:
     """One schema-validated call in one role; the turn is its agent job."""
     session_id = f"{run_key}:{role}:r{round_number}"
@@ -373,6 +384,7 @@ def call_role(
         model=model,
         session_id=session_id,
         started_at=_now(),
+        prompt_version=prompt_version,
     )
     result = model.runtime.generate(
         GovernedLLMRequest(
