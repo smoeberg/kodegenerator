@@ -306,3 +306,50 @@ def test_council_outcome_is_shown_before_the_architecture_gate() -> None:
     at = _app(_client({("GET", f"/pipeline/{WF}"): status}))
     assert not at.exception
     assert any("Uenighed efter 3 runde(r)" in w.value for w in at.warning)
+
+
+def test_contract_council_outcome_is_shown_before_the_contracts_gate() -> None:
+    status = {
+        **STATUS,
+        "context": {
+            **STATUS["context"],
+            "contracts": {
+                "modules": [
+                    {
+                        "module_id": "metrics",
+                        "requirement_ids": ["REG-03"],
+                        "owned_paths": ["src/metrics"],
+                        "provides": [
+                            {
+                                "interface": "MetricsApi",
+                                "operations": [{"id": "record"}],
+                            }
+                        ],
+                        "consumes": [{"module_id": "rules", "interface": "RuleLookup"}],
+                    }
+                ],
+                "acceptance_criteria": [{"id": "AC-1"}, {"id": "AC-2"}],
+                "openapi": {"paths": {"/measurements": {"post": {}}}},
+                "council": {
+                    "status": "agreed",
+                    "rounds": [{}],
+                    "roles": {
+                        "contract_author": {"brand": "anthropic", "model": "claude-x"}
+                    },
+                    "build_layers": [["rules"], ["metrics"]],
+                    "open_findings": [],
+                },
+            },
+        },
+    }
+    summary = fc.contract_council_summary(status)
+    (module,) = summary["modules"]
+    assert module["bruger"] == "rules.RuleLookup" and module["operationer"] == 1
+    assert (summary["criteria"], summary["http_operations"]) == (2, 1)
+    assert fc.contract_council_summary(STATUS) is None
+    at = _app(_client({("GET", f"/pipeline/{WF}"): status}))
+    assert not at.exception
+    assert any(
+        "Kontraktforfatter og kontekstkontrollant er enige" in s.value
+        for s in at.success
+    )
