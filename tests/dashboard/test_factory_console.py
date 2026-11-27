@@ -259,3 +259,50 @@ def test_console_requires_an_organization() -> None:
     at = _app(client, org=None)
     assert any("organisation" in w.value for w in at.warning)
     assert client.calls == []
+
+
+def test_council_outcome_is_shown_before_the_architecture_gate() -> None:
+    status = {
+        **STATUS,
+        "context": {
+            **STATUS["context"],
+            "architecture": {
+                "council": {
+                    "status": "disagreement",
+                    "rounds": [{}, {}, {}],
+                    "roles": {
+                        "architect": {"brand": "anthropic", "model": "claude-x"},
+                        "architecture_reviewer": {"brand": "openai", "model": "gpt-x"},
+                    },
+                    "proposal": {
+                        "stack": {"language": "python"},
+                        "modules": [
+                            {
+                                "id": "rules",
+                                "responsibility": "Store",
+                                "requirement_ids": ["REG-01"],
+                                "depends_on": [],
+                            }
+                        ],
+                    },
+                    "build_layers": [],
+                    "open_findings": [
+                        {
+                            "source": "reviewer",
+                            "severity": "blocking",
+                            "target": "rules",
+                            "issue": "x",
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    summary = fc.council_summary(status)
+    assert summary["status"] == "disagreement" and summary["rounds"] == 3
+    assert summary["roles"]["architecture_reviewer"] == "openai · gpt-x"
+    assert summary["open_findings"][0]["alvor"] == "blocking"
+    assert fc.council_summary(STATUS) is None
+    at = _app(_client({("GET", f"/pipeline/{WF}"): status}))
+    assert not at.exception
+    assert any("Uenighed efter 3 runde(r)" in w.value for w in at.warning)
