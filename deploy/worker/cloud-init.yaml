@@ -1,0 +1,63 @@
+#cloud-config
+# DOR worker host for the first end-to-end run (completion plan step 8a).
+# Paste as "user data" when creating the UpCloud server (Ubuntu 24.04 LTS).
+# Replace the SSH key below with your own public key before creating it.
+# No secrets in this file: API keys go into /etc/dor/worker.env afterwards.
+
+users:
+  - name: dor
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY
+
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - git
+  - python3
+  - python3-venv
+  - python3-pip
+  - nodejs
+  - npm
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  - path: /etc/dor/worker.env.example
+    permissions: "0640"
+    content: |
+      # Copy to /etc/dor/worker.env (chmod 600, owner dor) and fill in.
+      # Coding agents (worker adapter)
+      ANTHROPIC_API_KEY=
+      OPENAI_API_KEY=
+      # Council, control and governance roles (stored through `first_run setup`)
+      MISTRAL_API_KEY=
+      # DOR API (for `first_run setup`): a token from POST /auth/token
+      DOR_API_TOKEN=
+      # Offsite backup: UpCloud Object Storage (S3-compatible)
+      DOR_BACKUP_S3_ENDPOINT=
+      DOR_BACKUP_S3_BUCKET=
+      DOR_BACKUP_S3_ACCESS_KEY=
+      DOR_BACKUP_S3_SECRET_KEY=
+      # Factory paths
+      DOR_AGENT_LOG_DIR=/srv/dor/var/agent-logs
+      DOR_MILESTONE_DIR=/srv/dor/var/milestones
+      DOR_BACKUP_DIR=/srv/dor/var/backup
+      DOR_MAX_PARALLEL_PACKAGES=2
+
+runcmd:
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - npm install -g @anthropic-ai/claude-code @openai/codex
+  - mkdir -p /srv/dor/var /srv/dor/projects
+  - git clone https://github.com/smoeberg/kodegenerator.git /srv/dor/kodegenerator
+  - python3 -m venv /srv/dor/venv
+  - /srv/dor/venv/bin/pip install -r /srv/dor/kodegenerator/requirements.txt
+  - chown -R dor:dor /srv/dor /etc/dor

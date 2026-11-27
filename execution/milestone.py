@@ -1237,6 +1237,7 @@ class MilestoneRunner:
         actor: str,
         backup_dir: str | Path,
         backup_state: Callable[[Path], Sequence[Path]] | None = None,
+        offsite: Any | None = None,
     ) -> dict[str, Any]:
         """After the PR is merged: tag known-good, back up, delete the branch."""
         state = self._store.get(milestone_id)
@@ -1277,6 +1278,12 @@ class MilestoneRunner:
         (target / f"{milestone_id}-release-evidence.json").write_text(
             json.dumps(evidence, indent=2, sort_keys=True), encoding="utf-8"
         )
+        if offsite is not None:
+            # Decision 38: a copy outside GitHub, verified on arrival.
+            evidence["offsite"] = offsite.upload(
+                milestone_id,
+                [bundle, state_copy, target / f"{milestone_id}-release-evidence.json"],
+            )
         branch = f"refs/heads/{state['branch']}"
         branch_sha = self._workspaces.resolve(branch)
         if branch_sha:
@@ -1367,8 +1374,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "approve":
             state = runner.approve(args.milestone, approver=args.approver)
         elif args.command == "mark-merged":
+            from services.offsite_backup import OffsiteBackup
+
             state = runner.mark_merged(
-                args.milestone,
+                offsite=OffsiteBackup.from_environment(),
+                milestone_id=args.milestone,
                 main_sha=args.main_sha,
                 actor=args.actor,
                 backup_dir=args.backup_dir,
