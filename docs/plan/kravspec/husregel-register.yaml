@@ -1,0 +1,334 @@
+# Kravspec for husregel-registeret - referenceprojekt for DOR.
+#
+# Kanonisk kilde. Formatet er pipelinens kravspec (`/pipeline/start`):
+# project_name, project_description og requirements med id, description og
+# acceptance_criteria er påkrævet. Øvrige felter er tilladt og bruges af
+# planlægningen (prioritet, kategori, antagelser, åbne spørgsmål).
+#
+# Design: docs/plan/HUSREGLER_V1_UDKAST.md, afsnittet "Sådan udvikler
+# reglerne sig". Plan: docs/plan/FAERDIGGOERELSESPLAN.md, beslutning 10,
+# 24 og "Referenceprojekt og selvudvikling".
+
+project_name: husregel-register
+project_description: >-
+  Et versioneret register over de husregler og projektregler, som DOR's
+  kontroller holder genereret kode op imod. Registeret holder reglerne,
+  deres livscyklus og en måling pr. regel, og det leverer et frosset
+  regelsæt pr. version til niveau 1-kontrollen. Agenter må foreslå
+  regler; kun projektlederen godkender en ny version. Registeret bygges
+  som selvstændig komponent, som projektlederen selv fletter ind i DOR.
+version: "1.0-udkast"
+status: draft
+
+purpose: >-
+  Husreglerne skal kunne udvikle sig ud fra egen empiri og ekstern best
+  practice uden at nogen kørende sprint skifter regler undervejs, og uden at
+  en agent kan ændre de regler, den selv bliver målt på.
+
+scope:
+  - Regler med id, kategori, tekst, type (M eller V), grundlag og tilstand
+  - Uforanderlige regelsæt-versioner med godkendelse
+  - Livscyklus pr. regel - foreslået, på prøve, aktiv, udfaset
+  - Projektregler, der lægges oven på husreglerne for ét projekt
+  - Måling pr. regel og anbefalinger om at aktivere eller udfase
+  - Revisionsspor for alle ændringer
+  - HTTP-API og ét skærmbillede
+  - Import af husregler v1 som første version
+
+out_of_scope:
+  - Selve håndhævelsen af reglerne i niveau 1 (det gør DOR's kontrol)
+  - Automatisk ekstern best practice-søgning
+  - Fletning ind i DOR (gøres af projektlederen)
+  - Økonomi og forbrug
+
+actors:
+  - id: projektleder
+    description: Menneske. Godkender og afviser regelsæt-versioner og ændrer en regels tilstand.
+  - id: agent
+    description: AI-agent eller projektassistent. Må foreslå regler og ændringer og indberette målinger.
+  - id: kontrol
+    description: DOR's niveau 1-kontrol. Læser et frosset regelsæt og indberetter, når en regel udløses.
+  - id: læser
+    description: Alle andre godkendte brugere. Har kun læseadgang.
+
+constraints:
+  - id: C-01
+    description: >-
+      Python 3.11 eller nyere, FastAPI og Pydantic til API'et, SQLAlchemy og
+      Alembic til lagring, så komponenten kan flettes ind i DOR uden ny stak.
+  - id: C-02
+    description: >-
+      PostgreSQL i drift og SQLite i tests. Alle databaseændringer sker gennem
+      migrationer med én entydig head.
+  - id: C-03
+    description: >-
+      Komponenten ligger i sin egen pakke og afhænger ikke af DOR's øvrige
+      moduler. Den eneste fælles grænseflade er HTTP-API'et.
+  - id: C-04
+    description: Koden følger husregler v1, også mens den selv er under udvikling.
+
+requirements:
+  # ------------------------------------------------------------------ #
+  # Regellager
+  # ------------------------------------------------------------------ #
+  - id: REG-01
+    category: regellager
+    priority: must
+    description: >-
+      En regel har et stabilt id (fx "2.1"), en kategori, en tekst, en type
+      (M = maskinelt kontrollerbar, V = vurderingssag), et grundlag og en
+      tilstand. Id'et genbruges aldrig til en anden regel.
+    acceptance_criteria:
+      - "AC-REG-01-1: POST /rules opretter en regel i tilstanden foreslået og returnerer 201 med reglens id"
+      - "AC-REG-01-2: En regel uden tekst, kategori eller med en anden type end M eller V afvises med 422"
+      - "AC-REG-01-3: Et id, der allerede er brugt, også af en udfaset regel, afvises med 409"
+      - "AC-REG-01-4: GET /rules/{rule_id} returnerer reglen med alle felter og dens tilstand"
+
+  - id: REG-02
+    category: regellager
+    priority: must
+    description: >-
+      En ændring af en regels tekst, type eller grundlag giver en ny revision
+      af reglen. Tidligere revisioner bevares uændret.
+    acceptance_criteria:
+      - "AC-REG-02-1: En ændret tekst giver revision n+1, og revision n kan stadig hentes uændret"
+      - "AC-REG-02-2: En revision kan ikke ændres eller slettes gennem API'et"
+      - "AC-REG-02-3: GET /rules/{rule_id}/revisions returnerer alle revisioner i rækkefølge"
+
+  # ------------------------------------------------------------------ #
+  # Regelsæt-versioner
+  # ------------------------------------------------------------------ #
+  - id: REG-03
+    category: versioner
+    priority: must
+    description: >-
+      Et regelsæt er en uforanderlig version, der fastholder præcis én
+      revision af hver regel, der er på prøve eller aktiv. En version ændres
+      aldrig; enhver ændring giver en ny version.
+    acceptance_criteria:
+      - "AC-REG-03-1: En version indeholder regel-id, revision, type og tilstand for hver regel, der er på prøve eller aktiv"
+      - "AC-REG-03-2: Forsøg på at ændre en eksisterende version afvises med 409"
+      - "AC-REG-03-3: GET /rulesets/{version} returnerer samme indhold og samme fingeraftryk, uanset hvornår den hentes"
+      - "AC-REG-03-4: Hver version har et SHA-256-fingeraftryk af sit indhold"
+
+  - id: REG-04
+    category: versioner
+    priority: must
+    description: >-
+      En ny version oprettes som udkast og bliver først gældende, når
+      projektlederen godkender den. Kun én version er gældende ad gangen pr.
+      omfang.
+    acceptance_criteria:
+      - "AC-REG-04-1: POST /rulesets opretter en version i tilstanden udkast"
+      - "AC-REG-04-2: POST /rulesets/{version}/approve af projektlederen gør versionen gældende og den forrige erstattet"
+      - "AC-REG-04-3: En agent eller læser, der forsøger at godkende, får 403, og intet ændres"
+      - "AC-REG-04-4: POST /rulesets/{version}/reject markerer versionen afvist med en begrundelse; den kan ikke godkendes bagefter"
+      - "AC-REG-04-5: GET /rulesets/current returnerer den gældende version"
+
+  - id: REG-05
+    category: versioner
+    priority: must
+    description: >-
+      En forbruger kan fastholde en bestemt version. Registeret ændrer aldrig
+      en fastholdt version, så en sprint kan køre på samme regelsæt fra start
+      til slut, mens en ny version godkendes.
+    acceptance_criteria:
+      - "AC-REG-05-1: En godkendelse af en ny version ændrer ikke svaret fra GET /rulesets/{version} for den tidligere version"
+      - "AC-REG-05-2: Svaret for en version angiver, om den er gældende, erstattet, afvist eller udkast"
+
+  # ------------------------------------------------------------------ #
+  # Livscyklus
+  # ------------------------------------------------------------------ #
+  - id: REG-06
+    category: livscyklus
+    priority: must
+    description: >-
+      En regel har tilstandene foreslået, på prøve, aktiv og udfaset. Kun
+      disse overgange er tilladt: foreslået til på prøve, på prøve til aktiv,
+      på prøve til udfaset, aktiv til udfaset, og foreslået til udfaset
+      (afvist forslag).
+    acceptance_criteria:
+      - "AC-REG-06-1: Hver tilladt overgang kan gennemføres af projektlederen"
+      - "AC-REG-06-2: Alle andre overgange, fx udfaset til aktiv, afvises med 409"
+      - "AC-REG-06-3: En tilstandsændring træder først i kraft i den næste godkendte version"
+      - "AC-REG-06-4: En udfaset regel bevares med sin historik og kan stadig hentes"
+
+  - id: REG-07
+    category: livscyklus
+    priority: must
+    description: >-
+      Agenter og projektassistenten må foreslå nye regler og ændringer af
+      eksisterende regler. Et forslag skal have en begrundelse og en kilde
+      (egen empiri eller ekstern best practice).
+    acceptance_criteria:
+      - "AC-REG-07-1: POST /proposals fra en agent opretter et forslag med begrundelse og kilde"
+      - "AC-REG-07-2: Et forslag uden begrundelse eller kilde afvises med 422"
+      - "AC-REG-07-3: Et forslag ændrer ingen regel og ingen version, før projektlederen har godkendt det"
+
+  - id: REG-08
+    category: livscyklus
+    priority: must
+    description: >-
+      En agent må aldrig ændre de regler, den selv bliver målt på. Registeret
+      afviser en agents ændring af en regel, hvis agenten har målinger på
+      reglen.
+    acceptance_criteria:
+      - "AC-REG-08-1: Et ændringsforslag fra en agent til en regel, hvor samme agent har indberettede målinger, afvises med 403"
+      - "AC-REG-08-2: Afvisningen registreres i revisionssporet med agentens id og reglens id"
+
+  # ------------------------------------------------------------------ #
+  # Projektregler
+  # ------------------------------------------------------------------ #
+  - id: REG-09
+    category: projektregler
+    priority: should
+    description: >-
+      Et projekt kan have sine egne regler, der lægges oven på husreglerne.
+      Det gældende regelsæt for et projekt er husreglernes gældende version
+      plus projektets gældende version. En projektregel kan ikke fjerne eller
+      svække en husregel.
+    acceptance_criteria:
+      - "AC-REG-09-1: GET /projects/{project_id}/rulesets/effective returnerer husregler og projektregler med hver sin version"
+      - "AC-REG-09-2: En projektregel med samme id som en husregel afvises med 409"
+      - "AC-REG-09-3: Projektregler har samme versionering, godkendelse og livscyklus som husregler"
+
+  # ------------------------------------------------------------------ #
+  # Måling
+  # ------------------------------------------------------------------ #
+  - id: REG-10
+    category: måling
+    priority: must
+    description: >-
+      Kontrollen indberetter hver gang en regel vurderes på en leverance:
+      udløst eller ikke udløst, og senere om udløsningen blev underkendt af
+      et menneske eller niveau 2, og om en fejl fundet senere kunne spores
+      til reglen.
+    acceptance_criteria:
+      - "AC-REG-10-1: POST /measurements registrerer regel-id, version, jobpost-id, agent og udfald"
+      - "AC-REG-10-2: En måling på en regel eller version, der ikke findes, afvises med 422"
+      - "AC-REG-10-3: En måling kan senere markeres underkendt eller sporet til en senere fejl, men det oprindelige udfald ændres ikke"
+
+  - id: REG-11
+    category: måling
+    priority: must
+    description: >-
+      Registeret viser for hver regel, hvor ofte den udløses, hvor ofte den
+      underkendes, og hvor mange senere fejl der spores til den, pr. version.
+    acceptance_criteria:
+      - "AC-REG-11-1: GET /rules/{rule_id}/statistics returnerer antal vurderinger, udløsninger, underkendelser og sporede fejl"
+      - "AC-REG-11-2: Statistikken kan filtreres på version og periode"
+
+  - id: REG-12
+    category: måling
+    priority: should
+    description: >-
+      Registeret anbefaler at aktivere en regel på prøve eller udfase en aktiv
+      regel ud fra målingerne. Anbefalingen ændrer intet; projektlederen
+      beslutter.
+    acceptance_criteria:
+      - "AC-REG-12-1: En regel på prøve med mindst det konfigurerede antal vurderinger og en underkendelsesandel under grænsen anbefales aktiveret"
+      - "AC-REG-12-2: En aktiv regel, der sjældent udløses eller ofte underkendes efter de konfigurerede grænser, anbefales udfaset"
+      - "AC-REG-12-3: Under det konfigurerede mindste antal vurderinger gives ingen anbefaling"
+      - "AC-REG-12-4: En anbefaling ændrer hverken reglen eller nogen version"
+
+  # ------------------------------------------------------------------ #
+  # Revisionsspor og adgang
+  # ------------------------------------------------------------------ #
+  - id: REG-13
+    category: revisionsspor
+    priority: must
+    description: >-
+      Hver ændring, godkendelse, afvisning og afvist forsøg registreres med
+      hvem, hvornår, hvad og hvorfor. Sporet kan ikke ændres.
+    acceptance_criteria:
+      - "AC-REG-13-1: GET /audit returnerer hændelser med aktør, rolle, tidspunkt, handling, objekt og begrundelse"
+      - "AC-REG-13-2: Der findes ingen API-handling, der ændrer eller sletter en hændelse"
+
+  - id: REG-14
+    category: adgang
+    priority: must
+    description: >-
+      Kalderens identitet og rolle (projektleder, agent, kontrol, læser)
+      kommer fra et bearer-token. Uden gyldigt token gives ingen adgang.
+      Tokens og hemmeligheder ligger uden for koden.
+    acceptance_criteria:
+      - "AC-REG-14-1: Et kald uden token eller med ugyldigt token afvises med 401"
+      - "AC-REG-14-2: Hver handling er kun tilladt for de roller, kravene ovenfor nævner; andre får 403"
+      - "AC-REG-14-3: Ingen token eller hemmelighed optræder i logs, svar eller revisionsspor"
+
+  # ------------------------------------------------------------------ #
+  # Import og skærmbillede
+  # ------------------------------------------------------------------ #
+  - id: REG-15
+    category: import
+    priority: must
+    description: >-
+      Husregler v1 kan importeres som registerets første version, med de
+      regler, typer og grundlag, der står i HUSREGLER_V1_UDKAST.md.
+    acceptance_criteria:
+      - "AC-REG-15-1: Importen opretter alle regler fra 1.1 til 7.2 med kategori, tekst, type og grundlag"
+      - "AC-REG-15-2: Importen giver én version i tilstanden udkast, som projektlederen skal godkende"
+      - "AC-REG-15-3: En import med et dubleret regel-id afvises, og intet gemmes"
+
+  - id: REG-16
+    category: skærmbillede
+    priority: must
+    description: >-
+      Ét skærmbillede viser den gældende version, reglerne grupperet efter
+      kategori med type og tilstand, ventende forslag og udkast, og
+      statistik og anbefaling pr. regel. Projektlederen kan godkende eller
+      afvise udkast og forslag derfra.
+    acceptance_criteria:
+      - "AC-REG-16-1: Skærmbilledet viser den gældende version og dens regler grupperet efter kategori"
+      - "AC-REG-16-2: Ventende udkast og forslag vises, og projektlederen kan godkende eller afvise dem med begrundelse"
+      - "AC-REG-16-3: Skærmbilledet bruger kun API'et og indeholder ingen regellogik"
+
+non_functional_requirements:
+  - id: NFR-01
+    description: Hele testsuiten består, og dækningen er mindst 70 procent.
+  - id: NFR-02
+    description: Hvert acceptkriterium har mindst én test, der henviser til dets id.
+  - id: NFR-03
+    description: Ruff lint og ruff format består for hele komponenten.
+  - id: NFR-04
+    description: Migrationerne kan køres på en tom database og har én head.
+  - id: NFR-05
+    description: Ved manglende eller usikre data fejler komponenten lukket.
+
+assumptions:
+  - id: A-01
+    statement: >-
+      Stakken i C-01 og C-02 er valgt, fordi registeret skal flettes ind i DOR.
+      Arkitekturtrinnet kan foreslå andet med begrundelse.
+    requires_confirmation: true
+  - id: A-02
+    statement: >-
+      Skærmbilledet laves i Streamlit som DOR's øvrige GUI, indtil det åbne
+      punkt om GUI-teknologi er afgjort.
+    requires_confirmation: true
+  - id: A-03
+    statement: >-
+      Grænserne for anbefalinger i REG-12 er konfigurerbare. Udgangspunkt:
+      mindst 20 vurderinger, aktivering ved under 20 procent underkendt,
+      udfasning ved under 2 procent udløst eller over 50 procent underkendt.
+    requires_confirmation: true
+
+open_questions:
+  - id: Q-01
+    question: >-
+      Skal projektlederen godkende hver tilstandsændring enkeltvis, eller kun
+      den samlede version, ændringerne indgår i?
+    blocking: false
+    owner: projektleder
+  - id: Q-02
+    question: Er grænserne i A-03 et rimeligt udgangspunkt?
+    blocking: false
+    owner: projektleder
+
+delivery_notes:
+  - >-
+    Registeret bygges som én milestone (plan, "Første gennemløb"). Kontrakten
+    for regellageret (REG-01 til REG-05) fastlægges først; derefter kan
+    måling (REG-10 til REG-12) og skærmbillede (REG-16) bygges parallelt af
+    to arbejdere. Opdelingen i pakker og dagssprints laves af
+    opgavekompileren og godkendes i skaleringsplanen.
