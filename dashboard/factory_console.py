@@ -347,6 +347,41 @@ def contract_council_summary(status: Mapping[str, Any]) -> dict[str, Any] | None
     }
 
 
+def work_plan_summary(status: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The work plan (step 5), approved together with the contracts."""
+    plan = (status.get("context") or {}).get("work_plan")
+    if not isinstance(plan, Mapping):
+        return None
+    scaling = plan.get("scaling_plan") or {}
+    return {
+        "milestone": plan.get("milestone_id"),
+        "fingerprint": str(plan.get("fingerprint") or "")[:12],
+        "sprints": [
+            {"sprint": s.get("sprint"), "pakker": ", ".join(s.get("packages") or [])}
+            for s in plan.get("sprints") or []
+        ],
+        "packages": [
+            {
+                "pakke": p.get("logical_task_id"),
+                "type": p.get("task_type"),
+                "sprint": p.get("sprint"),
+                "afhænger af": ", ".join(p.get("dependency_ids") or []),
+                "skriver i": ", ".join(
+                    (p.get("write_scope") or {}).get("allowed_paths") or []
+                ),
+                "kriterier": len(p.get("criterion_ids") or []),
+                "vægt": p.get("weight"),
+            }
+            for p in plan.get("packages") or []
+        ],
+        "critical_path": list(plan.get("critical_path") or []),
+        "critical_path_weight": scaling.get("critical_path_weight"),
+        "total_weight": scaling.get("total_weight"),
+        "agents_per_role": dict(scaling.get("parallel_agents_per_role") or {}),
+        "status": scaling.get("status"),
+    }
+
+
 # --------------------------------------------------------------------- #
 # Rendering
 # --------------------------------------------------------------------- #
@@ -433,6 +468,9 @@ def _render_overview(
     contract_council = contract_council_summary(status)
     if contract_council:
         _render_contract_council(st, contract_council)
+    work_plan = work_plan_summary(status)
+    if work_plan:
+        _render_work_plan(st, work_plan)
 
     st.markdown("**Opgaver**")
     st.dataframe(status.get("tasks") or [], hide_index=True, use_container_width=True)
@@ -448,6 +486,24 @@ def _render_overview(
         st.dataframe(provenance, hide_index=True, use_container_width=True)
     else:
         st.caption("Ingen artefakter endnu.")
+
+
+def _render_work_plan(st, plan: Mapping[str, Any]) -> None:
+    st.markdown("**Arbejdsplan og skaleringsplan**")
+    st.caption(
+        f"Milestone {plan['milestone']} · {len(plan['sprints'])} dagssprint(s) · "
+        f"fingeraftryk `{plan['fingerprint']}` · godkendes med kontrakterne ved "
+        "kontrakt-gaten"
+    )
+    left, middle, right = st.columns(3)
+    left.metric("Dagssprints", len(plan["sprints"]))
+    middle.metric(
+        "Kritisk vej (vægt)", f"{plan['critical_path_weight']} / {plan['total_weight']}"
+    )
+    right.metric("Kodere parallelt", plan["agents_per_role"].get("coder", "–"))
+    st.dataframe(plan["sprints"], hide_index=True, use_container_width=True)
+    st.dataframe(plan["packages"], hide_index=True, use_container_width=True)
+    st.caption("Kritisk vej: " + " → ".join(plan["critical_path"]))
 
 
 def _render_contract_council(st, council: Mapping[str, Any]) -> None:

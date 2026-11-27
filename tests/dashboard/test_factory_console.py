@@ -353,3 +353,41 @@ def test_contract_council_outcome_is_shown_before_the_contracts_gate() -> None:
         "Kontraktforfatter og kontekstkontrollant er enige" in s.value
         for s in at.success
     )
+
+
+def test_work_plan_is_shown_with_sprints_packages_and_critical_path() -> None:
+    plan = {
+        "milestone_id": "M1",
+        "fingerprint": "f" * 64,
+        "sprints": [
+            {"sprint": 1, "packages": ["contract-foundation"]},
+            {"sprint": 2, "packages": ["module-metrics", "module-rules"]},
+        ],
+        "packages": [
+            {
+                "logical_task_id": "contract-foundation",
+                "task_type": "contract_foundation",
+                "sprint": 1,
+                "dependency_ids": [],
+                "write_scope": {"allowed_paths": ["contracts"]},
+                "criterion_ids": ["AC-1", "AC-2"],
+                "weight": 2,
+            }
+        ],
+        "critical_path": ["contract-foundation", "module-rules"],
+        "scaling_plan": {
+            "critical_path_weight": 6,
+            "total_weight": 7,
+            "parallel_agents_per_role": {"coder": 2},
+            "status": "awaiting_approval",
+        },
+    }
+    status = {**STATUS, "context": {**STATUS["context"], "work_plan": plan}}
+    summary = fc.work_plan_summary(status)
+    assert summary["sprints"][1]["pakker"] == "module-metrics, module-rules"
+    assert summary["packages"][0]["skriver i"] == "contracts"
+    assert summary["agents_per_role"] == {"coder": 2}
+    assert fc.work_plan_summary(STATUS) is None
+    at = _app(_client({("GET", f"/pipeline/{WF}"): status}))
+    assert not at.exception
+    assert any(m.label == "Kodere parallelt" and m.value == "2" for m in at.metric)
