@@ -1,13 +1,21 @@
 name: Merge Gate & Diff Integrity
 
 on:
+  # Feature and fix branches are checked through their PR; pushing to them
+  # no longer starts a second, identical run.
   pull_request:
     branches: [ main ]
   push:
-    branches: [ main, feature/*, fix/* ]
+    branches: [ main ]
 
 permissions:
   contents: read
+
+# One run per PR or branch. A new push to a PR cancels its running checks;
+# runs on main are never cancelled (they feed the release evidence).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   merge-gate:
