@@ -21,9 +21,21 @@ import yaml
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Protocol
 
-from domain.agent_job import AgentJobRecord, AgentJobStatus, job_id_for
+from domain.agent_job import (
+    DOR_PIPELINE_EXECUTOR,
+    AgentIdentity,
+    AgentJobRecord,
+    AgentJobStatus,
+    job_id_for,
+)
 from domain.pipeline_states import PipelineState
 from domain.pipeline_task_mapping import PipelineTaskMapping
+from domain.role_process import (
+    RoleAssignment,
+    RoleCatalog,
+    default_catalog,
+    validate_assignment,
+)
 from domain.requirements_provenance import (
     RequirementsRef,
     requirements_fingerprint,
@@ -48,16 +60,6 @@ _SUPPORTED_GATE_DECISIONS = frozenset({"approved", "rejected"})
 _REWORK_GATE_TASK_STATES = {
     "gate_architecture_approval": PipelineState.ARCHITECTURE_GENERATING,
     "gate_contracts_approval": PipelineState.CONTRACTS_GENERATING,
-}
-# Role of the agent that performs each pipeline task type (job records).
-_TASK_ROLES = {
-    "generate_architecture": "architect",
-    "generate_contracts": "contract_author",
-    "generate_code": "coder",
-    "generate_tests": "test_author",
-    "run_tests": "verifier",
-    "deploy": "release",
-    "release": "release",
 }
 _ACTIVE_REWORK_TASK_STATUSES = frozenset(
     {
@@ -87,6 +89,7 @@ class PipelineOrchestrator:
         *,
         task_queue: Any = None,
         state_store: Optional[PipelineSnapshotStore] = None,
+        role_catalog: RoleCatalog | None = None,
     ):
         self._runtime = runtime
         self._adapter = adapter or PipelineAdapter()
@@ -94,6 +97,9 @@ class PipelineOrchestrator:
         self._workflows: Dict[str, Workflow] = {}
         self._tasks: Dict[str, Task] = {}
         self._jobs: dict[str, AgentJobRecord] = {}
+        # Foundation principle (plan decision 39): roles come from the
+        # versioned role-process catalog, never from code.
+        self._role_catalog: RoleCatalog = role_catalog or default_catalog()
         self._task_queue = task_queue
         self._state_store = state_store or self._configured_state_store()
         self._restore()
@@ -1007,6 +1013,7 @@ class PipelineOrchestrator:
     def _open_job(self, task: Task, *, attempt: int) -> AgentJobRecord:
         metadata = dict(task.metadata or {})
         task_type = str(metadata.get("task_type") or task.name)
+        role = self._role_catalog.role_for_task_type(task_type)
         raw_ref = metadata.get("requirements_ref")
         record = AgentJobRecord(
             job_id=job_id_for(task.id, attempt),
@@ -1014,9 +1021,10 @@ class PipelineOrchestrator:
             workflow_id=str(task.workflow_id),
             task_id=task.id,
             task_type=task_type,
-            role=_TASK_ROLES.get(task_type, task_type),
+            role=role.id,
             attempt=attempt,
             requirements=RequirementsRef.from_dict(raw_ref) if raw_ref else None,
+            work_package_id=str(metadata.get("work_package_id") or task.id),
         )
         self._jobs[record.job_id] = record
         return record
@@ -1031,6 +1039,39 @@ class PipelineOrchestrator:
             return
         self._jobs[job.job_id] = job.start(worker_id)
         self._persist()
+
+    def bind_job_agent(self, task_id: str, agent: AgentIdentity) -> AgentJobRecord:
+        """Bind the agent that will hold the job's role, enforcing decision 39.
+
+        Fails closed when the agent's producer or session collides with a
+        job on the same work package whose output this role controls (or
+        that controls this role), or when independence cannot be verified.
+        """
+        job = self._current_job(task_id)
+        if job is None or job.closed:
+            raise ValueError(f"no open job for task {task_id}")
+        candidate = self._role_assignment(job.bind_agent(agent))
+        others = [
+            self._role_assignment(other)
+            for other in self._jobs.values()
+            if other.job_id != job.job_id and other.workflow_id == job.workflow_id
+            and other.agent.tool != DOR_PIPELINE_EXECUTOR
+        ]
+        validate_assignment(self._role_catalog, candidate, others)
+        bound = job.bind_agent(agent)
+        self._jobs[job.job_id] = bound
+        self._persist()
+        return bound
+
+    @staticmethod
+    def _role_assignment(job: AgentJobRecord) -> RoleAssignment:
+        return RoleAssignment(
+            job_id=job.job_id,
+            work_package_id=job.work_package_id or job.task_id,
+            role_id=job.role,
+            brand=job.agent.brand,
+            session_id=job.agent.session_id,
+        )
 
     def record_job_failed(self, task_id: str, error: str, *, retrying: bool) -> None:
         """Close the current attempt as failed; open the next one on retry."""

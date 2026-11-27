@@ -1,0 +1,116 @@
+# DOR role-process catalog, version 1.
+#
+# Foundation principle (completion plan, decision 39): DOR is role-process
+# logic. The process is a fixed chain of roles; agents are interchangeable
+# and are assigned to roles per job. A role is a prompt plus a context packet
+# in a fresh job, so any agent may hold any role. On the same work package a
+# control role must come from a different producer (brand) than the role it
+# controls, and run in a new session without that role's context.
+#
+# This file is data, not code. domain/role_process.py loads and validates it
+# and fails closed on any violation. Changing it creates a new catalog
+# version, approved by the project manager.
+
+catalog_version: 1
+approved_by: projektleder
+approved_at: "2026-11-27"
+independence_level: brand
+
+roles:
+  - id: project_manager
+    name: Projektleder
+    kind: human
+    input: Anbefalinger, undtagelser, ændringsforslag
+    output: Beslutninger og godkendelser
+    controlled_by: []
+
+  - id: requirements_analyst
+    name: Kravafklarer
+    kind: agent
+    input: Opdrag eller repo-analyse
+    output: Kravspec-udkast
+    controlled_by: [fact_check, context_controller, project_manager]
+
+  - id: architect
+    name: Arkitekt
+    kind: agent
+    input: Godkendt kravspec
+    output: Arkitekturforslag
+    controlled_by: [fact_check, architecture_reviewer, project_manager]
+
+  - id: architecture_reviewer
+    name: Arkitekturreviewer
+    kind: agent
+    input: Kravspec og arkitekturforslag
+    output: Fund og uenigheder
+    controlled_by: [fact_check]
+
+  - id: contract_author
+    name: Kontraktforfatter
+    kind: agent
+    input: Godkendt arkitektur
+    output: Modulkontrakter og kontrakttests
+    controlled_by: [fact_check, context_controller, project_manager]
+
+  - id: task_compiler
+    name: Opgavekompiler
+    kind: system
+    input: Godkendte kontrakter
+    output: Arbejdspakker og skaleringsplan
+    controlled_by: [project_manager]
+
+  - id: coder
+    name: Koder
+    kind: agent
+    input: Arbejdspakke og kontekstpakke
+    output: Kode og tests
+    controlled_by: [fact_check, code_auditor, context_controller]
+
+  - id: code_auditor
+    name: Kodeauditør
+    kind: agent
+    input: Diff, husregler og projektregler, testresultater
+    output: Niveau 1-fund
+    controlled_by: [fact_check]
+
+  - id: context_controller
+    name: Kontekstkontrollant
+    kind: agent
+    input: Diff, kravspec, arkitektur, kontrakt, testresultater
+    output: Niveau 2-fund og opdragskontrol
+    controlled_by: [fact_check]
+
+  - id: project_assistant
+    name: Projektassistent
+    kind: agent
+    input: Jobposter og kontrolresultater
+    output: Dagsrapport, undtagelsesrapporter og indstillinger
+    controlled_by: [fact_check, project_manager]
+
+  - id: fact_check
+    name: Faktakontrol og testkørsel
+    kind: system
+    input: Leverance og systemets egne testkørsler
+    output: Verificerede referencer, påstande og testresultater
+    controlled_by: []
+
+  - id: orchestrator
+    name: Orkestrator
+    kind: system
+    input: Godkendte planer og gates
+    output: Fordeling, kvitteringer og frigivelse
+    controlled_by: []
+
+# Which role performs each pipeline task type. Every task type must map to a
+# role in the catalog; an unmapped task type fails closed.
+pipeline_task_roles:
+  generate_architecture: architect
+  generate_contracts: contract_author
+  generate_code: coder
+  generate_tests: coder
+  run_tests: fact_check
+  deploy: orchestrator
+  release: orchestrator
+  # Control task types created per work package in step 7 (level 1, level 2).
+  audit_code: code_auditor
+  check_context: context_controller
