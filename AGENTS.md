@@ -44,8 +44,8 @@ Never call a phase missing, complete, green, or merged from memory alone.
 
 The binding plan for completing DOR is
 [`docs/plan/FAERDIGGOERELSESPLAN.md`](docs/plan/FAERDIGGOERELSESPLAN.md)
-(Danish). The draft house rules for generated code are
-[`docs/plan/HUSREGLER_V1_UDKAST.md`](docs/plan/HUSREGLER_V1_UDKAST.md).
+(Danish). The approved house rules for generated code are
+[`docs/plan/HUSREGLER_V1.md`](docs/plan/HUSREGLER_V1.md).
 Where older documentation, roadmaps, or audits disagree with the plan, the
 plan wins; repository evidence still has the precedence given above.
 
@@ -66,6 +66,16 @@ Key consequences for agents working on the completion:
   start; only a milestone branch goes to `main`, after human approval. Every
   work package is bound to a commit, a requirements revision, and a contract
   version, and is rebased and re-checked when any of them becomes stale.
+- Control is role separation: every work package has a coder, a code
+  auditor (level 1), and a context controller (level 2 and mandate check).
+  Both control roles come from a different model producer than the coder,
+  work from a fixed context packet, and never see the coder's conversation.
+  With no other producer available, control waits; it never falls back to
+  the coder's producer.
+- Generated code that fails is discarded and rebuilt rather than debugged,
+  after the cause has been found in the agent log and fixed in the input
+  (requirements, contract, prompt). Every agent job keeps an immutable agent
+  log.
 - Governance v0 (below) is relaxed for the completion work: the Human Owner
   approves scope and solution through the pull request, and the full
   ProblemBrief role sequence is not required. Tenant isolation, authority

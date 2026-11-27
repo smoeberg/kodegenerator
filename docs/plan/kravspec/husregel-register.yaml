@@ -5,7 +5,7 @@
 # acceptance_criteria er påkrævet. Øvrige felter er tilladt og bruges af
 # planlægningen (prioritet, kategori, antagelser, åbne spørgsmål).
 #
-# Design: docs/plan/HUSREGLER_V1_UDKAST.md, afsnittet "Sådan udvikler
+# Design: docs/plan/HUSREGLER_V1.md, afsnittet "Sådan udvikler
 # reglerne sig". Plan: docs/plan/FAERDIGGOERELSESPLAN.md, beslutning 10,
 # 24 og "Referenceprojekt og selvudvikling".
 
@@ -17,8 +17,10 @@ project_description: >-
   regelsæt pr. version til niveau 1-kontrollen. Agenter må foreslå
   regler; kun projektlederen godkender en ny version. Registeret bygges
   som selvstændig komponent, som projektlederen selv fletter ind i DOR.
-version: "1.0-udkast"
-status: draft
+version: "1.0"
+status: approved
+approved_by: projektleder
+approved_at: "2026-11-27"
 
 purpose: >-
   Husreglerne skal kunne udvikle sig ud fra egen empiri og ekstern best
@@ -264,10 +266,10 @@ requirements:
     priority: must
     description: >-
       Husregler v1 kan importeres som registerets første version, med de
-      regler, typer og grundlag, der står i HUSREGLER_V1_UDKAST.md.
+      regler, typer, grundlag og tilstande, der står i HUSREGLER_V1.md.
     acceptance_criteria:
-      - "AC-REG-15-1: Importen opretter alle regler fra 1.1 til 7.2 med kategori, tekst, type og grundlag"
-      - "AC-REG-15-2: Importen giver én version i tilstanden udkast, som projektlederen skal godkende"
+      - "AC-REG-15-1: Importen opretter alle regler fra 1.1 til 8.2 med kategori, tekst, type, grundlag og tilstand"
+      - "AC-REG-15-2: Importen giver én version i tilstanden udkast, som projektlederen skal godkende; reglerne har den tilstand, de har i HUSREGLER_V1.md"
       - "AC-REG-15-3: En import med et dubleret regel-id afvises, og intet gemmes"
 
   - id: REG-16
@@ -300,30 +302,39 @@ assumptions:
     statement: >-
       Stakken i C-01 og C-02 er valgt, fordi registeret skal flettes ind i DOR.
       Arkitekturtrinnet kan foreslå andet med begrundelse.
-    requires_confirmation: true
+    requires_confirmation: false
+    confirmed: "2026-11-27"
   - id: A-02
     statement: >-
       Skærmbilledet laves i Streamlit som DOR's øvrige GUI, indtil det åbne
       punkt om GUI-teknologi er afgjort.
-    requires_confirmation: true
+    requires_confirmation: false
+    confirmed: "2026-11-27"
   - id: A-03
     statement: >-
       Grænserne for anbefalinger i REG-12 er konfigurerbare. Udgangspunkt:
       mindst 20 vurderinger, aktivering ved under 20 procent underkendt,
       udfasning ved under 2 procent udløst eller over 50 procent underkendt.
-    requires_confirmation: true
+    requires_confirmation: false
+    confirmed: "2026-11-27"
 
-open_questions:
+decisions:
   - id: Q-01
     question: >-
       Skal projektlederen godkende hver tilstandsændring enkeltvis, eller kun
       den samlede version, ændringerne indgår i?
-    blocking: false
-    owner: projektleder
+    decision: >-
+      Kun den samlede version. Tilstandsændringer samles i et udkast til en
+      ny version og træder i kraft, når versionen godkendes (REG-04, REG-06).
+    decided_by: projektleder
+    decided_at: "2026-11-27"
   - id: Q-02
     question: Er grænserne i A-03 et rimeligt udgangspunkt?
-    blocking: false
-    owner: projektleder
+    decision: Ja, som konfigurerbart udgangspunkt.
+    decided_by: projektleder
+    decided_at: "2026-11-27"
+
+open_questions: []
 
 delivery_notes:
   - >-

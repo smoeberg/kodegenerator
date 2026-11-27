@@ -17,7 +17,7 @@ from services.pipeline_adapter import PipelineAdapter
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC_PATH = ROOT / "docs" / "plan" / "kravspec" / "husregel-register.yaml"
-HOUSE_RULES_PATH = ROOT / "docs" / "plan" / "HUSREGLER_V1_UDKAST.md"
+HOUSE_RULES_PATH = ROOT / "docs" / "plan" / "HUSREGLER_V1.md"
 AC_PATTERN = re.compile(r"^(AC-(REG-\d{2})-\d+): \S")
 
 
@@ -54,6 +54,33 @@ def test_import_requirement_matches_the_house_rules_draft(spec: dict) -> None:
         r"^\| (\d\.\d) \|", HOUSE_RULES_PATH.read_text(encoding="utf-8"), re.MULTILINE
     )
     assert rule_ids[0] == "1.1"
-    assert rule_ids[-1] == "7.2"
+    assert rule_ids[-1] == "8.2"
     (import_req,) = [req for req in spec["requirements"] if req["id"] == "REG-15"]
-    assert any("1.1 til 7.2" in c for c in import_req["acceptance_criteria"])
+    assert any("1.1 til 8.2" in c for c in import_req["acceptance_criteria"])
+
+
+def test_approved_spec_has_no_open_questions_or_unconfirmed_assumptions(
+    spec: dict,
+) -> None:
+    assert spec["status"] == "approved"
+    assert spec["approved_by"] == "projektleder"
+    assert spec.get("open_questions") == []
+    for assumption in spec["assumptions"]:
+        assert assumption["requires_confirmation"] is False, assumption["id"]
+        assert assumption.get("confirmed"), assumption["id"]
+
+
+def test_every_house_rule_has_type_and_a_lifecycle_state() -> None:
+    rows = re.findall(
+        r"^\| (\d\.\d) \| .+? \| ([MV]) \| .+? \| (Aktiv|På prøve) \|$",
+        HOUSE_RULES_PATH.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    all_ids = re.findall(
+        r"^\| (\d\.\d) \|", HOUSE_RULES_PATH.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert [row[0] for row in rows] == all_ids
+    for rule_id, rule_type, state in rows:
+        # Decision 5 at approval: every M rule starts active.
+        if rule_type == "M":
+            assert state == "Aktiv", rule_id
