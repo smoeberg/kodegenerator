@@ -12,7 +12,12 @@ the foundation enforces is independence where it matters:
   a different producer (brand) than the agent whose output it controls;
 * the control runs in a new session, never in the controlled agent's session.
 
-The catalog is data (``config/role_process/catalog.v1.yaml``). Loading it
+Version 2 of the catalog adds the governance layer (decision 40), set up
+as PRINCE2 Agile: only the human project board decides; governance agents
+own an artefact, steer and recommend; production agents produce; control
+agents control; system roles execute without a language model.
+
+The catalog is data (``config/role_process/catalog.v2.yaml``). Loading it
 and validating an assignment both fail closed.
 """
 
@@ -29,7 +34,7 @@ from typing import Any
 import yaml
 
 CATALOG_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "role_process" / "catalog.v1.yaml"
+    Path(__file__).resolve().parents[1] / "config" / "role_process" / "catalog.v2.yaml"
 )
 
 #: Independence level required between a control role and the role it
@@ -48,6 +53,31 @@ class RoleKind(str, Enum):
     SYSTEM = "system"
 
 
+class RoleLayer(str, Enum):
+    GOVERNANCE = "governance"
+    PRODUCTION = "production"
+    CONTROL = "control"
+    SYSTEM = "system"
+
+
+class RoleAuthority(str, Enum):
+    DECIDES = "decides"
+    RECOMMENDS = "recommends"
+    PRODUCES = "produces"
+    CONTROLS = "controls"
+    EXECUTES = "executes"
+
+
+#: Which authority each kind of role may have, and in which layer.
+_ALLOWED = {
+    RoleAuthority.DECIDES: ({RoleKind.HUMAN}, {RoleLayer.GOVERNANCE}),
+    RoleAuthority.RECOMMENDS: ({RoleKind.AGENT}, {RoleLayer.GOVERNANCE}),
+    RoleAuthority.PRODUCES: ({RoleKind.AGENT}, {RoleLayer.PRODUCTION}),
+    RoleAuthority.CONTROLS: ({RoleKind.AGENT}, {RoleLayer.CONTROL}),
+    RoleAuthority.EXECUTES: ({RoleKind.SYSTEM}, {RoleLayer.SYSTEM}),
+}
+
+
 @dataclass(frozen=True)
 class RoleSpec:
     id: str
@@ -56,6 +86,9 @@ class RoleSpec:
     input: str
     output: str
     controlled_by: tuple[str, ...]
+    layer: RoleLayer = RoleLayer.PRODUCTION
+    authority: RoleAuthority = RoleAuthority.PRODUCES
+    owns: str | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +152,9 @@ def parse_catalog(data: Mapping[str, Any]) -> RoleCatalog:
                 input=str(raw["input"]),
                 output=str(raw["output"]),
                 controlled_by=tuple(raw.get("controlled_by") or ()),
+                layer=RoleLayer(raw["layer"]),
+                authority=RoleAuthority(raw["authority"]),
+                owns=str(raw["owns"]) if raw.get("owns") else None,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise RoleProcessError(f"invalid role entry: {exc}") from exc
@@ -128,7 +164,26 @@ def parse_catalog(data: Mapping[str, Any]) -> RoleCatalog:
     if not roles:
         raise RoleProcessError("role catalog has no roles")
 
+    deciders = {r.id for r in roles.values() if r.authority is RoleAuthority.DECIDES}
+    if not deciders:
+        raise RoleProcessError("role catalog has no deciding (human) role")
     for spec in roles.values():
+        kinds, layers = _ALLOWED[spec.authority]
+        if spec.kind not in kinds or spec.layer not in layers:
+            raise RoleProcessError(
+                f"{spec.id}: authority {spec.authority.value} needs kind "
+                f"{sorted(k.value for k in kinds)} in layer {sorted(x.value for x in layers)}"
+            )
+        if spec.authority is RoleAuthority.RECOMMENDS:
+            # Governance agents steer and recommend; only the human decides.
+            if not spec.owns:
+                raise RoleProcessError(
+                    f"governance role {spec.id} must own an artefact"
+                )
+            if not deciders & set(spec.controlled_by):
+                raise RoleProcessError(
+                    f"governance role {spec.id} must be controlled by a deciding role"
+                )
         unknown = [c for c in spec.controlled_by if c not in roles]
         if unknown:
             raise RoleProcessError(
@@ -145,6 +200,14 @@ def parse_catalog(data: Mapping[str, Any]) -> RoleCatalog:
             if "fact_check" not in spec.controlled_by:
                 raise RoleProcessError(
                     f"agent role {spec.id} must be controlled by fact_check"
+                )
+            if spec.authority is RoleAuthority.PRODUCES and not any(
+                roles[c].kind is RoleKind.AGENT
+                for c in spec.controlled_by
+                if c in roles
+            ):
+                raise RoleProcessError(
+                    f"production role {spec.id} needs an agent role that challenges it"
                 )
 
     task_roles = dict(data.get("pipeline_task_roles") or {})

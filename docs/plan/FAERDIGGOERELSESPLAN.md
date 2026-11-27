@@ -1,6 +1,8 @@
 # DOR – plan for færdiggørelse
 
-Version 13 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+Version 14 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+
+Nyt i version 14: styringslaget (beslutning 40–43). Styregruppen er mennesket og den eneste, der beslutter; produktejer, systemarkitekt, projektleder, kvalitetsansvarlig og release-ansvarlig er agentroller, der ejer et artefakt og indstiller. Nye roller: opgaveproducent, testdesigner, promptproducent, promptreviewer, sikkerhedsansvarlig og rapport og statistik. Rollekataloget er version 2 (`config/role_process/catalog.v2.yaml`).
 
 Nyt i version 13: grundprincippet om rolle-proces-logik (beslutning 39), rollekataloget som versioneret data i `config/role_process/catalog.v1.yaml` og håndhævelsen i pipelinen.
 
@@ -26,13 +28,13 @@ DOR er rolle-proces-logik. Processen er en fast kæde af roller; agenterne er ud
 
 Formålet er at skabe intelligens gennem dialog mellem flere AI-modeller: én rolle foreslår, en anden fra en anden producent udfordrer, og forslaget revideres. Modeller fra forskellige producenter har forskellige styrker og blinde vinkler, og det er i mødet mellem dem, at fejl og bedre løsninger findes. Dialogen er struktureret af rollerne, så den har et formål, et begrænset antal runder og en afslutning.
 
-- **Uenighed er et signal.** Den registreres og ender som rework, et ændringsforslag eller en beslutning hos projektlederen; den glattes aldrig ud.
+- **Uenighed er et signal.** Den registreres og ender som rework, et ændringsforslag eller en beslutning hos styregruppen; den glattes aldrig ud.
 - **Enighed er ikke bevis.** Modeller kan blive enige om noget forkert. Kun det efterprøvede tæller: tests, systemet selv har kørt, og faktakontrollen.
 
 - **En rolle er en prompt plus en kontekstpakke i et frisk job.** Enhver agent kan have enhver rolle; den samme model kan være koder i ét job og kodeauditør i det næste.
 - **Intet output går videre ukontrolleret.** Hver agentrolles output kontrolleres af en anden rolle, og faktakontrollen kører på alle.
 - **Uafhængighed hvor det betyder noget.** På samme arbejdspakke kommer en kontrolrolle fra en anden producent (brand: anthropic, openai, mistral …) end den rolle, den kontrollerer, og den kører i en ny session uden dennes kontekst. Kan uafhængigheden ikke efterprøves, afvises tildelingen.
-- **Rollerne er data, ikke kode.** Rollekataloget er versioneret konfiguration (`config/role_process/catalog.v1.yaml`), godkendt af projektlederen. `domain/role_process.py` validerer det og afviser et inkonsistent katalog; pipelinen tager hvert jobs rolle fra kataloget og håndhæver reglen, når en agent bindes til et job.
+- **Rollerne er data, ikke kode.** Rollekataloget er versioneret konfiguration (`config/role_process/catalog.v2.yaml`), godkendt af styregruppen. `domain/role_process.py` validerer det og afviser et inkonsistent katalog; pipelinen tager hvert jobs rolle fra kataloget og håndhæver reglen, når en agent bindes til et job.
 
 Alle andre beslutninger bygger på dette princip.
 
@@ -75,14 +77,14 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 10. Husreglerne er dynamiske: et versioneret regelsæt, der udvikles ud fra egen empiri og ekstern best practice.
 11. Styringen følger PRINCE2 Agile: PRINCE2 for retning og beslutninger, sprints for leverancen.
 12. Sprint er et selvstændigt niveau under milestone. En milestone kan have flere sprints.
-13. Omfangsændringer besluttes af den menneskelige projektleder på baggrund af en anbefaling fra systemet. Systemet udskyder aldrig selv krav.
-14. En agent er projektassistent. Den anbefaler; projektlederen beslutter.
+13. Omfangsændringer besluttes af styregruppen på baggrund af en anbefaling fra systemet. Systemet udskyder aldrig selv krav.
+14. En agent er projektleder. Den anbefaler; styregruppen beslutter.
 15. GUI'en er en central del af produktet: den viser projektet og er stedet, hvor hele systemet og de enkelte projekter konfigureres. Den bygges løbende, ikke til sidst.
 16. Koden kontrolleres mod opdraget (kravspec'en). Kontrollen kan give anledning til ændringer i opdraget.
 17. Når opdraget ændres, skal alle led opdatere deres opgaver. Intet led må arbejde videre på en forældet version.
 18. Sprints er korte, som udgangspunkt én dag. Der kan rettes til hver dag, og en dags arbejde kan kasseres.
 19. AI-agenter er ikke en knap ressource. Tiden holdes ved at dele en milestone i flere dele og sætte flere agenter på. Tid og omfang ligger fast; forbruget giver sig.
-20. En plan for skaleringen skal godkendes af projektlederen.
+20. En plan for skaleringen skal godkendes af styregruppen.
 21. Det daglige eftersyn kan køre på to måder, valgt pr. projekt: godkendelse af hver dagssprint, eller daglige undtagelser med godkendelse ved milestonen.
 22. Den menneskelige integration er den overordnede kontrol i hele forløbet.
 23. Et økonomilag venter til v2. I v1 er der intet forbrugsloft.
@@ -98,12 +100,16 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 33. Hele kæden køres igennem første gang, så snart trin 3–8 er koblet sammen: husregel-registeret med to arbejdere parallelt på samme fundament. Kørslen er en måling af, om agenternes kode passer sammen, ikke en leverance og ikke en stopregel.
 34. `main` er det fælles fundament. Milestone-branchen lever kun, mens milestonen kører, og genbaseres på den nyeste `main` ved hver sprintstart, så den højst er én dag bagud. Hver arbejdspakke bindes til en commit, en kravspec-revision og en kontraktversion; bliver én af dem forældet, genbaseres og genkontrolleres pakken i stedet for at arbejde videre. Godkendelsen før `main` (beslutning 8) og kassering af en dagssprint (beslutning 18) bevares.
 
-35. Tilbagerulning frem for fejlretning. Når genereret kode fejler, er udgangspunktet at kassere og bygge på ny med en frisk agent, ikke at fejlrette. Det forudsætter, at årsagen findes i inputtet (kravspec, kontrakt, prompt) og rettes først. Valget følger en fast sortering (afsnittet "Tilbagerulning frem for fejlretning"). Den beskyttede kerne fejlrettes under projektlederens godkendelse.
+35. Tilbagerulning frem for fejlretning. Når genereret kode fejler, er udgangspunktet at kassere og bygge på ny med en frisk agent, ikke at fejlrette. Det forudsætter, at årsagen findes i inputtet (kravspec, kontrakt, prompt) og rettes først. Valget følger en fast sortering (afsnittet "Tilbagerulning frem for fejlretning"). Den beskyttede kerne fejlrettes under styregruppens godkendelse.
 36. Kontrol er rolleadskillelse. Hver arbejdspakke har tre roller: koder, kodeauditør og kontekstkontrollant. Kodeauditøren og kontekstkontrollanten kommer altid fra en anden producent end koderen. De arbejder ud fra en fast kontekstpakke og ser aldrig koderens samtale eller forklaring. Er der ingen anden producent til rådighed, venter kontrollen; den falder aldrig tilbage til koderens producent.
 37. Hvert agentjob gemmer en agentlog: prompt, kontekstpakke, hele agentens forløb med værktøjskald, diff og testoutput. Loggen er uforanderlig, har et fingeraftryk og knyttes til jobposten. DOR's egen log er sandheden, uanset hvad udbyderne gemmer.
 38. Backup i fire lag: kendte gode punkter som tags på `main`, beskyttelse af `main` og tags, en kopi uden for GitHub og backup af DOR's database taget sammen med hvert kendt godt punkt.
 
 39. Grundprincip: DOR er rolle-proces-logik (afsnittet "Grundprincip"). En rolle er en prompt plus en kontekstpakke i et frisk job; enhver agent kan have enhver rolle. På samme arbejdspakke kommer en kontrolrolle fra en anden producent og kører i en ny session. Rollekataloget er versioneret data, og reglen håndhæves i koden; den står ikke kun i dokumentationen.
+40. Styringslaget følger PRINCE2 Agile. Mennesket er styregruppen (projektejer) og den eneste rolle, der beslutter og godkender. Produktejer, systemarkitekt, projektleder, kvalitetsansvarlig og release-ansvarlig er agentroller i styringslaget: hver ejer et artefakt, styrer og indstiller, men godkender aldrig. Produktejeren ejer kravspec'en og står for opdragskontrollen af helheden; systemarkitekten ejer arkitekturen gennem hele forløbet. Kataloget håndhæver det: kun et menneske kan have myndigheden "beslutter", og hver styringsrolle kontrolleres af styregruppen. Hvor planen tidligere sagde "projektlederen" om den, der godkender, er det nu styregruppen; den tidligere projektassistent er projektleder-agenten.
+41. Opgaveproducenten er en agent, der foreslår opdelingen af kontrakterne i arbejdspakker med beskrivelse, vægt og rækkefølge. Opgavekompileren bliver dens faktakontrol (adskilte skrive-områder, dækning af kriterier, ingen cykler), og systemarkitekten og projektlederen kontrollerer den.
+42. Prompts er versionerede data, ikke kode. Hver agentrolle får sin prompt fra en versioneret fil, som promptproducenten skriver, en promptreviewer fra en anden producent kontrollerer, og styregruppen godkender. Promptversionen står på hver jobpost. Det sker før første gennemløb, så målingerne fra første kørsel hører til en kendt promptversion.
+43. Flere produktions- og kontrolroller: testdesigneren skriver accepttests ud fra kriterierne før kodningen og fra en anden producent end koderen; sikkerhedsansvarlig kontrollerer pakker og milestones; rapport og statistik er en systemrolle, der regner tallene uden sprogmodel, så projektlederens rapporter bygger på efterprøvede tal.
 
 ## Arkitektur: styringslag over færdige agenter
 
@@ -238,7 +244,7 @@ Referenceprojektet er den faste prøveopgave, som fabrikken bygger fra kravspec 
 | Lille nok | Få dagssprints |
 | Kendt facit | Designet er fastlagt i `docs/plan/HUSREGLER_V1.md`; kravspec i `docs/plan/kravspec/husregel-register.yaml` |
 
-Registeret bygges som selvstændig komponent. Projektlederen fletter det selv ind i DOR.
+Registeret bygges som selvstændig komponent. Styregruppen fletter det selv ind i DOR.
 
 ### Tre trin til selvudvikling
 
@@ -249,7 +255,7 @@ Registeret bygges som selvstændig komponent. Projektlederen fletter det selv in
 ### Regler for selvudvikling
 
 - En stabil, frigivet version af fabrikken bygger den næste. Den kørende fabrik ændrer aldrig sig selv.
-- Kontrollaget er en beskyttet kerne: faktakontrol, niveau 1 og 2, opdragskontrol, godkendelser, regelmotoren og agentudvælgelsen. Ændringer dér kræver projektlederens godkendelse hver gang, også når projektet kører på "kun undtagelser".
+- Kontrollaget er en beskyttet kerne: faktakontrol, niveau 1 og 2, opdragskontrol, godkendelser, regelmotoren og agentudvælgelsen. Ændringer dér kræver styregruppens godkendelse hver gang, også når projektet kører på "kun undtagelser".
 
 ## Agentstatistik og valg af agent
 
@@ -275,7 +281,7 @@ Agent (værktøj og bot-profil), udbyder, model og modelversion, rolle, opgavety
 
 ### Prompts som versionerede artefakter
 
-Prompts følger samme livscyklus som husreglerne: foreslået, på prøve, aktiv, udfaset. Statistikken viser, om en ny promptversion giver færre misforståelser, målt på antagelser, faktakontrol-fejl og rework. Agenter foreslår promptændringer; projektlederen godkender.
+Prompts følger samme livscyklus som husreglerne: foreslået, på prøve, aktiv, udfaset. Statistikken viser, om en ny promptversion giver færre misforståelser, målt på antagelser, faktakontrol-fejl og rework. Agenter foreslår promptændringer; styregruppen godkender.
 
 ### Kappestrid som forsøg
 
@@ -283,7 +289,7 @@ Fordi agenter ikke er en knap ressource, kan samme arbejdspakke gives til flere 
 
 ### Valg af agent
 
-1. Projektlederen godkender, hvilke agenter der må bruges i hver rolle (puljen).
+1. Styregruppen godkender, hvilke agenter der må bruges i hver rolle (puljen).
 2. Systemet vælger inden for puljen ud fra statistikken for opgavetypen.
 3. Valget og dets begrundelse gemmes.
 4. Systemet kan anbefale ændringer af puljen, men ændrer den ikke selv.
@@ -301,8 +307,8 @@ Fordi agenter ikke er en knap ressource, kan samme arbejdspakke gives til flere 
 |---|---|
 | Sprintstart | Milestone-branchen genbaseres på den nyeste `main`, og hele suiten køres; godkendte ændringer af opdraget træder i kraft; alle led kvitterer; dagens arbejdspakker frigives efter skaleringsplanen |
 | I løbet af sprinten | Agenter leverer arbejdspakker; faktakontrol, niveau 1 og niveau 2 pr. pakke; fletning til milestone-branchen |
-| Sprintslut | Opdragskontrol på milestone-branchen; projektassistentens dagsrapport med afvigelser og indstillinger |
-| Eftersyn | Projektlederen godkender, retter eller kasserer; retrospektiv giver eventuelle regelforslag |
+| Sprintslut | Opdragskontrol på milestone-branchen; projektlederens dagsrapport med afvigelser og indstillinger |
+| Eftersyn | Styregruppen godkender, retter eller kasserer; retrospektiv giver eventuelle regelforslag |
 
 En dagssprint ender i én af tre tilstande:
 
@@ -317,7 +323,7 @@ Hver sprint får et startmærke på milestone-branchen, så kassering er en enke
 ### To måder at føre eftersyn
 
 - **Godkend hver dag:** Næste sprint starter først, når den forrige er godkendt, rettet eller kasseret.
-- **Kun undtagelser:** Sprints fortsætter uden godkendelse, så længe kontrollerne er bestået. Projektlederen ser dagsrapporten og får kun undtagelser til beslutning. Godkendelsen sker ved milestonen.
+- **Kun undtagelser:** Sprints fortsætter uden godkendelse, så længe kontrollerne er bestået. Styregruppen ser dagsrapporten og får kun undtagelser til beslutning. Godkendelsen sker ved milestonen.
 
 Måden vælges pr. projekt og kan skiftes ved en sprintgrænse.
 
@@ -327,7 +333,7 @@ Tiden holdes ved at skalere ud, ikke ved at skære i omfanget.
 
 ### Skaleringsplan
 
-Projektassistenten udarbejder en skaleringsplan for hver milestone, og projektlederen godkender den, før arbejdet starter:
+Projektlederen udarbejder en skaleringsplan for hver milestone, og styregruppen godkender den, før arbejdet starter:
 
 - hvordan milestonen er delt i arbejdspakker og dagssprints;
 - hvor mange agenter der arbejder parallelt i hver rolle;
@@ -365,7 +371,7 @@ En afvigelse siger ikke, hvilken side der er forkert. Hver afvigelse ender derfo
 | Rework | Koden er forkert, opdraget står ved magt | Ny arbejdspakke i næste sprint |
 | Ændringsforslag | Opdraget er forkert, ufuldstændigt eller overhalet | Forslag til ny kravspec-version |
 
-Projektassistenten indstiller for hver afvigelse. Projektlederen beslutter.
+Projektlederen indstiller for hver afvigelse. Styregruppen beslutter.
 
 For et eksisterende repo uden kravspec er det samme kontrol: alt i koden mangler et krav, og resultatet er et kravspec-udkast (trin 2).
 
@@ -375,8 +381,8 @@ En godkendt ændring giver en ny, uforanderlig kravspec-version. Den gamle marke
 
 1. **Forskel:** Hvilke krav-id'er er tilføjet, ændret eller fjernet.
 2. **Konsekvensanalyse:** Gennem sporbarhedskæden krav → arkitekturbeslutning → kontrakt → arbejdspakke → kode → test → kontrolpost findes alt, der er berørt.
-3. **Konsekvensrapport:** Projektassistenten beskriver omfang, forbrug og påvirkning af skaleringsplanen, med en anbefaling.
-4. **Beslutning:** Projektlederen godkender ændringen og afgør, om berørt arbejde fra den igangværende sprint rettes eller kasseres.
+3. **Konsekvensrapport:** Projektlederen beskriver omfang, forbrug og påvirkning af skaleringsplanen, med en anbefaling.
+4. **Beslutning:** Styregruppen godkender ændringen og afgør, om berørt arbejde fra den igangværende sprint rettes eller kasseres.
 5. **Udrulning led for led:**
 
 | Led | Opdatering |
@@ -421,7 +427,7 @@ Roadmappen i repoet siger "GUI not started"; det er forældet.
 - **Arv:** Systemkonfigurationen er standard. Et projekt arver den og kan tilsidesætte udvalgte dele.
 - **Versioneret:** En konfigurationsændring giver en ny version. En kørende sprint fortsætter på den version, den startede med.
 - **GUI'en beslutter ikke:** Den viser tilstand og sender kommandoer. Regler, godkendelser og kontrol ligger i backenden.
-- **Indbakken først:** Projektlederen er flaskehalsen, så alt, der venter på en beslutning, samles ét sted.
+- **Indbakken først:** Styregruppen er flaskehalsen, så alt, der venter på en beslutning, samles ét sted.
 
 ### Rækkefølge
 
@@ -436,7 +442,7 @@ projekt → fase (milestone) → sprint → arbejdspakke
 | Niveau | Afsluttes med | Branch |
 |---|---|---|
 | Projekt | Opdragskontrol viser kravspec opfyldt; business case genbekræftet | main |
-| Fase (milestone) | Fuld test, niveau 2 på helheden, projektlederens godkendelse, fletning til main, opdragskontrol | Milestone-branch |
+| Fase (milestone) | Fuld test, niveau 2 på helheden, styregruppens godkendelse, fletning til main, opdragskontrol | Milestone-branch |
 | Sprint (én dag) | Opdragskontrol, dagsrapport, eftersyn: godkendt, rettet eller kasseret; retrospektiv | Ingen egen; startmærke på milestone-branchen |
 | Arbejdspakke | Faktakontrol, niveau 1 og niveau 2 bestået; flettet til milestone-branchen | Kort opgave-branch |
 
@@ -446,20 +452,25 @@ Regelsæt og prompts er frosne inden for en sprint.
 
 | Rolle | Hvem | Ansvar |
 |---|---|---|
-| Projektleder | Menneske | Godkender kravspec og dens ændringer, arkitektur, kontrakter, skaleringsplaner, agentpuljer og hver milestone; beslutter undtagelser og omfang; godkender ændringer af regler og prompts |
-| Projektassistent | Agent | Foreslår sprintplan, skaleringsplan og prioritering; skriver dagsrapporter, undtagelsesrapporter og konsekvensrapporter med muligheder og anbefaling |
-| Orkestrator | System (DOR) | Fordeler arbejdspakker efter den godkendte skaleringsplan; vælger agent inden for puljen; håndhæver tolerancer, rækkefølge og kvittering for ny kravspec-version |
+| Styregruppe / projektejer | Menneske | Godkender kravspec og dens ændringer, arkitektur, kontrakter, skaleringsplaner, agentpuljer, prompts, regler, rollekataloget og hver milestone; beslutter undtagelser og omfang |
+| Produktejer | Agent | Ejer kravspec og opdrag; opdragskontrol af helheden begge veje; vurderer ændringsforslag og indstiller |
+| Systemarkitekt | Agent | Ejer arkitekturen gennem hele forløbet; kontrollerer kontrakter, opgaveopdeling og milestones mod den; fører beslutningsloggen |
+| Projektleder | Agent | Sprintplan, skaleringsplan og prioritering; frigiver pakker; dagsrapporter, undtagelsesrapporter og konsekvensrapporter med muligheder og anbefaling |
+| Kvalitetsansvarlig | Agent | Ejer husreglerne og kvalitetsregisteret; foreslår regelændringer ud fra kontrolresultater og statistik |
+| Release-ansvarlig | Agent | Release-tjekliste, release-noter og release-bevis for en milestone |
+| Orkestrator | System (DOR) | Fordeler arbejdspakker efter den godkendte skaleringsplan; vælger agent inden for puljen; håndhæver tolerancer, rækkefølge og kvittering for ny kravspec-version; udfører git-operationerne |
 | Koder | Færdig kodeagent via arbejder-adapter | Leverer én arbejdspakke ad gangen |
-| Kodeauditør | Færdig kodeagent fra en anden producent end koderen | Niveau 1: koden mod husregler og projektregler |
-| Kontekstkontrollant | Færdig kodeagent fra en anden producent end koderen | Niveau 2: koden mod kravspec, arkitektur og kontrakt; opdragskontrol |
+| Kodeauditør, sikkerhedsansvarlig, kontekstkontrollant | Agenter fra en anden producent end koderen | Niveau 1 (husregler og projektregler), sikkerhed, niveau 2 (kravspec, arkitektur og kontrakt) |
 
-Projektassistenten kan ikke godkende, ændre omfang, ændre opdraget, ændre skaleringen, ændre puljer eller ændre regler.
+Hele rollekataloget står i afsnittet "Roller og kontekst".
+
+Ingen styringsagent kan godkende, ændre omfang, ændre opdraget, ændre skaleringen, ændre puljer eller ændre regler.
 
 ### Tolerancer og undtagelser
 
 Tid og omfang ligger fast. Tolerancer sættes for antal rework-runder (højst to), for afvigelse fra skaleringsplanen og for tid på den kritiske vej. Forbrug registreres, men har intet loft i v1.
 
-Ved overskridelse stopper arbejdet på det berørte niveau, og projektassistenten skriver en undtagelsesrapport: hvad der skete, mulighederne, konsekvensen for hver og en anbefaling. Første mulighed er at skalere ud med en revideret skaleringsplan. Ændring af omfang er kun en mulighed, når den kritiske vej gør fristen umulig. Projektlederen beslutter.
+Ved overskridelse stopper arbejdet på det berørte niveau, og projektlederen skriver en undtagelsesrapport: hvad der skete, mulighederne, konsekvensen for hver og en anbefaling. Første mulighed er at skalere ud med en revideret skaleringsplan. Ændring af omfang er kun en mulighed, når den kritiske vej gør fristen umulig. Styregruppen beslutter.
 
 ### PRINCE2-begreber i fabrikken
 
@@ -471,8 +482,8 @@ Ved overskridelse stopper arbejdet på det berørte niveau, og projektassistente
 | Produktbeskrivelse med kvalitetskriterier | Kontrakt med acceptkriterier |
 | Arbejdspakke | Opgaven (work package) |
 | Kvalitetsregister | Kontrolposter fra faktakontrol, niveau 1, niveau 2 og opdragskontrol |
-| Statusrapport | Projektassistentens dagsrapport |
-| Undtagelsesrapport | Projektassistentens rapport med anbefaling |
+| Statusrapport | Projektlederens dagsrapport |
+| Undtagelsesrapport | Projektlederens rapport med anbefaling |
 | Ændringsanmodning med konsekvensanalyse | Ændringsforslag og konsekvensrapport i ændringsløbet |
 | Erfaringslog | Kilden til nye husregler og promptversioner |
 | Sprint-backlog og MoSCoW | Opgaver valgt efter kravenes prioritet |
@@ -490,7 +501,7 @@ Grundregel: en agents egen rapport er aldrig bevis.
 4. Kun det bestilte. Ændringer uden for opgavens filer afvises; funktionalitet uden krav markeres.
 5. Reviewere kontrolleres også. Fund skal pege på fil og linje, som slås op.
 
-Faktakontrollen bygger ikke selv på en sprogmodel. Den gælder også projektassistentens anbefalinger og rapporter. Den fanger ikke en plausibel, men forkert fortolkning af et krav; den fanges af niveau 2, opdragskontrollen og den menneskelige godkendelse.
+Faktakontrollen bygger ikke selv på en sprogmodel. Den gælder også projektlederens anbefalinger og rapporter. Den fanger ikke en plausibel, men forkert fortolkning af et krav; den fanges af niveau 2, opdragskontrollen og den menneskelige godkendelse.
 
 ### Niveau 1 – teknisk
 
@@ -502,28 +513,37 @@ Kontekstkontrollanten vurderer koden mod kravspec, arkitekturkontrakt og modulko
 
 ### Roller og kontekst
 
-Rollekataloget (`config/role_process/catalog.v1.yaml`, version 1) er den gældende kilde. Uddrag:
+Rollekataloget (`config/role_process/catalog.v2.yaml`, version 2) er den gældende kilde. Uddrag:
 
-| Rolle | Input | Output | Kontrolleres af | Art |
-|---|---|---|---|---|
-| Projektleder | Anbefalinger, undtagelser, ændringsforslag | Beslutninger og godkendelser | – | Menneske |
-| Kravafklarer | Opdrag eller repo-analyse | Kravspec-udkast | Faktakontrol, kontekstkontrollant, projektleder | Agent |
-| Arkitekt | Godkendt kravspec | Arkitekturforslag | Faktakontrol, arkitekturreviewer, projektleder | Agent |
-| Arkitekturreviewer | Kravspec og forslag | Fund og uenigheder | Faktakontrol | Agent |
-| Kontraktforfatter | Godkendt arkitektur | Modulkontrakter og kontrakttests | Faktakontrol, kontekstkontrollant, projektleder | Agent |
-| Opgavekompiler | Godkendte kontrakter | Arbejdspakker og skaleringsplan | Projektleder | System |
-| Koder | Arbejdspakke og kontekstpakke | Kode og tests | Faktakontrol, kodeauditør, kontekstkontrollant | Agent |
-| Kodeauditør | Diff, regler, testresultater | Niveau 1-fund | Faktakontrol | Agent |
-| Kontekstkontrollant | Diff, kravspec, arkitektur, kontrakt, testresultater | Niveau 2-fund og opdragskontrol | Faktakontrol | Agent |
-| Projektassistent | Jobposter og kontrolresultater | Dagsrapport og indstillinger | Faktakontrol, projektleder | Agent |
-| Faktakontrol og testkørsel | Leverance og egne testkørsler | Verificerede referencer, påstande og testresultater | – | System |
-| Orkestrator | Godkendte planer og gates | Fordeling, kvitteringer, frigivelse | – | System |
+| Rolle | Lag | Ejer af | Input | Output | Kontrolleres af | Art |
+|---|---|---|---|---|---|---|
+| Styregruppe / projektejer | Styring | Business case, omfang og alle godkendelser | Indstillinger, undtagelsesrapporter, ændringsforslag | Beslutninger og godkendelser (kravspec, arkitektur, kontrakter, skaleringsplan, milestones, omfang, regler, prompts, rollekatalog) | – | Menneske |
+| Produktejer | Styring | Kravspec og opdraget | Opdrag, kravspec, ændringsforslag, opdragskontrol-resultater, milestone-diff | Prioriteret kravspec, vurdering af ændringsforslag, opdragskontrol af helheden mod kravspec begge veje | Faktakontrol og testkørsel, Systemarkitekt, Styregruppe / projektejer | Agent |
+| Systemarkitekt | Styring | Arkitekturen gennem hele forløbet | Godkendt kravspec og arkitektur, kontrakter, opgaveopdeling, milestone-diff | Arkitekturbeslutningslog, indstilling om kontrakter og opgaveopdeling, arkitekturkontrol af milestones | Faktakontrol og testkørsel, Arkitekturreviewer, Styregruppe / projektejer | Agent |
+| Projektleder | Styring | Planen, rytmen og tolerancerne | Godkendte planer, jobposter, kontrolresultater, statistik, tolerancer | Sprintplan, skaleringsplan, frigivelse af pakker, undtagelsesrapporter, dagsrapport | Faktakontrol og testkørsel, Styregruppe / projektejer | Agent |
+| Kvalitetsansvarlig | Styring | Husreglerne og kvalitetsregisteret | Husregler, kontrolresultater, statistik, retrospektiv | Regelforslag (foreslået, på prøve, aktiv, udfaset) og kvalitetsregister | Faktakontrol og testkørsel, Styregruppe / projektejer | Agent |
+| Release-ansvarlig | Styring | Releasen af en milestone | Milestone-branch, kontrolresultater, fuld test, styregruppens godkendelse | Release-tjekliste, release-noter og release-bevis til PR, known-good-tag og backup | Faktakontrol og testkørsel, Produktejer, Styregruppe / projektejer | Agent |
+| Kravafklarer | Produktion | – | Opdrag eller repo-analyse | Kravspec-udkast | Faktakontrol og testkørsel, Produktejer, Styregruppe / projektejer | Agent |
+| Arkitekt | Produktion | – | Godkendt kravspec | Arkitekturforslag | Faktakontrol og testkørsel, Arkitekturreviewer, Systemarkitekt, Styregruppe / projektejer | Agent |
+| Kontraktforfatter | Produktion | – | Godkendt arkitektur | Modulkontrakter | Faktakontrol og testkørsel, Kontekstkontrollant, Systemarkitekt, Styregruppe / projektejer | Agent |
+| Opgaveproducent | Produktion | – | Godkendte kontrakter og arkitektur | Arbejdspakker med beskrivelse, vægt og rækkefølge (opgavekompileren er faktakontrollen) | Faktakontrol og testkørsel, Systemarkitekt, Projektleder, Styregruppe / projektejer | Agent |
+| Testdesigner | Produktion | – | Acceptkriterier og kontrakter | Accepttests skrevet før kodningen, uafhængigt af koderen | Faktakontrol og testkørsel, Kontekstkontrollant, Systemarkitekt | Agent |
+| Promptproducent | Produktion | – | Rollekatalog, husregler, statistik pr. promptversion | Versionerede prompts pr. agentrolle | Faktakontrol og testkørsel, Promptreviewer, Styregruppe / projektejer | Agent |
+| Koder | Produktion | – | Arbejdspakke og kontekstpakke | Kode og tests | Faktakontrol og testkørsel, Testdesigner, Kodeauditør, Sikkerhedsansvarlig, Kontekstkontrollant | Agent |
+| Arkitekturreviewer | Kontrol | – | Kravspec og arkitekturforslag | Fund og uenigheder | Faktakontrol og testkørsel | Agent |
+| Promptreviewer | Kontrol | – | Prompt, rollens beskrivelse i kataloget, husregler | Fund og uenigheder | Faktakontrol og testkørsel | Agent |
+| Kodeauditør | Kontrol | – | Diff, husregler og projektregler, testresultater | Niveau 1-fund | Faktakontrol og testkørsel | Agent |
+| Sikkerhedsansvarlig | Kontrol | – | Diff, afhængigheder, hemmelighedsscanning, sikkerhedsregler | Sikkerhedsfund pr. pakke og pr. milestone | Faktakontrol og testkørsel | Agent |
+| Kontekstkontrollant | Kontrol | – | Diff, kravspec, arkitektur, kontrakt, testresultater | Niveau 2-fund | Faktakontrol og testkørsel | Agent |
+| Faktakontrol og testkørsel | System | – | Leverance og systemets egne testkørsler (for opgaver opgavekompilerens validering) | Verificerede referencer, påstande og testresultater | – | System |
+| Rapport og statistik | System | – | Jobposter, kontrolposter og målinger | Statistik pr. agent, opgavetype og promptversion; tal til dagsrapport og undtagelsesrapporter | – | System |
+| Orkestrator | System | – | Godkendte planer og gates | Fordeling, kvitteringer, frigivelse, git-operationer på milestone-branchen | – | System |
 
-Faktakontrollen er ikke en rolle, men en maskinel kontrol uden sprogmodel.
+Faktakontrollen, statistikken og orkestratoren er systemroller uden sprogmodel. Kun styregruppen beslutter; styringsrollerne ejer hver et artefakt, styrer og indstiller (beslutning 40).
 
 Kontrolrollerne får en fast kontekstpakke: kravspec-revisionen, kontrakten, de gældende regler, diffen og de testresultater, systemet selv har kørt. De får ikke koderens samtale, ræsonnement eller rapport, så de efterprøver koden i stedet for koderens fortolkning af den.
 
-Med to producenter kontrollerer den ene den andens kode. Med flere producenter kan kodeauditør og kontekstkontrollant komme fra hver sin. Modeller fra forskellige producenter kan stadig tage fejl på samme måde; de maskinelle kontroller kommer derfor først, og projektlederens godkendelse ved milestonen er sidste værn.
+Med to producenter kontrollerer den ene den andens kode. Med flere producenter kan kodeauditør og kontekstkontrollant komme fra hver sin. Modeller fra forskellige producenter kan stadig tage fejl på samme måde; de maskinelle kontroller kommer derfor først, og styregruppens godkendelse ved milestonen er sidste værn.
 
 ### Tilbagerulning frem for fejlretning
 
@@ -535,7 +555,7 @@ At generere kode er billigt; at forstå og rette fremmed kode er dyrt, og en age
 | Ikke forstået, eller to runders rework hjalp ikke | Kassér pakken; byg den ny med en frisk agent |
 | Fejlen ligger i en antagelse, kontrakt eller kravspec | Ret inputtet gennem ændringsløbet; byg de berørte pakker ny |
 | Projektet er kørt af sporet: flere pakker eller opdragskontrollen røde | Rul tilbage til seneste kendte gode punkt; find årsagen i agentloggen; ret inputtet; byg ny |
-| Den beskyttede kerne | Fejlret, med projektlederens godkendelse |
+| Den beskyttede kerne | Fejlret, med styregruppens godkendelse |
 
 Hver kassering og tilbagerulning registrerer årsagen på jobposten, så agentstatistikken, husreglerne og promptversionerne lærer af den. Tilbagerulning er billig, så længe fejlen findes tidligt; derfor hænger princippet sammen med dagssprints og den daglige opdragskontrol.
 
@@ -560,13 +580,13 @@ Problemet med forældede branches følger af, at hver opgave bindes til én præ
 
 1. Opgavekompileren grupperer opgaver i milestones og dagssprints, så hver milestone er et kørbart delsystem.
 2. Hver milestone får én branch, der kun lever, mens milestonen kører. Opgave-branches udgår fra dens top og lever højst én sprint.
-3. **Ved hver sprintstart genbaseres milestone-branchen på den nyeste `main`**, og hele suiten køres, før dagens pakker frigives. Branchen er dermed højst én dag bagud. Giver genbaseringen konflikter eller fejl, bliver det en undtagelse til projektlederen, før sprinten starter.
+3. **Ved hver sprintstart genbaseres milestone-branchen på den nyeste `main`**, og hele suiten køres, før dagens pakker frigives. Branchen er dermed højst én dag bagud. Giver genbaseringen konflikter eller fejl, bliver det en undtagelse til styregruppen, før sprinten starter.
 4. **Hver arbejdspakke bindes til tre versioner:** den commit, den starter fra, kravspec-revisionen og kontraktversionen. DOR registrerer alle tre på pakken og jobposten.
 5. Bliver en af de tre versioner forældet, mens pakken er i gang, markeres pakken forældet. Den genbaseres og genkontrolleres i stedet for at blive kasseret eller arbejde videre i stilhed. Det ændrer den nuværende regel.
 6. Parallelle opgaver får adskilte filer; overlappende opgaver køres efter hinanden. Når én pakke er flettet, kontrolleres den næste mod den nye milestone-top og antages ikke at passe.
 7. Hver sprint får et startmærke efter genbaseringen, så en kasseret sprint kan rulles tilbage.
 8. Kontrakter er frosne inden for en sprint. En ændring af opdraget træder i kraft ved næste sprintstart.
-9. Kun milestone-branchen går til `main`, efter fuld test på en revision, der er genbaseret på den nyeste `main`, niveau 2 på helheden og projektlederens godkendelse. Derefter slettes branchen, og milestonen markeres med et tag på `main`.
+9. Kun milestone-branchen går til `main`, efter fuld test på en revision, der er genbaseret på den nyeste `main`, niveau 2 på helheden og styregruppens godkendelse. Derefter slettes branchen, og milestonen markeres med et tag på `main`.
 
 En ren trunk-model, hvor hver pakke flettes direkte til `main`, er fravalgt, fordi den fjerner godkendelsen før `main` og gør kassering af en dagssprint til revert-commits på `main`. Den kan genovervejes, når kontrollerne har vist, at de kan bære det alene.
 
@@ -575,21 +595,22 @@ En ren trunk-model, hvor hver pakke flettes direkte til `main`, er fravalgt, for
 | # | Trin | Indhold | Skærmbillede |
 |---|---|---|---|
 | 1 | Rygrad, reference, regler | Rollekatalog og håndhævelse af grundprincippet; pipelinen som eneste spor; gennemgående sporbarhed med krav-id og kravspec-version på hvert artefakt; jobpost for hvert agentjob; kravspec for husregel-registeret; husregler v1; `AGENTS.md` og dokumentationen rettes til denne plan | GUI-skelet: projektoverblik, indbakke, projektkonfiguration |
-| 2 | Repo-analyse til kravspec | Project Audit danner et kravspec-udkast, som projektlederen godkender; DOR er første repo | Repo-tilknytning og kravspec-udkast |
+| 2 | Repo-analyse til kravspec | Project Audit danner et kravspec-udkast, som styregruppen godkender; DOR er første repo | Repo-tilknytning og kravspec-udkast |
 | 3 | Arkitektur via rådet | Proposer, reviewere og verifier er færdige kodeagenter med Spec Kits plan-prompts; stak vælges ud fra kravspec; moduler skal kunne bygges uafhængigt; gate | Arkitekturforslag, uenigheder, godkendelse |
 | 4 | Kontrakter pr. modul | Skemavaliderede, sporbare til krav-id'er; gate | Kontrakter og sporbarhed til krav |
 | 5 | Opgavekompiler | Kontrakter til arbejdspakker pr. milestone og dagssprint med adskilte filer, afhængigheder og opgavetype; kritisk vej; skaleringsplan til godkendelse | Opgavegraf, sprintplan og skaleringsplan |
 | 6 | Arbejder-adapter | Claude Code og Codex uden skærm i afskærmet worktree; kort branch fra milestone-toppen; omsætning af arbejdspakke til Spec Kit-format; jobpost med forbrug; agentlog for hvert job | Arbejdspakkers status og forbrug |
 | 7 | Kontrol | Faktakontrol; kodeauditør (niveau 1) og kontekstkontrollant (niveau 2) fra en anden producent end koderen med fast kontekstpakke; rework-sløjfe og sortering mellem rework, ny udvikling og ændring af input; målinger og årsager skrives på jobposten | Kontrolresultater pr. arbejdspakke |
-| 8 | Milestone-branch | Kortlivet branch genbaseret på `main` ved sprintstart; binding af pakker til commit, kravspec-revision og kontraktversion med genbasering ved forældelse; samling, sprintmærker og kassering, fuld test, projektlederens godkendelse, én PR til main og tag `known-good/<milestone>`; backup af database og kopi uden for GitHub ved hvert tag; tilbagerulning til kendt godt punkt | Dagseftersyn, milestone-godkendelse og tilbagerulning |
+| 8 | Milestone-branch | Kortlivet branch genbaseret på `main` ved sprintstart; binding af pakker til commit, kravspec-revision og kontraktversion med genbasering ved forældelse; samling, sprintmærker og kassering, fuld test, styregruppens godkendelse, én PR til main og tag `known-good/<milestone>`; backup af database og kopi uden for GitHub ved hvert tag; tilbagerulning til kendt godt punkt | Dagseftersyn, milestone-godkendelse og tilbagerulning |
+| 8b | Styringslag og prompts (før 8a) | Rollekatalog v2 med styregruppe og styringsroller (beslutning 40); prompts som versionerede data med promptproducent og promptreviewer, promptversion på hver jobpost (beslutning 42); opgaveproducent med kompileren som faktakontrol (beslutning 41); testdesigner før kodningen og sikkerhedsansvarlig i kontrollen (beslutning 43); produktejeren og systemarkitekten kontrollerer milestonen før styregruppens godkendelse; release-ansvarlig og rapport og statistik på milestonen | Roller, prompts med versioner og fund fra styringsrollerne |
 | 8a | Første gennemløb | Hele kæden på husregel-registeret med Claude Code og Codex parallelt på samme kontrakter; manuelle trin registreres; målinger af integrationsfejl, kontraktbrud og indgreb (se "Første gennemløb") | Dokumenteret kørsel med målinger |
 | 9 | Opdragskontrol og ændringsløb | Kode mod kravspec begge veje, dagligt og ved main; rework eller ændringsforslag; ny kravspec-version rulles ned gennem alle led med kvittering | Opfyldelse krav for krav; ændringsforslag og konsekvensrapport |
-| 10 | Styring og erfaring | Projektassistent, dagsrapport, tolerancer og undtagelsesrapporter, retrospektiv, regelsløjfe | Dagsrapport, undtagelsesrapporter, husregler og tolerancer |
+| 10 | Styring og erfaring | Projektleder-agenten, kvalitetsansvarlig, dagsrapport, tolerancer og undtagelsesrapporter, retrospektiv, regelsløjfe | Dagsrapport, undtagelsesrapporter, husregler og tolerancer |
 | 11 | Agentstatistik og agentvalg | Statistik pr. agent, opgavetype og promptversion; versionerede prompts; kappestrid som forsøg; valg af agent inden for godkendte puljer | Statistik pr. agent og opgavetype; puljer og prompts |
 | 12 | GUI samlet | Systemkonfiguration færdiggøres | Hele forløbet |
 | 13 | Samlet test | Hele systemet testes samlet på husregel-registeret: mindst én ændring af opdraget, én kasseret sprint, to agenter parallelt i samme rolle og begge arbejdere; derefter DOR som eksisterende repo | Dokumenteret kørsel gennem GUI'en |
 
-Milepæl 1: trin 1, 3–8, 8a (første gennemløb) og 9, inklusive GUI-skelet. Dagssprints og skaleringsplan er med fra start; planen udarbejdes manuelt, indtil projektassistenten er bygget. Jobposter og målinger indsamles fra første kørsel.
+Milepæl 1: trin 1, 3–8, 8b (styringslag og prompts), 8a (første gennemløb) og 9, inklusive GUI-skelet. Dagssprints og skaleringsplan er med fra start; planen udarbejdes manuelt, indtil projektlederen er bygget. Jobposter og målinger indsamles fra første kørsel.
 
 Milepæl 2: trin 2, 10, 11 og 12.
 
