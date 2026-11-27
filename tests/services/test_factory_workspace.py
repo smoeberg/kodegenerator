@@ -85,3 +85,46 @@ def test_publish_reconciles_existing_identical_remote_branch(tmp_path: Path) -> 
     assert not replayed and reconciled["reconciled"]
     assert reconciled["head_sha"] == first["head_sha"]
     manager.cleanup(workspace)
+
+
+def _create_and_clean(args: tuple[str, str, int]) -> str:
+    root, base, worker = args
+    manager = FactoryWorkspaceManager(root)
+    created = []
+    for n in range(5):
+        workspace = manager.create(
+            execution_id=f"exec-{worker}", candidate_id=f"candidate-{n}", base_sha=base
+        )
+        created.append(workspace)
+    for workspace in created[:2]:
+        manager.cleanup(workspace)
+    return ",".join(item.branch for item in created)
+
+
+def test_parallel_processes_create_and_clean_worktrees_safely(tmp_path: Path) -> None:
+    """Git cannot run worktree administration concurrently in one repository.
+
+    Workers run as separate processes, so the manager must serialize across
+    processes and not only across threads (regression: "failed to read
+    .git/worktrees/<name>/commondir").
+    """
+    import multiprocessing
+
+    root, base = repository(tmp_path)
+    context = multiprocessing.get_context("spawn")
+    with context.Pool(4) as pool:
+        results = pool.map(_create_and_clean, [(str(root), base, w) for w in range(4)])
+
+    branches = [branch for result in results for branch in result.split(",")]
+    assert len(set(branches)) == 20
+    listed = git(root, "worktree", "list", "--porcelain").count("worktree ")
+    assert listed == 1 + 4 * 3  # main checkout + three kept per worker
+    assert git(root, "worktree", "prune", "--dry-run") == ""
+
+
+def test_managers_for_one_repository_share_the_admin_lock(tmp_path: Path) -> None:
+    root, _ = repository(tmp_path)
+    first = FactoryWorkspaceManager(root)
+    second = FactoryWorkspaceManager(root / "src" / "..")
+    assert first._admin_lock is second._admin_lock
+    assert first._admin_lock_path == root.resolve() / ".git" / "dor-worktree-admin.lock"
