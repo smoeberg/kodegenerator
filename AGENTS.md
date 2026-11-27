@@ -66,12 +66,17 @@ Key consequences for agents working on the completion:
   start; only a milestone branch goes to `main`, after human approval. Every
   work package is bound to a commit, a requirements revision, and a contract
   version, and is rebased and re-checked when any of them becomes stale.
-- Control is role separation: every work package has a coder, a code
-  auditor (level 1), and a context controller (level 2 and mandate check).
-  Both control roles come from a different model producer than the coder,
-  work from a fixed context packet, and never see the coder's conversation.
-  With no other producer available, control waits; it never falls back to
-  the coder's producer.
+- Foundation principle: DOR is role-process logic. The process is a fixed
+  chain of roles in `config/role_process/catalog.v1.yaml` (data, approved by
+  the project manager); `domain/role_process.py` validates it and the
+  pipeline takes every job's role from it. A role is a prompt plus a context
+  packet in a fresh job, so any agent may hold any role. On the same work
+  package a control role (code auditor, context controller, reviewer) comes
+  from a different producer (brand) and runs in a different session than the
+  role it controls; it gets a fixed context packet, never the controlled
+  agent's conversation. If independence cannot be verified, the assignment
+  is rejected; with no other producer available, control waits. Do not add
+  roles or task types in code; change the catalog.
 - Generated code that fails is discarded and rebuilt rather than debugged,
   after the cause has been found in the agent log and fixed in the input
   (requirements, contract, prompt). Every agent job keeps an immutable agent

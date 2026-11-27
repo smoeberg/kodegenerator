@@ -78,6 +78,11 @@ class AgentIdentity:
     provider: str | None = None
     model: str | None = None
     model_version: str | None = None
+    #: Model producer (anthropic, openai, mistral, ...); the independence
+    #: dimension of the role-process principle (domain/role_process.py).
+    brand: str | None = None
+    #: Agent session the job ran in; control roles need a different one.
+    session_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +92,8 @@ class AgentIdentity:
             "provider": self.provider,
             "model": self.model,
             "model_version": self.model_version,
+            "brand": self.brand,
+            "session_id": self.session_id,
         }
 
     @classmethod
@@ -98,6 +105,8 @@ class AgentIdentity:
             provider=data.get("provider"),
             model=data.get("model"),
             model_version=data.get("model_version"),
+            brand=data.get("brand"),
+            session_id=data.get("session_id"),
         )
 
 
@@ -122,6 +131,9 @@ class AgentJobRecord:
     stack: str | None = None
     prompt_version: str | None = None
     rule_version: str | None = None
+    #: Work package the job belongs to; control jobs carry the id of the
+    #: package they control. Defaults to the task id.
+    work_package_id: str | None = None
     created_at: datetime = field(default_factory=_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -179,6 +191,11 @@ class AgentJobRecord:
             usage=dict(usage) if usage else dict(self.usage),
         )
 
+    def bind_agent(self, agent: AgentIdentity) -> AgentJobRecord:
+        if self.closed:
+            raise AgentJobRecordError(f"job {self.job_id} is already closed")
+        return replace(self, agent=agent)
+
     def record_measurements(self, values: Mapping[str, Any]) -> AgentJobRecord:
         merged = {**dict(self.measurements), **dict(values)}
         return replace(self, measurements=merged)
@@ -198,6 +215,7 @@ class AgentJobRecord:
             "stack": self.stack,
             "prompt_version": self.prompt_version,
             "rule_version": self.rule_version,
+            "work_package_id": self.work_package_id,
             "created_at": _iso(self.created_at),
             "started_at": _iso(self.started_at),
             "finished_at": _iso(self.finished_at),
@@ -227,6 +245,7 @@ class AgentJobRecord:
                 stack=data.get("stack"),
                 prompt_version=data.get("prompt_version"),
                 rule_version=data.get("rule_version"),
+                work_package_id=data.get("work_package_id"),
                 created_at=_parse(data["created_at"]) or _now(),
                 started_at=_parse(data.get("started_at")),
                 finished_at=_parse(data.get("finished_at")),
