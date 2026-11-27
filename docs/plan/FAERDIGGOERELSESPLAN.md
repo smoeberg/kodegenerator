@@ -1,6 +1,8 @@
 # DOR – plan for færdiggørelse
 
-Version 10 · 26. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+Version 11 · 27. november 2026 · Whiteboard: https://claude.ai/artifact/5ZMM2dgqXTTGB1TSzeAcNg
+
+Nyt i version 11: husregler v1 og kravspec'en for husregel-registeret er godkendt (`docs/plan/HUSREGLER_V1.md`, `docs/plan/kravspec/husregel-register.yaml`). #297, #298 og #299 er flettet; repoet er offentligt.
 
 Nyt i version 10: milestone-branchen er kortlivet og genbaseres på den nyeste `main` ved hver sprintstart, og hver arbejdspakke bindes til commit, kravspec-revision og kontraktversion (beslutning 34 og afsnittet "Milestone-branches").
 
@@ -47,7 +49,7 @@ Der er fire parallelle spor: pipelinen (`/pipeline/start`), GUI-kæden (9 sider,
 6. Kode samles i kortlivede milestone-branches, ikke i én branch pr. leverance mod main (se beslutning 34).
 7. Fejler niveau 2, går koden tilbage til koderen højst to gange og derefter til mennesket.
 8. Hver milestone godkendes af et menneske, før den går til main.
-9. Udviklingsreglerne skal defineres (se `docs/plan/HUSREGLER_V1_UDKAST.md`).
+9. Udviklingsreglerne er defineret og godkendt som husregler v1 (`docs/plan/HUSREGLER_V1.md`).
 10. Husreglerne er dynamiske: et versioneret regelsæt, der udvikles ud fra egen empiri og ekstern best practice.
 11. Styringen følger PRINCE2 Agile: PRINCE2 for retning og beslutninger, sprints for leverancen.
 12. Sprint er et selvstændigt niveau under milestone. En milestone kan have flere sprints.
@@ -204,7 +206,7 @@ Referenceprojektet er den faste prøveopgave, som fabrikken bygger fra kravspec 
 | Flere moduler | Regellager med versioner, livscyklus, måling pr. regel, API, skærmbillede |
 | Parallelt arbejde | Måling og skærmbillede kan bygges uafhængigt, når lageret har en kontrakt |
 | Lille nok | Få dagssprints |
-| Kendt facit | Designet er fastlagt i `docs/plan/HUSREGLER_V1_UDKAST.md` |
+| Kendt facit | Designet er fastlagt i `docs/plan/HUSREGLER_V1.md`; kravspec i `docs/plan/kravspec/husregel-register.yaml` |
 
 Registeret bygges som selvstændig komponent. Projektlederen fletter det selv ind i DOR.
 
@@ -514,8 +516,6 @@ V2: økonomilag. Venter til senere: autonominiveauer, Redmine, deploy.
 
 ## Åbne punkter
 
-- Husregler v1 skal rettes til og godkendes.
-- Kravspec for husregel-registeret skal skrives og godkendes.
 - Hvem der kan bedømme kode og arkitektur fagligt, når kontrollerne er uenige.
 - Om DeepSeek og Rool kan køre som kodeagenter gennem et åbent værktøj.
 - Om GUI'en skal blive i Streamlit.

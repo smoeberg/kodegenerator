@@ -44,8 +44,8 @@ Never call a phase missing, complete, green, or merged from memory alone.
 
 The binding plan for completing DOR is
 [`docs/plan/FAERDIGGOERELSESPLAN.md`](docs/plan/FAERDIGGOERELSESPLAN.md)
-(Danish). The draft house rules for generated code are
-[`docs/plan/HUSREGLER_V1_UDKAST.md`](docs/plan/HUSREGLER_V1_UDKAST.md).
+(Danish). The approved house rules for generated code are
+[`docs/plan/HUSREGLER_V1.md`](docs/plan/HUSREGLER_V1.md).
 Where older documentation, roadmaps, or audits disagree with the plan, the
 plan wins; repository evidence still has the precedence given above.
 
