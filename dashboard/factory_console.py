@@ -257,6 +257,42 @@ def provenance_rows(status: Mapping[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def council_summary(status: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The architecture council's outcome, shown before the architecture gate."""
+    council = ((status.get("context") or {}).get("architecture") or {}).get("council")
+    if not isinstance(council, Mapping):
+        return None
+    proposal = council.get("proposal") or {}
+    return {
+        "status": council.get("status"),
+        "rounds": len(council.get("rounds") or []),
+        "roles": {
+            role: f"{(identity or {}).get('brand')} · {(identity or {}).get('model')}"
+            for role, identity in (council.get("roles") or {}).items()
+        },
+        "stack": proposal.get("stack") or {},
+        "modules": [
+            {
+                "modul": module.get("id"),
+                "ansvar": module.get("responsibility"),
+                "krav": ", ".join(module.get("requirement_ids") or []),
+                "afhænger af": ", ".join(module.get("depends_on") or []),
+            }
+            for module in proposal.get("modules") or []
+        ],
+        "build_layers": list(council.get("build_layers") or []),
+        "open_findings": [
+            {
+                "kilde": item.get("source"),
+                "alvor": item.get("severity"),
+                "mål": item.get("target"),
+                "fund": item.get("issue"),
+            }
+            for item in council.get("open_findings") or []
+        ],
+    }
+
+
 # --------------------------------------------------------------------- #
 # Rendering
 # --------------------------------------------------------------------- #
@@ -337,6 +373,10 @@ def _render_overview(
     if status.get("error"):
         st.error(f"Pipeline-fejl: {status['error']}")
 
+    council = council_summary(status)
+    if council:
+        _render_council(st, council)
+
     st.markdown("**Opgaver**")
     st.dataframe(status.get("tasks") or [], hide_index=True, use_container_width=True)
     st.markdown("**Jobposter**")
@@ -351,6 +391,38 @@ def _render_overview(
         st.dataframe(provenance, hide_index=True, use_container_width=True)
     else:
         st.caption("Ingen artefakter endnu.")
+
+
+def _render_council(st, council: Mapping[str, Any]) -> None:
+    st.markdown("**Arkitekturrådet**")
+    roles = " · ".join(f"{role}: {who}" for role, who in council["roles"].items())
+    if council["status"] == "agreed":
+        st.success(
+            f"Arkitekt og reviewer er enige efter {council['rounds']} runde(r). {roles}"
+        )
+    else:
+        st.warning(
+            f"Uenighed efter {council['rounds']} runde(r); afgøres af dig ved "
+            f"arkitektur-gaten. {roles}"
+        )
+    if council["open_findings"]:
+        st.dataframe(
+            council["open_findings"], hide_index=True, use_container_width=True
+        )
+    stack = council["stack"]
+    if stack:
+        st.caption(
+            f"Stak: {stack.get('language')} · {stack.get('framework')} · "
+            f"{stack.get('persistence')}. {stack.get('rationale', '')}"
+        )
+    st.dataframe(council["modules"], hide_index=True, use_container_width=True)
+    if council["build_layers"]:
+        st.caption(
+            "Kan bygges parallelt i lag: "
+            + " → ".join(
+                "[" + ", ".join(layer) + "]" for layer in council["build_layers"]
+            )
+        )
 
 
 def _render_inbox(
