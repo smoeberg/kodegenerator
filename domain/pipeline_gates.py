@@ -21,7 +21,10 @@ def get_pipeline_gates() -> list[Gate]:
         Gate(
             id="gate_contracts_approval",
             name="Contracts Approval",
-            description="Human approves API and data contracts",
+            description=(
+                "Human approves module contracts and the work plan: packages, day "
+                "sprints, critical path and scaling plan"
+            ),
             decision_id=None,
         ),
         Gate(

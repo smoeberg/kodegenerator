@@ -169,7 +169,7 @@ Beslutningen træffes hurtigt og på, hvad der virker sammen. Arbejde, der aller
 |---|---|
 | Kravspec-model, validator, godkendelsesgate | Behold |
 | Pipelinens tilstandsmaskine med gates og rework | Behold, tilpas til milestones og sprints |
-| Opgavesynteser, scheduler, worktree-styring | Behold |
+| Opgavesynteser, scheduler, worktree-styring | Behold. Udfald i trin 5: opgavekompileren (`execution/task_compiler.py`) laver kontrakterne om til en fundamentpakke (interfaces, typer og kontrakttests under `contracts/`) og én pakke pr. modul, der bygger mod kontrakterne parallelt; `FactoryTaskSynthesizer` validerer pakkerne og serialiserer overlappende skrive-områder. Dagssprints, kritisk vej og skaleringsplan afledes deterministisk og godkendes sammen med kontrakterne ved kontrakt-gaten |
 | Integrationscontroller | Tilpas til milestone-branches |
 | Rådet og bot-konfiguration | Udfald i trin 3: rådet i `phase4/council` vurderer, om en handling er klar, og producerer ikke et arkitekturdokument, så det bruges ikke til arkitekturen. Arkitekturen kører som en smal dialog mellem arkitekt og arkitekturreviewer (`execution/architecture_council.py`) på `GovernedLLMRuntime`, modeladapterne og bot-kataloget, som beholdes. Skabelon-arkitekturen kører ved siden af, indtil trin 4 kasserer den |
 | Lint/test/build-adaptere, arkitekturregel-evaluatorer | Behold |
