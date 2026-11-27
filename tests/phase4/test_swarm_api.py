@@ -94,6 +94,33 @@ def _auth_header() -> dict[str, str]:
     return {"Authorization": f"Bearer {_auth_token()}"}
 
 
+def _enqueue_as_pipeline(project_id: str, tasks: list[dict]) -> None:
+    swarm_mod._queue.enqueue_wbs_plan(
+        [
+            {
+                **task,
+                "metadata": {"organization_id": "test-org", "project_id": project_id},
+            }
+            for task in tasks
+        ]
+    )
+
+
+def test_enqueuing_tasks_through_the_swarm_api_is_retired():
+    """Completion plan, decision 1: work enters through /pipeline/start only."""
+    h = _auth_header()
+    _canonical_project("p-retired")
+    r = client.post(
+        "/api/v1/swarm/projects",
+        json={"project_id": "p-retired", "tasks": [{"id": "X", "name": "X"}]},
+        headers=h,
+    )
+    assert r.status_code == 410
+    assert "/pipeline/start" in r.json()["detail"]
+    with pytest.raises(KeyError):
+        swarm_mod._queue.get_task("X")
+
+
 def test_swarm_flow_requires_auth():
     r = client.post(
         "/api/v1/swarm/projects", json={"project_id": "p-auth", "requirements": {}}
@@ -105,33 +132,34 @@ def test_full_swarm_flow():
     h = _auth_header()
     _canonical_project("p1")
 
-    # 1. Start project with a task plan
+    # 1. Register the project for dispatch control. Work enters the queue
+    # through the pipeline (decision 1); the test enqueues as it would.
     r = client.post(
         "/api/v1/swarm/projects",
-        json={
-            "project_id": "p1",
-            "requirements": {"goal": "Build order API"},
-            "tasks": [
-                {
-                    "id": "T1",
-                    "name": "Build API",
-                    "dependencies": [],
-                    "capabilities": ["code"],
-                    "priority": 1,
-                },
-                {
-                    "id": "T2",
-                    "name": "Test API",
-                    "dependencies": ["T1"],
-                    "capabilities": ["test"],
-                    "priority": 2,
-                },
-            ],
-        },
+        json={"project_id": "p1", "requirements": {"goal": "Build order API"}},
         headers=h,
     )
     assert r.status_code == 201, r.text
-    assert r.json()["enqueued"] == 2
+    assert r.json()["enqueued"] == 0
+    _enqueue_as_pipeline(
+        "p1",
+        [
+            {
+                "id": "T1",
+                "name": "Build API",
+                "dependencies": [],
+                "capabilities": ["code"],
+                "priority": 1,
+            },
+            {
+                "id": "T2",
+                "name": "Test API",
+                "dependencies": ["T1"],
+                "capabilities": ["test"],
+                "priority": 2,
+            },
+        ],
+    )
 
     # Status report
     r = client.get("/api/v1/swarm/projects/p1", headers=h)
@@ -210,10 +238,11 @@ def test_pause_blocks_claiming():
 
     r = client.post(
         "/api/v1/swarm/projects",
-        json={"project_id": "p2", "tasks": [{"id": "A", "name": "A"}]},
+        json={"project_id": "p2"},
         headers=h,
     )
     assert r.status_code == 201
+    _enqueue_as_pipeline("p2", [{"id": "A", "name": "A"}])
 
     client.post("/api/v1/swarm/pause", headers=h)
     r = client.post(

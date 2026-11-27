@@ -1,8 +1,9 @@
-"""Versioned Swarm Control-Plane REST API.
+"""Versioned worker control-plane REST API.
 
-Exposes the swarm factory as an authenticated HTTP surface:
+Authenticated HTTP surface through which workers take work from the
+pipeline's task queue, plus tenant-scoped dispatch control:
 
-* POST /api/v1/swarm/projects            — start a new swarm project
+* POST /api/v1/swarm/projects            — register a project for dispatch control
 * POST /api/v1/swarm/workers/claim       — worker claims the next eligible task
 * POST /api/v1/swarm/workers/heartbeat   — worker extends its lease
 * POST /api/v1/swarm/workers/complete    — worker reports success or failure
@@ -11,6 +12,11 @@ Exposes the swarm factory as an authenticated HTTP surface:
 
 The module talks ONLY to the public SwarmTaskQueue contract on ``main`` and
 never rewrites or bypasses queue internals.
+
+Completion plan, decision 1: the pipeline (``/pipeline/start``) is the only
+track through which work enters the queue. The former Swarm track, which let
+``POST /projects`` enqueue a task plan directly, is retired; such requests are
+rejected with 410 Gone.
 """
 
 from __future__ import annotations
@@ -175,6 +181,14 @@ async def start_project(
 ) -> dict[str, Any]:
     """Register an existing canonical project for tenant-scoped dispatch."""
     organization_id = require_user_organization(current_user)
+    if body.tasks:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=(
+                "Enqueuing tasks through the swarm API is retired; "
+                "work enters through /pipeline/start"
+            ),
+        )
     if not body.project_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -194,21 +208,6 @@ async def start_project(
         ) from exc
     except SwarmProjectConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    if body.tasks:
-        tasks = [
-            {
-                **task,
-                "metadata": {
-                    **dict(task.get("metadata", {})),
-                    "organization_id": organization_id,
-                    "project_id": project_id,
-                },
-            }
-            for task in body.tasks
-        ]
-        enqueued = _queue_backend(organization_id).enqueue_wbs_plan(tasks)
-        return {"project_id": project_id, "enqueued": enqueued, "created": created}
 
     return {"project_id": project_id, "enqueued": 0, "created": created}
 

@@ -46,6 +46,8 @@ RETIRED_LEGACY_MODULES = frozenset(
         "api.endpoints.intents",
         "api.endpoints.organizations",
         "api.endpoints.role_definitions",
+        # Swarm track, retired by the completion plan (decision 1).
+        "api.endpoints.swarm_dashboard",
         "api.endpoints.tasks",
         "api.endpoints.workflow_templates",
     }
@@ -59,6 +61,7 @@ RETIRED_LEGACY_PATH_PREFIXES = (
     "/intents",
     "/organizations",
     "/role-definitions",
+    "/api/v1/swarm/dashboard",
     "/tasks",
     "/workflow-templates",
 )

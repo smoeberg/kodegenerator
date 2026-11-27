@@ -6,18 +6,16 @@ deterministic and fast (no real LLM calls, no network).
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
 
 import pytest
 
 from services.security_sentinel import ScanContext, SecuritySentinel
-from services.swarm_orchestrator import SwarmOrchestrator
 from services.swarm_persistence import SQLiteTaskQueue
-from services.swarm_task_queue import QueuedTask, QueuedTaskStatus, SwarmTaskQueue
+from services.swarm_task_queue import QueuedTask, SwarmTaskQueue
 from services.worker_agent_daemon import WorkerAgent
-
 
 # ---------------------------------------------------------------------------
 # Capability profile used by parallel field workers
@@ -224,8 +222,3 @@ def sqlite_queue(tmp_path: Path) -> SQLiteTaskQueue:
     q = SQLiteTaskQueue(tmp_path / "swarm-e2e.db", lease_seconds=120)
     yield q
     q.close()
-
-
-@pytest.fixture
-def swarm_orchestrator(tmp_repo: Path, memory_queue: SwarmTaskQueue) -> SwarmOrchestrator:
-    return SwarmOrchestrator(repo_root=tmp_repo, task_queue=memory_queue)
