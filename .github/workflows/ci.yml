@@ -2,19 +2,32 @@ name: DOR CI
 
 on:
   push:
-    branches: [main, fix/p4-governed-patch-record]
+    branches: [main]
   pull_request:
     branches: [main]
+    # Documentation-only PRs do not need the test suites. Pushes to main
+    # always run everything because release evidence is collected there.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   contents: read
+
+# One run per PR or branch. A new push to a PR cancels its running checks;
+# runs on main are never cancelled (they feed the release evidence).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs run the newest Python only; main runs both, as the release
+        # evidence requires test (3.11) and test (3.12).
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.11", "3.12"]') }}
 
     steps:
       - name: Checkout

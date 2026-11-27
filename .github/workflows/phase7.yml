@@ -2,14 +2,25 @@ name: Phase 7 - Fase 7 Gates
 
 on:
   push:
-    branches: [ main, fix/p4-governed-patch-record ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+    # Documentation-only PRs do not need the test suites. Pushes to main
+    # always run everything because release evidence is collected there.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   actions: read
   checks: read
   contents: read
+
+# One run per PR or branch. A new push to a PR cancels its running checks;
+# runs on main are never cancelled (they feed the release evidence).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   manifest:
