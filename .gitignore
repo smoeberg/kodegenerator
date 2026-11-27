@@ -24,3 +24,6 @@ data/fleet_salt
 
 # Local git bundle artifacts (never commit)
 *.bundle
+
+# Agent logs written by the worker adapter (DOR_AGENT_LOG_DIR default)
+var/agent-logs/
