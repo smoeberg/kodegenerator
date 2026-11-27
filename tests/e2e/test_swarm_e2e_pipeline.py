@@ -11,30 +11,22 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List
 
-import pytest
-
 from domain.requirements import (
     AcceptanceCriterion,
     Requirement,
     RequirementsSpecification,
     approval_for,
 )
-from services.security_sentinel import SecuritySentinel
-from services.swarm_orchestrator import SwarmOrchestrator, SwarmProjectStatus
 from services.swarm_persistence import SQLiteTaskQueue
-from services.swarm_task_queue import QueuedTask, QueuedTaskStatus, SwarmTaskQueue
+from services.swarm_task_queue import QueuedTask, QueuedTaskStatus
 from services.worker_agent_daemon import WorkerAgent
-
 from tests.e2e.conftest import (
-    FULL_CAPS,
     SAFE_SOURCE,
     UNSAFE_SOURCE,
     DeterministicSynthesizer,
     SentinelGateSynthesizer,
-    drain_queue_with_workers,
     make_unified_diff,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,64 +113,6 @@ def _all_tasks(queue) -> List[QueuedTask]:
 
 # ---------------------------------------------------------------------------
 # Test 1 — Happy path
-# ---------------------------------------------------------------------------
-
-
-def test_happy_path_requirements_to_completed_project(
-    tmp_repo, security_sentinel, memory_queue
-):
-    """Krav → WBS → enqueue → 3 parallel workers → SecuritySentinel → done."""
-    orch = SwarmOrchestrator(repo_root=tmp_repo, task_queue=memory_queue)
-    report = orch.start_project(make_valid_spec("happy-path"), project_id="hp-001")
-
-    assert report.status == SwarmProjectStatus.DISPATCHING_TASKS
-    assert report.total_tasks > 0
-    assert report.architecture_contract is not None
-
-    inner = DeterministicSynthesizer()
-    gate = SentinelGateSynthesizer(
-        inner, security_sentinel, repository_root=tmp_repo
-    )
-
-    agents = drain_queue_with_workers(
-        memory_queue,
-        n_workers=3,
-        synthesizer=gate,
-        max_cycles=80,
-    )
-
-    tasks = _all_tasks(memory_queue)
-    completed = [t for t in tasks if t.status == QueuedTaskStatus.COMPLETED]
-    failed = [t for t in tasks if t.status == QueuedTaskStatus.FAILED]
-    pending = [
-        t
-        for t in tasks
-        if t.status in (QueuedTaskStatus.PENDING, QueuedTaskStatus.CLAIMED)
-    ]
-
-    assert len(completed) == report.total_tasks
-    assert not failed
-    assert not pending
-    assert gate.approved
-    assert not gate.blocked
-    assert sum(a._completed for a in agents) == report.total_tasks
-
-    # Refresh project progress via orchestrator bookkeeping helper
-    for t in completed:
-        orch.complete_worker_task(
-            task_id=t.task_id,
-            worker_id="reconcile",
-            success=True,
-            patch_result=t.patch_result,
-        )
-    # Bookkeeping may no-op on already-completed ownership; status via queue is source of truth
-    final = orch.get_project_status("hp-001")
-    assert final.total_tasks == report.total_tasks
-    assert final.completed_tasks >= 0  # orchestrator counter is best-effort
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — Security block then successful retry
 # ---------------------------------------------------------------------------
 
 

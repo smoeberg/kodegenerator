@@ -92,8 +92,12 @@ canonical module inventory and retired path denylist live in
 `api/api_surface.py`; API startup and regression tests fail if the mounted
 router set drifts or a retired module/path is restored.
 
-`api/endpoints/swarm_dashboard.py` remains an internal, unmounted component
-with an isolated test contract. It is not part of the canonical public API.
+The former Swarm track (`services/swarm_orchestrator.py`, the unmounted
+`api/endpoints/swarm_dashboard.py`, `cli/run_swarm.py`, `cli/swarm_tui.py`) is
+retired by the completion plan; the pipeline is the only track through which
+work enters the task queue, and `POST /api/v1/swarm/projects` rejects task
+plans with 410 Gone. `api/endpoints/swarm_dashboard.py` is on the retired
+module denylist.
 
 ## Persistent HTTP identity
 
