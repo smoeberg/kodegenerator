@@ -40,6 +40,39 @@ Material status claims must be classified as:
 
 Never call a phase missing, complete, green, or merged from memory alone.
 
+## Completion plan
+
+The binding plan for completing DOR is
+[`docs/plan/FAERDIGGOERELSESPLAN.md`](docs/plan/FAERDIGGOERELSESPLAN.md)
+(Danish). The draft house rules for generated code are
+[`docs/plan/HUSREGLER_V1_UDKAST.md`](docs/plan/HUSREGLER_V1_UDKAST.md).
+Where older documentation, roadmaps, or audits disagree with the plan, the
+plan wins; repository evidence still has the precedence given above.
+
+Key consequences for agents working on the completion:
+
+- The pipeline (`/pipeline/start`, `runtime/pipeline_orchestrator.py`) is the
+  backbone and the only track. Do not extend the Swarm track; it is being
+  retired. The nine-page GUI chain is kept for maintenance only.
+- DOR does not build its own coding agent. Ready-made coding agents (first
+  Claude Code and Codex) run as workers under DOR's control through a worker
+  adapter. `phase4/implementation_agent`, `generation/scaffold_engine`, and
+  `generation/contract_generator` are scheduled for replacement.
+- Every artifact carries the requirement ids and the requirement
+  specification version it was derived from; every agent job gets a job
+  record.
+- `main` is the shared foundation. Code is collected in short-lived
+  milestone branches that are rebased onto the latest `main` at every sprint
+  start; only a milestone branch goes to `main`, after human approval. Every
+  work package is bound to a commit, a requirements revision, and a contract
+  version, and is rebased and re-checked when any of them becomes stale.
+- Governance v0 (below) is relaxed for the completion work: the Human Owner
+  approves scope and solution through the pull request, and the full
+  ProblemBrief role sequence is not required. Tenant isolation, authority
+  boundaries, and fail-closed behavior remain untouched, and every change
+  still needs branch isolation, executable tests, and the checks in the
+  change protocol.
+
 ## Development Governance v0
 
 For changes after governance boundary
@@ -66,6 +99,26 @@ ProblemBrief
 
 The Human Owner is not the normal prompt router or scheduler for these roles.
 `GovernanceCoordinator` owns sequencing once distinct role providers are bound.
+
+### Provider-neutral governance resolution
+
+Governance roles (GovernanceCoordinator, Product Owner, Orchestrator, Coder,
+Auditor, Independent Reviewer) resolve their LLM provider through the
+provider-neutral connection model, never through OpenAI-specific configuration:
+
+- `GovernanceCoordinator` uses the tenant-configured provider connection
+  (for example `mistral-eu-01`).
+- The API key is resolved internally via `BotProviderCredentialStore`; it is
+  never an environment-variable contract.
+- Provider, endpoint, and model come from the Bot Catalog, not from process
+  environment variables.
+- `OPENAI_API_KEY` must not be required for governance. OpenAI remains one
+  possible provider, not a system dependency.
+- Coders and the four governance roles use the same provider-neutral
+  resolution path.
+- The five roles retain separate logical provider identities (`provider_id`
+  must remain pairwise distinct in governance bootstrap).
+- Credentials must never be returned to the GUI, logs, or audit output.
 
 A semantic change is any change to domain meaning, lifecycle/state transitions,
 persisted meaning, consistency or concurrency guarantees, dependency semantics,
