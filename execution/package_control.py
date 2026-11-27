@@ -70,7 +70,7 @@ OUTPUT_LIMIT = 8_000
 
 #: An acceptance-criterion id as it appears in code, test names and docs
 #: (``AC-REG-01-1`` or ``ac_reg_01_1``).
-_CRITERION = re.compile(
+CRITERION_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])AC[-_][A-Z]+[-_]\d+[-_]\d+(?!\d)", re.IGNORECASE
 )
 _TEST_NAME = re.compile(r"(^test_|_test\.|\.test\.|\.spec\.|^conftest\.py$)")
@@ -292,7 +292,7 @@ def fact_check(
     invented = 0
     for path, text in contents.items():
         for number, line in enumerate(text.splitlines(), 1):
-            for match in _CRITERION.finditer(line):
+            for match in CRITERION_PATTERN.finditer(line):
                 ref = criterion_ref(match.group(0))
                 if ref not in known:
                     invented += 1
@@ -311,7 +311,7 @@ def fact_check(
             if not is_test_path(path):
                 continue
             text = workspaces.read_file(head, path) or ""
-            refs = {criterion_ref(m.group(0)) for m in _CRITERION.finditer(text)}
+            refs = {criterion_ref(m.group(0)) for m in CRITERION_PATTERN.finditer(text)}
             if refs & criteria:
                 contract_tests.append(path)
                 for ref in refs & criteria:
@@ -761,7 +761,10 @@ class PackageLine:
         fresh_coder: AgentChoice | None = None,
         architecture: Mapping[str, Any] | None = None,
         timeout_seconds: int = 3600,
+        run_id: str = "",
     ) -> dict[str, Any]:
+        """``run_id`` names this run of the package (a sprint run, a rebuild): model
+        calls are idempotent per run, so a new run must not reuse an old one's keys."""
         task_id = str(package["logical_task_id"])
         attempts: list[dict[str, Any]] = []
         agent_jobs: list[dict[str, Any]] = []
@@ -802,7 +805,7 @@ class PackageLine:
                     base_sha=base_sha,
                     organization_id=organization_id,
                     actor_id=actor_id,
-                    run_key=f"{execution_id}:{task_id}:a{attempt}:control",
+                    run_key=f"{execution_id}:{run_id or base_sha[:12]}:{task_id}:a{attempt}:control",
                     architecture=architecture,
                 )
                 agent_jobs.extend(control.get("agent_jobs") or [])
@@ -855,6 +858,15 @@ class PackageLine:
             "work_package": task_id,
             "branch": keep,
             "head_sha": final.head_sha if keep else None,
+            "base_sha": base_sha,
+            # What a later recheck needs: the delivery that was kept.
+            "delivery": {
+                "affected_paths": list(final.affected_paths),
+                "log_reference": final.log_reference,
+                "coder_job": final.agent_job,
+            }
+            if keep
+            else None,
             "reason": attempts[-1]["reason"],
             "attempts": attempts,
             "agent_jobs": agent_jobs,

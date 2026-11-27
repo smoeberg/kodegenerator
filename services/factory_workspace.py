@@ -250,6 +250,42 @@ class FactoryWorkspaceManager:
                 shutil.rmtree(path, ignore_errors=True)
                 self._git("worktree", "prune")
 
+    def resolve(self, ref: str) -> str | None:
+        """The commit a ref points at, or ``None``."""
+        try:
+            return self._git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip()
+        except FactoryWorkspaceError:
+            return None
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=self._repository,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def update_ref(self, ref: str, new_sha: str, expected_old: str | None) -> None:
+        """Move ``ref`` only if it still points at ``expected_old`` (``None``: must not exist)."""
+        if not _SHA.fullmatch(new_sha):
+            raise FactoryWorkspaceError("update_ref needs an exact Git SHA-1")
+        with self._repository_admin():
+            self._git(
+                "update-ref", ref, new_sha, expected_old if expected_old else "0" * 40
+            )
+
+    def delete_ref(self, ref: str, expected_old: str) -> None:
+        with self._repository_admin():
+            self._git("update-ref", "-d", ref, expected_old)
+
+    def bundle(self, target: Path) -> Path:
+        """A complete, verifiable copy of the repository outside GitHub."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self._git("bundle", "create", str(target), "--all")
+        self._git("bundle", "verify", str(target))
+        return target
+
     def discard_branch(self, branch: str) -> None:
         """Drop a superseded or rejected candidate branch."""
         if not branch.startswith("factory/"):
