@@ -1,0 +1,265 @@
+# DOR role-process catalog, version 2.
+#
+# Foundation principle (completion plan, decision 39): DOR is role-process
+# logic. The process is a fixed chain of roles; agents are interchangeable
+# and are assigned to roles per job. A role is a prompt plus a context packet
+# in a fresh job, so any agent may hold any role. On the same work package a
+# control role must come from a different producer (brand) than the role it
+# controls, and run in a new session without that role's context.
+#
+# Version 2 adds the governance layer (decision 40), organised as PRINCE2
+# Agile: the human is the project board and is the only role that decides.
+# The governance roles are agents that own an artefact, steer and recommend;
+# they never approve. Version 1 (catalog.v1.yaml) is kept as history.
+#
+# Fields:
+#   layer:     governance | production | control | system
+#   authority: decides     (human only: approves and decides scope)
+#              recommends  (governance agent: owns, steers, recommends)
+#              produces    (production agent)
+#              controls    (control agent)
+#              executes    (system, no language model)
+#   owns:      the artefact a governance role is answerable for
+#
+# This file is data, not code. domain/role_process.py loads and validates it
+# and fails closed on any violation. Changing it creates a new catalog
+# version, approved by the project board.
+
+catalog_version: 2
+approved_by: project_board
+approved_at: "2026-11-27"
+independence_level: brand
+
+roles:
+  # ------------------------------------------------------------------ #
+  # Governance
+  # ------------------------------------------------------------------ #
+  - id: project_board
+    name: Styregruppe / projektejer
+    kind: human
+    layer: governance
+    authority: decides
+    owns: Business case, omfang og alle godkendelser
+    input: Indstillinger, undtagelsesrapporter, ændringsforslag
+    output: Beslutninger og godkendelser (kravspec, arkitektur, kontrakter, skaleringsplan, milestones, omfang, regler, prompts, rollekatalog)
+    controlled_by: []
+
+  - id: product_owner
+    name: Produktejer
+    kind: agent
+    layer: governance
+    authority: recommends
+    owns: Kravspec og opdraget
+    input: Opdrag, kravspec, ændringsforslag, opdragskontrol-resultater, milestone-diff
+    output: Prioriteret kravspec, vurdering af ændringsforslag, opdragskontrol af helheden mod kravspec begge veje
+    controlled_by: [fact_check, system_architect, project_board]
+
+  - id: system_architect
+    name: Systemarkitekt
+    kind: agent
+    layer: governance
+    authority: recommends
+    owns: Arkitekturen gennem hele forløbet
+    input: Godkendt kravspec og arkitektur, kontrakter, opgaveopdeling, milestone-diff
+    output: Arkitekturbeslutningslog, indstilling om kontrakter og opgaveopdeling, arkitekturkontrol af milestones
+    controlled_by: [fact_check, architecture_reviewer, project_board]
+
+  - id: project_manager
+    name: Projektleder
+    kind: agent
+    layer: governance
+    authority: recommends
+    owns: Planen, rytmen og tolerancerne
+    input: Godkendte planer, jobposter, kontrolresultater, statistik, tolerancer
+    output: Sprintplan, skaleringsplan, frigivelse af pakker, undtagelsesrapporter, dagsrapport
+    controlled_by: [fact_check, project_board]
+
+  - id: quality_manager
+    name: Kvalitetsansvarlig
+    kind: agent
+    layer: governance
+    authority: recommends
+    owns: Husreglerne og kvalitetsregisteret
+    input: Husregler, kontrolresultater, statistik, retrospektiv
+    output: Regelforslag (foreslået, på prøve, aktiv, udfaset) og kvalitetsregister
+    controlled_by: [fact_check, project_board]
+
+  - id: release_manager
+    name: Release-ansvarlig
+    kind: agent
+    layer: governance
+    authority: recommends
+    owns: Releasen af en milestone
+    input: Milestone-branch, kontrolresultater, fuld test, styregruppens godkendelse
+    output: Release-tjekliste, release-noter og release-bevis til PR, known-good-tag og backup
+    controlled_by: [fact_check, product_owner, project_board]
+
+  # ------------------------------------------------------------------ #
+  # Production
+  # ------------------------------------------------------------------ #
+  - id: requirements_analyst
+    name: Kravafklarer
+    kind: agent
+    layer: production
+    authority: produces
+    input: Opdrag eller repo-analyse
+    output: Kravspec-udkast
+    controlled_by: [fact_check, product_owner, project_board]
+
+  - id: architect
+    name: Arkitekt
+    kind: agent
+    layer: production
+    authority: produces
+    input: Godkendt kravspec
+    output: Arkitekturforslag
+    controlled_by: [fact_check, architecture_reviewer, system_architect, project_board]
+
+  - id: contract_author
+    name: Kontraktforfatter
+    kind: agent
+    layer: production
+    authority: produces
+    input: Godkendt arkitektur
+    output: Modulkontrakter
+    controlled_by: [fact_check, context_controller, system_architect, project_board]
+
+  - id: task_producer
+    name: Opgaveproducent
+    kind: agent
+    layer: production
+    authority: produces
+    input: Godkendte kontrakter og arkitektur
+    output: Arbejdspakker med beskrivelse, vægt og rækkefølge (opgavekompileren er faktakontrollen)
+    controlled_by: [fact_check, system_architect, project_manager, project_board]
+
+  - id: test_designer
+    name: Testdesigner
+    kind: agent
+    layer: production
+    authority: produces
+    input: Acceptkriterier og kontrakter
+    output: Accepttests skrevet før kodningen, uafhængigt af koderen
+    controlled_by: [fact_check, context_controller, system_architect]
+
+  - id: prompt_producer
+    name: Promptproducent
+    kind: agent
+    layer: production
+    authority: produces
+    input: Rollekatalog, husregler, statistik pr. promptversion
+    output: Versionerede prompts pr. agentrolle
+    controlled_by: [fact_check, prompt_reviewer, project_board]
+
+  - id: coder
+    name: Koder
+    kind: agent
+    layer: production
+    authority: produces
+    input: Arbejdspakke og kontekstpakke
+    output: Kode og tests
+    controlled_by: [fact_check, test_designer, code_auditor, security_reviewer, context_controller]
+
+  # ------------------------------------------------------------------ #
+  # Control
+  # ------------------------------------------------------------------ #
+  - id: architecture_reviewer
+    name: Arkitekturreviewer
+    kind: agent
+    layer: control
+    authority: controls
+    input: Kravspec og arkitekturforslag
+    output: Fund og uenigheder
+    controlled_by: [fact_check]
+
+  - id: prompt_reviewer
+    name: Promptreviewer
+    kind: agent
+    layer: control
+    authority: controls
+    input: Prompt, rollens beskrivelse i kataloget, husregler
+    output: Fund og uenigheder
+    controlled_by: [fact_check]
+
+  - id: code_auditor
+    name: Kodeauditør
+    kind: agent
+    layer: control
+    authority: controls
+    input: Diff, husregler og projektregler, testresultater
+    output: Niveau 1-fund
+    controlled_by: [fact_check]
+
+  - id: security_reviewer
+    name: Sikkerhedsansvarlig
+    kind: agent
+    layer: control
+    authority: controls
+    input: Diff, afhængigheder, hemmelighedsscanning, sikkerhedsregler
+    output: Sikkerhedsfund pr. pakke og pr. milestone
+    controlled_by: [fact_check]
+
+  - id: context_controller
+    name: Kontekstkontrollant
+    kind: agent
+    layer: control
+    authority: controls
+    input: Diff, kravspec, arkitektur, kontrakt, testresultater
+    output: Niveau 2-fund
+    controlled_by: [fact_check]
+
+  # ------------------------------------------------------------------ #
+  # System (no language model)
+  # ------------------------------------------------------------------ #
+  - id: fact_check
+    name: Faktakontrol og testkørsel
+    kind: system
+    layer: system
+    authority: executes
+    input: Leverance og systemets egne testkørsler (for opgaver opgavekompilerens validering)
+    output: Verificerede referencer, påstande og testresultater
+    controlled_by: []
+
+  - id: statistics
+    name: Rapport og statistik
+    kind: system
+    layer: system
+    authority: executes
+    input: Jobposter, kontrolposter og målinger
+    output: Statistik pr. agent, opgavetype og promptversion; tal til dagsrapport og undtagelsesrapporter
+    controlled_by: []
+
+  - id: orchestrator
+    name: Orkestrator
+    kind: system
+    layer: system
+    authority: executes
+    input: Godkendte planer og gates
+    output: Fordeling, kvitteringer, frigivelse, git-operationer på milestone-branchen
+    controlled_by: []
+
+# Which role performs each pipeline task type. Every task type must map to a
+# role in the catalog; an unmapped task type fails closed.
+pipeline_task_roles:
+  generate_architecture: architect
+  generate_contracts: contract_author
+  generate_code: coder
+  generate_tests: coder
+  run_tests: fact_check
+  deploy: orchestrator
+  release: orchestrator
+  # Control task types per work package (step 7).
+  audit_code: code_auditor
+  check_context: context_controller
+  # Version 2: governance and the new production and control roles.
+  produce_tasks: task_producer
+  design_tests: test_designer
+  write_prompt: prompt_producer
+  review_prompt: prompt_reviewer
+  audit_security: security_reviewer
+  check_mandate: product_owner
+  check_architecture: system_architect
+  plan_sprint: project_manager
+  propose_rules: quality_manager
+  prepare_release: release_manager
+  compute_statistics: statistics

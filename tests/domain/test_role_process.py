@@ -19,7 +19,9 @@ from domain.role_process import (
     CATALOG_PATH,
     REQUIRED_INDEPENDENCE_LEVEL,
     RoleAssignment,
+    RoleAuthority,
     RoleKind,
+    RoleLayer,
     RoleProcessError,
     default_catalog,
     parse_catalog,
@@ -27,6 +29,10 @@ from domain.role_process import (
 )
 from phase4.council.configuration import IndependenceLevel
 from runtime.pipeline_orchestrator import PipelineOrchestrator
+
+
+def _role(data: dict, role_id: str) -> dict:
+    return next(r for r in data["roles"] if r["id"] == role_id)
 
 
 def _raw() -> dict:
@@ -54,13 +60,61 @@ def test_required_level_is_the_existing_brand_independence_level() -> None:
 
 def test_catalog_loads_and_every_agent_output_is_controlled() -> None:
     catalog = default_catalog()
-    assert catalog.version == 1
+    assert catalog.version == 2
     for spec in catalog.roles.values():
         if spec.kind is RoleKind.AGENT:
             assert "fact_check" in spec.controlled_by, spec.id
             assert spec.id not in spec.controlled_by
     coder = catalog.role("coder")
-    assert {"code_auditor", "context_controller"} <= set(coder.controlled_by)
+    assert {
+        "code_auditor",
+        "context_controller",
+        "test_designer",
+        "security_reviewer",
+    } <= set(coder.controlled_by)
+
+
+def test_governance_layer_steers_and_only_the_human_decides() -> None:
+    """Decision 40: PRINCE2 Agile; the project board is the only decider."""
+    catalog = default_catalog()
+    deciders = [
+        r.id for r in catalog.roles.values() if r.authority is RoleAuthority.DECIDES
+    ]
+    assert deciders == ["project_board"]
+    assert catalog.role("project_board").kind is RoleKind.HUMAN
+    governance = {
+        r.id
+        for r in catalog.roles.values()
+        if r.layer is RoleLayer.GOVERNANCE and r.kind is RoleKind.AGENT
+    }
+    assert governance == {
+        "product_owner",
+        "system_architect",
+        "project_manager",
+        "quality_manager",
+        "release_manager",
+    }
+    for role_id in governance:
+        spec = catalog.role(role_id)
+        assert spec.authority is RoleAuthority.RECOMMENDS and spec.owns
+        assert "project_board" in spec.controlled_by
+    # The product owner owns the kravspec and controls what the analyst writes;
+    # the system architect controls architecture, contracts and the task split.
+    assert catalog.controls("product_owner", "requirements_analyst")
+    for controlled in ("architect", "contract_author", "task_producer"):
+        assert catalog.controls("system_architect", controlled)
+    assert catalog.role("statistics").kind is RoleKind.SYSTEM
+
+
+def test_tests_and_security_come_from_another_producer_than_the_coder() -> None:
+    catalog = default_catalog()
+    coder = _assign("j1", "coder", "anthropic", "s1")
+    for role in ("test_designer", "security_reviewer"):
+        with pytest.raises(RoleProcessError, match="producer"):
+            validate_assignment(
+                catalog, _assign("j2", role, "anthropic", "s2"), [coder]
+            )
+        validate_assignment(catalog, _assign("j2", role, "openai", "s2"), [coder])
 
 
 def test_every_pipeline_task_type_has_a_role() -> None:
@@ -101,6 +155,30 @@ def test_every_pipeline_task_type_has_a_role() -> None:
             lambda d: d["pipeline_task_roles"].update(generate_code="ghost"),
             "unknown role",
         ),
+        # Decision 40: only a human decides; governance agents recommend.
+        (
+            lambda d: _role(d, "product_owner").update(authority="decides"),
+            "authority decides",
+        ),
+        (
+            lambda d: _role(d, "project_board").update(
+                authority="recommends", kind="agent", controlled_by=["fact_check"]
+            ),
+            "no deciding",
+        ),
+        (
+            lambda d: _role(d, "project_manager").update(controlled_by=["fact_check"]),
+            "controlled by a deciding role",
+        ),
+        (lambda d: _role(d, "system_architect").pop("owns"), "must own"),
+        (
+            lambda d: _role(d, "task_producer").update(
+                controlled_by=["fact_check", "project_board"]
+            ),
+            "challenges it",
+        ),
+        (lambda d: _role(d, "coder").update(layer="control"), "authority produces"),
+        (lambda d: _role(d, "coder").pop("authority"), "invalid role entry"),
     ],
 )
 def test_inconsistent_catalog_fails_closed(mutate, message) -> None:

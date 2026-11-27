@@ -67,8 +67,8 @@ Key consequences for agents working on the completion:
   work package is bound to a commit, a requirements revision, and a contract
   version, and is rebased and re-checked when any of them becomes stale.
 - Foundation principle: DOR is role-process logic. The process is a fixed
-  chain of roles in `config/role_process/catalog.v1.yaml` (data, approved by
-  the project manager); `domain/role_process.py` validates it and the
+  chain of roles in `config/role_process/catalog.v2.yaml` (data, approved by
+  the project board); `domain/role_process.py` validates it and the
   pipeline takes every job's role from it. A role is a prompt plus a context
   packet in a fresh job, so any agent may hold any role. On the same work
   package a control role (code auditor, context controller, reviewer) comes
@@ -77,6 +77,12 @@ Key consequences for agents working on the completion:
   agent's conversation. If independence cannot be verified, the assignment
   is rejected; with no other producer available, control waits. Do not add
   roles or task types in code; change the catalog.
+- Governance follows PRINCE2 Agile (plan decision 40): the human is the
+  project board and the only role that decides or approves. Product owner
+  (owns the kravspec and the mandate check of the whole), system architect
+  (owns the architecture), project manager, quality manager and release
+  manager are agent roles that own an artefact, steer and recommend; they
+  never approve. Prompts are versioned data, not code (decision 42).
 - Generated code that fails is discarded and rebuilt rather than debugged,
   after the cause has been found in the agent log and fixed in the input
   (requirements, contract, prompt). Every agent job keeps an immutable agent
