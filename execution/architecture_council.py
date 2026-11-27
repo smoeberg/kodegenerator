@@ -19,23 +19,19 @@ result), never the architect's conversation.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
-from jsonschema import ValidationError, validators
-
-from domain.role_process import (
-    RoleAssignment,
-    RoleCatalog,
-    default_catalog,
-    validate_assignment,
+from domain.role_process import RoleCatalog
+from execution.role_dialogue import (
+    RESPONSES_SCHEMA,
+    DialogueSpec,
+    RoleDialogue,
+    RoleDialogueError,
+    requirement_ids_of,
 )
+from execution.role_dialogue import check_review as _check_review
 from services.bot_llm_runtime import BoundModel
-from services.governed_llm import GovernedLLMRequest
 
 ARCHITECT_ROLE = "architect"
 REVIEWER_ROLE = "architecture_reviewer"
@@ -98,45 +94,9 @@ PROPOSAL_SCHEMA: dict[str, Any] = {
             },
         },
         "assumptions": {"type": "array", "items": {"type": "string"}},
-        "responses_to_findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "finding_id": {"type": "string"},
-                    "response": {"type": "string"},
-                    "accepted": {"type": "boolean"},
-                },
-                "required": ["finding_id", "response", "accepted"],
-            },
-        },
+        "responses_to_findings": RESPONSES_SCHEMA,
     },
     "required": ["stack", "modules", "decisions", "assumptions"],
-}
-
-REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "verdict": {"type": "string", "enum": ["approve", "revise"]},
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "severity": {
-                        "type": "string",
-                        "enum": ["blocking", "major", "minor"],
-                    },
-                    "target": {"type": "string"},
-                    "issue": {"type": "string"},
-                    "requirement_ids": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["id", "severity", "target", "issue", "requirement_ids"],
-            },
-        },
-    },
-    "required": ["verdict", "findings"],
 }
 
 ARCHITECT_INSTRUCTIONS = (
@@ -163,36 +123,13 @@ REVIEWER_INSTRUCTIONS = (
 )
 
 
-class ArchitectureCouncilError(RuntimeError):
-    """The council cannot produce a trustworthy result."""
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _fingerprint(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode()
-    ).hexdigest()
+#: Kept as the architecture-specific name for dialogue failures.
+ArchitectureCouncilError = RoleDialogueError
 
 
 # --------------------------------------------------------------------- #
 # Deterministic fact check (no language model)
 # --------------------------------------------------------------------- #
-def requirement_ids_of(kravspec: Mapping[str, Any]) -> list[str]:
-    ids = [
-        str(item.get("id"))
-        for item in kravspec.get("requirements") or []
-        if isinstance(item, Mapping)
-    ]
-    if not ids or any(not i or i == "None" for i in ids):
-        raise ArchitectureCouncilError("kravspec has no usable requirement ids")
-    return ids
-
-
 def check_proposal(
     proposal: Mapping[str, Any], requirement_ids: list[str]
 ) -> list[dict[str, Any]]:
@@ -293,76 +230,38 @@ def independent_modules(proposal: Mapping[str, Any]) -> list[list[str]]:
     return layers
 
 
-def check_review(
-    review: Mapping[str, Any], proposal: Mapping[str, Any], requirement_ids: list[str]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split the reviewer's findings into verified and rejected.
-
-    Reviewers are checked too (plan, fact check rule 5): a finding must point
-    at something that exists in the proposal and at known requirements.
-    """
-    targets = (
+def review_targets(proposal: Mapping[str, Any]) -> set[str]:
+    return (
         {"stack"}
         | {str(m.get("id")) for m in proposal.get("modules") or []}
         | {str(d.get("id")) for d in proposal.get("decisions") or []}
     )
-    known = set(requirement_ids)
-    verified, rejected = [], []
-    for item in review.get("findings") or []:
-        problems = []
-        if str(item.get("target")) not in targets:
-            problems.append(f"unknown target {item.get('target')!r}")
-        unknown = [r for r in item.get("requirement_ids") or [] if r not in known]
-        if unknown:
-            problems.append(f"unknown requirements {unknown}")
-        (rejected if problems else verified).append(
-            {**dict(item), **({"rejected_because": problems} if problems else {})}
-        )
-    return verified, rejected
 
 
-# --------------------------------------------------------------------- #
-# The council
-# --------------------------------------------------------------------- #
-@dataclass
-class _Turn:
-    role: str
-    round: int
-    model: BoundModel
-    session_id: str
-    started_at: datetime
-    finished_at: datetime | None = None
-    provenance: Mapping[str, Any] = field(default_factory=dict)
-    replayed: bool = False
+def check_review(
+    review: Mapping[str, Any], proposal: Mapping[str, Any], requirement_ids: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Reviewers are checked too (plan, fact check rule 5)."""
+    return _check_review(review, review_targets(proposal), requirement_ids)
 
-    def job(self) -> dict[str, Any]:
-        provenance = dict(self.provenance)
-        return {
-            "role": self.role,
-            "round": self.round,
-            "session_id": self.session_id,
-            "agent": {
-                **self.model.identity.to_dict(),
-                "session_id": self.session_id,
-            },
-            "prompt_version": self.model.prompt_version,
-            "started_at": self.started_at.isoformat(),
-            "finished_at": (self.finished_at or self.started_at).isoformat(),
-            "usage": {
-                "prompt_tokens": provenance.get("prompt_tokens"),
-                "completion_tokens": provenance.get("completion_tokens"),
-                "total_tokens": provenance.get("total_tokens"),
-            },
-            "provenance": {
-                "prompt_fingerprint": provenance.get("prompt_fingerprint"),
-                "output_fingerprint": provenance.get("output_fingerprint"),
-                "request_id": provenance.get("request_id"),
-                "replayed": self.replayed,
-            },
-        }
+
+ARCHITECTURE_DIALOGUE = DialogueSpec(
+    name="architecture-council",
+    proposer_role=ARCHITECT_ROLE,
+    reviewer_role=REVIEWER_ROLE,
+    proposal_schema=PROPOSAL_SCHEMA,
+    proposer_instructions=ARCHITECT_INSTRUCTIONS,
+    reviewer_instructions=REVIEWER_INSTRUCTIONS,
+    fact_check=lambda proposal, dialogue_input: check_proposal(
+        proposal, requirement_ids_of(dialogue_input["requirements_specification"])
+    ),
+    review_targets=review_targets,
+)
 
 
 class ArchitectureCouncil:
+    """The architect and the architecture reviewer in dialogue (step 3)."""
+
     def __init__(
         self,
         architect: BoundModel,
@@ -371,31 +270,12 @@ class ArchitectureCouncil:
         catalog: RoleCatalog | None = None,
         max_revisions: int = 2,
     ) -> None:
-        if max_revisions < 0:
-            raise ValueError("max_revisions must be >= 0")
-        self._architect = architect
-        self._reviewer = reviewer
-        self._catalog = catalog or default_catalog()
-        self._max_revisions = max_revisions
-        # Fail before any model is called if the roles are not independent.
-        validate_assignment(
-            self._catalog,
-            RoleAssignment(
-                "reviewer",
-                "architecture",
-                REVIEWER_ROLE,
-                reviewer.identity.brand,
-                "reviewer",
-            ),
-            [
-                RoleAssignment(
-                    "architect",
-                    "architecture",
-                    ARCHITECT_ROLE,
-                    architect.identity.brand,
-                    "architect",
-                )
-            ],
+        self._dialogue = RoleDialogue(
+            ARCHITECTURE_DIALOGUE,
+            architect,
+            reviewer,
+            catalog=catalog,
+            max_revisions=max_revisions,
         )
 
     def run(
@@ -407,141 +287,17 @@ class ArchitectureCouncil:
         run_key: str,
     ) -> dict[str, Any]:
         requirement_ids = requirement_ids_of(kravspec)
-        turns: list[_Turn] = []
-        rounds: list[dict[str, Any]] = []
-        open_findings: list[dict[str, Any]] = []
-        proposal: dict[str, Any] | None = None
-
-        for round_number in range(1, self._max_revisions + 2):
-            proposal = self._call(
-                turns,
-                ARCHITECT_ROLE,
-                round_number,
-                self._architect,
-                ARCHITECT_INSTRUCTIONS,
-                PROPOSAL_SCHEMA,
-                {
-                    "requirements_specification": dict(kravspec),
-                    "previous_proposal": proposal,
-                    "review_findings": open_findings,
-                },
-                organization_id,
-                actor_id,
-                run_key,
-            )
-            fact_check = check_proposal(proposal, requirement_ids)
-            review = self._call(
-                turns,
-                REVIEWER_ROLE,
-                round_number,
-                self._reviewer,
-                REVIEWER_INSTRUCTIONS,
-                REVIEW_SCHEMA,
-                {
-                    "requirements_specification": dict(kravspec),
-                    "proposal": proposal,
-                    "fact_check_findings": fact_check,
-                },
-                organization_id,
-                actor_id,
-                run_key,
-            )
-            verified, rejected = check_review(review, proposal, requirement_ids)
-            blocking = [f for f in verified if f["severity"] in {"blocking", "major"}]
-            rounds.append(
-                {
-                    "round": round_number,
-                    "proposal_fingerprint": _fingerprint(proposal),
-                    "fact_check": fact_check,
-                    "verdict": review.get("verdict"),
-                    "findings": verified,
-                    "rejected_findings": rejected,
-                    "responses_to_findings": list(
-                        proposal.get("responses_to_findings") or []
-                    ),
-                }
-            )
-            open_findings = [
-                *(
-                    {
-                        "id": f["id"],
-                        "severity": "blocking",
-                        "target": f["target"],
-                        "issue": f["issue"],
-                        "requirement_ids": [],
-                        "source": "fact_check",
-                    }
-                    for f in fact_check
-                ),
-                *({**f, "source": "reviewer"} for f in blocking),
-            ]
-            if not open_findings and review.get("verdict") == "approve":
-                break
-
-        assert proposal is not None
-        status = "agreed" if not open_findings else "disagreement"
-        return {
-            "status": status,
-            "proposal": proposal,
-            "proposal_fingerprint": _fingerprint(proposal),
-            "build_layers": independent_modules(proposal)
+        outcome = self._dialogue.run(
+            {"requirements_specification": dict(kravspec)},
+            requirement_ids=requirement_ids,
+            organization_id=organization_id,
+            actor_id=actor_id,
+            run_key=run_key,
+        )
+        proposal = outcome["proposal"]
+        outcome["build_layers"] = (
+            independent_modules(proposal)
             if not check_proposal(proposal, requirement_ids)
-            else [],
-            "rounds": rounds,
-            "open_findings": open_findings,
-            "requirement_ids": requirement_ids,
-            "roles": {
-                ARCHITECT_ROLE: self._architect.identity.to_dict(),
-                REVIEWER_ROLE: self._reviewer.identity.to_dict(),
-            },
-            "agent_jobs": [turn.job() for turn in turns],
-        }
-
-    def _call(
-        self,
-        turns: list[_Turn],
-        role: str,
-        round_number: int,
-        model: BoundModel,
-        instructions: str,
-        schema: Mapping[str, Any],
-        context_packet: Mapping[str, Any],
-        organization_id: str,
-        actor_id: str,
-        run_key: str,
-    ) -> dict[str, Any]:
-        session_id = f"{run_key}:{role}:r{round_number}"
-        turn = _Turn(
-            role=role,
-            round=round_number,
-            model=model,
-            session_id=session_id,
-            started_at=_now(),
+            else []
         )
-        result = model.runtime.generate(
-            GovernedLLMRequest(
-                organization_id=organization_id,
-                actor_id=actor_id,
-                idempotency_key=session_id,
-                purpose=f"architecture-council:{role}",
-                model=model.model,
-                instructions=instructions,
-                untrusted_input=context_packet,
-                output_schema=schema,
-                max_input_tokens=model.max_input_tokens,
-                max_output_tokens=model.max_output_tokens,
-            )
-        )
-        turn.finished_at = _now()
-        turn.provenance = dict(result.provenance.__dict__)
-        turn.replayed = result.replayed
-        turns.append(turn)
-        value = dict(result.value)
-        validator = validators.validator_for(schema)(schema)
-        try:
-            validator.validate(value)
-        except ValidationError as exc:
-            raise ArchitectureCouncilError(
-                f"{role} answer in round {round_number} does not match its schema: {exc.message}"
-            ) from exc
-        return value
+        return outcome

@@ -175,8 +175,8 @@ Beslutningen træffes hurtigt og på, hvad der virker sammen. Arbejde, der aller
 | Lint/test/build-adaptere, arkitekturregel-evaluatorer | Behold |
 | Evalueringskoordinator og evalueringsposter | Tilpas til jobposter og statistik |
 | Egen patch-agent (`phase4/implementation_agent`) | Kassér |
-| Skabelon-arkitektur (`generation/scaffold_engine`) | Kassér |
-| Regex-kontrakter (`generation/contract_generator`) | Kassér |
+| Skabelon-arkitektur (`generation/scaffold_engine`) | Kassér fra pipelinen; modulet beholdes, fordi onboarding-sporet (GUI-kæden) bruger det |
+| Regex-kontrakter (`generation/contract_generator`) | Kassér. Udfald i trin 4: modulkontrakter laves af kontraktforfatter og kontekstkontrollant i dialog (`execution/contract_council.py`); OpenAPI og sporbarhed afledes af kontrakterne. Regex-vejen kører kun, når rådene ikke er konfigureret, og fjernes, når de gøres obligatoriske |
 | Swarm-sporet | Kassér |
 | GUI-kæden med ni sider | Behold til vedligehold; nyt projektoverblik skrives |
 
