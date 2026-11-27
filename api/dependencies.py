@@ -99,6 +99,28 @@ def get_bot_catalog_service() -> BotCatalogService:
     return service
 
 
+def resolve_bot_model_for(organization_id: str, bot_profile_id: str):
+    """Resolve a Bot Catalog profile into a runnable model (fail closed).
+
+    Provider, endpoint and model come from the catalog; the key is resolved
+    internally through BotProviderCredentialStore and never leaves the adapter.
+    """
+    from services.bot_llm_runtime import resolve_bot_model
+    from services.bot_provider_credentials import BotProviderCredentialStore
+
+    factory = _session_factory()
+    return resolve_bot_model(
+        BotCatalogStore(factory),
+        BotProviderCredentialStore(get_dor().database),
+        organization_id,
+        bot_profile_id,
+        replay_store=SQLAlchemyLLMReplayStore(
+            factory,
+            lease_seconds=_positive_int_environment("DOR_PIPELINE_LLM_LEASE_SECONDS", 180),
+        ),
+    )
+
+
 @lru_cache(maxsize=1)
 def get_council_configuration_store() -> CouncilConfigurationStore:
     return CouncilConfigurationStore(

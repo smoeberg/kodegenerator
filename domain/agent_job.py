@@ -140,6 +140,9 @@ class AgentJobRecord:
     error: str | None = None
     usage: Mapping[str, Any] = field(default_factory=dict)
     measurements: Mapping[str, Any] = field(default_factory=dict)
+    #: Non-secret evidence of the agent call (prompt and output fingerprints,
+    #: request id); the full agent log arrives with the worker adapter.
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.attempt < 1:
@@ -223,6 +226,7 @@ class AgentJobRecord:
             "error": self.error,
             "usage": dict(self.usage),
             "measurements": dict(self.measurements),
+            "provenance": dict(self.provenance),
         }
 
     @classmethod
@@ -252,6 +256,7 @@ class AgentJobRecord:
                 error=data.get("error"),
                 usage=dict(data.get("usage") or {}),
                 measurements=dict(data.get("measurements") or {}),
+                provenance=dict(data.get("provenance") or {}),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise AgentJobRecordError(f"invalid job record: {exc}") from exc
