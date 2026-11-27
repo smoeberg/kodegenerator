@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from domain.prompt_registry import PromptRegistry
 from execution.task_compiler import compile_work_plan
 from execution.worker_adapter import (
     AGENT_COMMANDS,
@@ -132,6 +133,9 @@ def test_module_task_carries_only_its_own_contract_and_criteria(plan) -> None:
     assert {r["id"] for r in packet["requirements"]} == {"REG-01", "REG-02"}
     assert "Change files only under: src/rules, tests/rules" in prompt
     assert "Do not change contracts/" in prompt
+    assert packet["prompt_versions"] == [
+        PromptRegistry.load().active("coder", "implement_module").ref
+    ]
 
 
 def test_foundation_task_carries_every_contract(plan) -> None:
@@ -309,6 +313,9 @@ def test_a_rework_round_starts_from_the_delivery_and_attests_from_the_base(
     assert log["start_sha"] == first.head_sha and log["base_sha"] == base
     assert log["context_packet"]["rework"]["findings"] == findings
     assert "This is a rework round" in log["prompt"]
+    assert (
+        rework.agent_job["prompt_version"].count("coder/") == 2
+    )  # task prompt + rework prompt
     # Writing outside the scope in a rework round fails like any other delivery.
     fake_agent(bin_dir, "claude", "pathlib.Path('README.md').write_text('x')\n")
     outside = run(

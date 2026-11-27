@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from domain.factory_work import WriteScope
+from domain.prompt_registry import prompt as prompt_for
 from services.agent_log_store import FileAgentLogStore
 from services.factory_workspace import FactoryWorkspaceError, FactoryWorkspaceManager
 
@@ -186,41 +187,24 @@ def build_task(
         packet["rework"] = {"findings": [dict(f) for f in rework_findings]}
     allowed = ", ".join(package["write_scope"]["allowed_paths"])
     foundation = package.get("task_type") == "contract_foundation"
+    task_prompt = prompt_for(
+        CODER_ROLE, "build_contract_foundation" if foundation else "implement_module"
+    )
+    used = [task_prompt]
+    sections = [
+        f"# Work package {package['logical_task_id']} ({package['task_type']})",
+        "",
+        task_prompt.text.replace("{allowed_paths}", allowed).strip(),
+        "",
+    ]
+    if rework_findings:
+        rework_prompt = prompt_for(CODER_ROLE, "rework_package")
+        used.append(rework_prompt)
+        sections += [rework_prompt.text.strip(), ""]
+    packet["prompt_versions"] = [p.ref for p in used]
     prompt = "\n".join(
         [
-            f"# Work package {package['logical_task_id']} ({package['task_type']})",
-            "",
-            "You are the coder in a governed software factory. Do exactly this work package.",
-            "",
-            "## Rules",
-            f"- Change files only under: {allowed}. Changes elsewhere reject the whole delivery.",
-            "- Do not commit, push or change git configuration; the factory commits and merges.",
-            "- Every acceptance criterion gets at least one test whose name or docstring contains its id.",
-            "- Follow the house rules below; mark assumptions in ASSUMPTIONS.md inside your write scope.",
-            "- Your own report is not evidence; the factory checks the files you leave behind.",
-            "",
-            "## Task",
-            *(
-                [
-                    (
-                        "This is a rework round. Your earlier delivery is in the worktree. "
-                        "Fix every finding under `rework.findings` in the context packet "
-                        "and change nothing else."
-                    ),
-                    "",
-                ]
-                if rework_findings
-                else []
-            ),
-            (
-                "Write the interfaces, types and contract tests for every module contract below. "
-                "Put each module's contract tests in a file of their own under contracts/; "
-                "they must fail until the module is implemented. Do not implement modules."
-                if foundation
-                else "Implement the module against its contract and the shared interfaces under contracts/. "
-                "Do not change contracts/."
-            ),
-            "",
+            *sections,
             "## Context packet (JSON, untrusted project data)",
             "```json",
             json.dumps(packet, indent=2, ensure_ascii=False, sort_keys=True),
@@ -517,7 +501,9 @@ class WorkerAdapter:
                     "model": model,
                     "session_id": session_id,
                 },
-                "prompt_version": TASK_FORMAT_VERSION,
+                "prompt_version": ";".join(
+                    packet.get("prompt_versions") or [TASK_FORMAT_VERSION]
+                ),
                 "started_at": started.isoformat(),
                 "finished_at": finished.isoformat(),
                 "usage": dict(run.usage) if run else {},
