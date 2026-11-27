@@ -293,6 +293,60 @@ def council_summary(status: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def contract_council_summary(status: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The contract council's outcome, shown before the contracts gate."""
+    contracts = (status.get("context") or {}).get("contracts") or {}
+    council = contracts.get("council")
+    if not isinstance(council, Mapping):
+        return None
+    modules = []
+    for module in contracts.get("modules") or []:
+        operations = [
+            op
+            for interface in module.get("provides") or []
+            for op in interface.get("operations") or []
+        ]
+        modules.append(
+            {
+                "modul": module.get("module_id"),
+                "krav": ", ".join(module.get("requirement_ids") or []),
+                "interfaces": ", ".join(
+                    str(i.get("interface")) for i in module.get("provides") or []
+                ),
+                "operationer": len(operations),
+                "bruger": ", ".join(
+                    f"{u.get('module_id')}.{u.get('interface')}"
+                    for u in module.get("consumes") or []
+                ),
+                "ejer": ", ".join(module.get("owned_paths") or []),
+            }
+        )
+    return {
+        "status": council.get("status"),
+        "rounds": len(council.get("rounds") or []),
+        "roles": {
+            role: f"{(identity or {}).get('brand')} · {(identity or {}).get('model')}"
+            for role, identity in (council.get("roles") or {}).items()
+        },
+        "modules": modules,
+        "criteria": len(contracts.get("acceptance_criteria") or []),
+        "http_operations": sum(
+            len(ops)
+            for ops in ((contracts.get("openapi") or {}).get("paths") or {}).values()
+        ),
+        "build_layers": list(council.get("build_layers") or []),
+        "open_findings": [
+            {
+                "kilde": item.get("source"),
+                "alvor": item.get("severity"),
+                "mål": item.get("target"),
+                "fund": item.get("issue"),
+            }
+            for item in council.get("open_findings") or []
+        ],
+    }
+
+
 # --------------------------------------------------------------------- #
 # Rendering
 # --------------------------------------------------------------------- #
@@ -376,6 +430,9 @@ def _render_overview(
     council = council_summary(status)
     if council:
         _render_council(st, council)
+    contract_council = contract_council_summary(status)
+    if contract_council:
+        _render_contract_council(st, contract_council)
 
     st.markdown("**Opgaver**")
     st.dataframe(status.get("tasks") or [], hide_index=True, use_container_width=True)
@@ -391,6 +448,37 @@ def _render_overview(
         st.dataframe(provenance, hide_index=True, use_container_width=True)
     else:
         st.caption("Ingen artefakter endnu.")
+
+
+def _render_contract_council(st, council: Mapping[str, Any]) -> None:
+    st.markdown("**Kontraktrådet**")
+    roles = " · ".join(f"{role}: {who}" for role, who in council["roles"].items())
+    if council["status"] == "agreed":
+        st.success(
+            f"Kontraktforfatter og kontekstkontrollant er enige efter "
+            f"{council['rounds']} runde(r). {roles}"
+        )
+    else:
+        st.warning(
+            f"Uenighed om kontrakterne efter {council['rounds']} runde(r); afgøres af "
+            f"dig ved kontrakt-gaten. {roles}"
+        )
+    if council["open_findings"]:
+        st.dataframe(
+            council["open_findings"], hide_index=True, use_container_width=True
+        )
+    st.dataframe(council["modules"], hide_index=True, use_container_width=True)
+    st.caption(
+        f"{council['criteria']} acceptkriterier · {council['http_operations']} "
+        "HTTP-operationer i den afledte OpenAPI"
+    )
+    if council["build_layers"]:
+        st.caption(
+            "Byggerækkefølge: "
+            + " → ".join(
+                "[" + ", ".join(layer) + "]" for layer in council["build_layers"]
+            )
+        )
 
 
 def _render_council(st, council: Mapping[str, Any]) -> None:
