@@ -194,6 +194,72 @@ class FactoryWorkspaceManager:
             "reconciled": False,
         }
 
+    def changed_paths(
+        self, base_sha: str, head_sha: str, scope: WriteScope | None = None
+    ) -> tuple[str, ...]:
+        """Paths changed between two commits, checked against ``scope``."""
+        paths = tuple(
+            sorted(
+                filter(
+                    None,
+                    self._git("diff", "--name-only", base_sha, head_sha).splitlines(),
+                )
+            )
+        )
+        if scope is not None:
+            self._validate_paths(paths, scope)
+        return paths
+
+    def diff(self, base_sha: str, head_sha: str, *, binary: bool = False) -> str:
+        return self._git("diff", *(("--binary",) if binary else ()), base_sha, head_sha)
+
+    def patch_fingerprint(self, base_sha: str, head_sha: str) -> str:
+        """Same fingerprint as ``attest`` gives, over a chosen base."""
+        return fingerprint(self.diff(base_sha, head_sha, binary=True))
+
+    def read_file(self, sha: str, path: str) -> str | None:
+        """A file's content at a commit, or ``None`` if it does not exist there."""
+        try:
+            return self._git("show", f"{sha}:{path}")
+        except FactoryWorkspaceError:
+            return None
+
+    def list_files(self, sha: str, prefix: str = "") -> tuple[str, ...]:
+        """Tracked files at a commit, optionally under one directory."""
+        args = ["ls-tree", "-r", "--name-only", sha]
+        if prefix:
+            args += ["--", prefix]
+        return tuple(filter(None, self._git(*args).splitlines()))
+
+    @contextmanager
+    def checkout(self, sha: str) -> Iterator[Path]:
+        """A detached, throw-away worktree at ``sha`` (for the factory's own checks)."""
+        if not _SHA.fullmatch(sha):
+            raise FactoryWorkspaceError("checkout needs an exact Git SHA-1")
+        path = Path(tempfile.mkdtemp(prefix="dor-check-"))
+        try:
+            with self._repository_admin():
+                self._git("worktree", "add", "--detach", str(path), sha)
+            yield path
+        finally:
+            with self._repository_admin():
+                try:
+                    self._git("worktree", "remove", "--force", str(path))
+                except FactoryWorkspaceError:
+                    pass
+                shutil.rmtree(path, ignore_errors=True)
+                self._git("worktree", "prune")
+
+    def discard_branch(self, branch: str) -> None:
+        """Drop a superseded or rejected candidate branch."""
+        if not branch.startswith("factory/"):
+            raise FactoryWorkspaceError(
+                "only factory candidate branches can be discarded"
+            )
+        with self._repository_admin():
+            if self._git("branch", "--list", branch).strip():
+                self._git("branch", "-D", branch)
+
     @staticmethod
     def _validate_paths(paths: tuple[str, ...], scope: WriteScope) -> None:
         for path in paths:
