@@ -5,6 +5,7 @@ import uuid
 
 import streamlit as st
 
+from dashboard.factory_console import render_factory_console
 from dashboard.api_client import DORAPIClient, DORAPIError
 from dashboard.cockpit_view_model import (
     build_execution_summary,
@@ -740,6 +741,7 @@ def main() -> None:
             "🏗️ Logik 1: Projekt & Krav",
             "⚙️ Logik 2: Udvikling & Cockpit",
             "🛡️ Logik 3: Administration & Governance",
+            "🏭 Fabrik: Overblik & Indbakke",
         ],
     )
     try:
@@ -748,6 +750,9 @@ def main() -> None:
             project_page(client)
         elif page.startswith("⚙️"):
             development_page(client)
+        elif page.startswith("🏭"):
+            stop_realtime()
+            render_factory_console(client, st.session_state.get("organization_id"))
         else:
             stop_realtime()
             administration_page(client)

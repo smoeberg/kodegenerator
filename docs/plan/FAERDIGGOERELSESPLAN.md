@@ -42,6 +42,8 @@ Analysen er lavet mod `smoeberg/kodegenerator`, branch `main`, commit `98449e2`,
 
 Status 26. november 2026: #292 (testisolation), #293 (OpenTelemetry-sårbarhed) og #294 (CI-artefakter og CodeQL) er flettet, og CI er grøn. Standard-administratoren sættes nu op i en fælles `tests/conftest.py`. Første del af trin 1, kravspec-revision og jobposter, ligger i #296.
 
+Status 27. november 2026, trin 1: kravspec-revision og jobposter (#296), Swarm-sporet udfaset (#301), grundprincippet om rolle-proces-logik med rollekatalog og håndhævelse (#304), husregler v1 og kravspec'en for husregel-registeret godkendt (#300), og GUI-skelettet som fabrikskonsol med projektoverblik, godkendelsesindbakke og projektkonfiguration. Rollekataloget vises i GUI'en med systemkonfigurationen i trin 12.
+
 Byggeklodserne findes og er testet hver for sig. Sammenkoblingen til ét forløb fra kravspec til færdigt system er ikke påbegyndt.
 
 | Trin | I dag | Mangler |
