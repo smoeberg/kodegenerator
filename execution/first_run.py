@@ -147,7 +147,9 @@ def assignment_report(
 # --------------------------------------------------------------------- #
 class Api:
     def __init__(self, base_url: str, token: str, organization_id: str) -> None:
-        self._base = base_url.rstrip("/")
+        from services.llm_adapters import validate_http_url
+
+        self._base = validate_http_url(base_url).rstrip("/")
         self._token = token
         self.organization_id = organization_id
 
@@ -166,7 +168,7 @@ class Api:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310 - base URL validated as HTTP(S) in __init__.
                 return response.status, json.loads(response.read() or b"null")
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read() or b"null")
